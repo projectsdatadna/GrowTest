@@ -1,0 +1,157 @@
+.instrument-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background-color: white;
+}
+
+.list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px;
+  border-bottom: 1px solid #eee;
+  background-color: #f9f9f9;
+}
+
+.list-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #2c3e50;
+}
+
+.search-input {
+  padding: 12px 15px;
+  border: none;
+  border-bottom: 2px solid #eee;
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.3s;
+}
+
+.search-input:focus {
+  background-color: #f9f9f9;
+  border-bottom-color: #667eea;
+}
+
+.selected-instrument {
+  padding: 15px;
+  background-color: #e8f0ff;
+  border-bottom: 2px solid #667eea;
+}
+
+.selected-label {
+  font-size: 12px;
+  color: #667eea;
+  font-weight: 600;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.selected-item {
+  padding: 10px;
+  background-color: white;
+  border-radius: 4px;
+  border-left: 4px solid #667eea;
+}
+
+.selected-item .instrument-symbol {
+  font-weight: 700;
+  color: #2c3e50;
+  font-size: 16px;
+}
+
+.selected-item .instrument-name {
+  font-size: 12px;
+  color: #7f8c8d;
+  margin-top: 4px;
+}
+
+.selected-item .instrument-exchange {
+  font-size: 11px;
+  color: #95a5a6;
+  margin-top: 4px;
+  font-weight: 500;
+}
+
+.search-results {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.results-label {
+  padding: 10px 15px;
+  font-size: 12px;
+  color: #7f8c8d;
+  font-weight: 600;
+  background-color: #f9f9f9;
+  border-bottom: 1px solid #eee;
+  text-transform: uppercase;
+}
+
+.instruments {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.instrument-item {
+  padding: 12px 15px;
+  border-bottom: 1px solid #f0f0f0;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.instrument-item:hover {
+  background-color: #f9f9f9;
+}
+
+.instrument-item.active {
+  background-color: #e8f0ff;
+  border-left: 4px solid #667eea;
+  padding-left: 11px;
+}
+
+.instrument-symbol {
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 14px;
+}
+
+.instrument-name {
+  font-size: 12px;
+  color: #7f8c8d;
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.instrument-exchange {
+  font-size: 11px;
+  color: #95a5a6;
+  margin-top: 3px;
+  font-weight: 500;
+}
+
+.loading,
+.error,
+.no-results {
+  padding: 20px 15px;
+  text-align: center;
+  font-size: 14px;
+  color: #7f8c8d;
+}
+
+.error {
+  color: #e74c3c;
+  background-color: #fee;
+}
+
+.no-results {
+  color: #95a5a6;
+  padding: 30px 15px;
+  font-size: 13px;
+  line-height: 1.6;
+}
