@@ -10,7 +10,6 @@ function AIAnalysis() {
     expiry_date: '',
   })
 
-  const [accessToken, setAccessToken] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [analysis, setAnalysis] = useState(null)
@@ -25,11 +24,6 @@ function AIAnalysis() {
   }
 
   const validateForm = () => {
-    if (!accessToken || accessToken.trim() === '') {
-      setError('Access token is required')
-      return false
-    }
-
     const { exchange, underlying_symbol, trading_symbol, calculate_percentage, expiry_date } = formData
 
     if (!exchange || !underlying_symbol || !trading_symbol || calculate_percentage === '' || !expiry_date) {
@@ -92,7 +86,6 @@ function AIAnalysis() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify(analyzeData),
       })
@@ -127,18 +120,6 @@ function AIAnalysis() {
         <h2>Option Chain AI Analysis</h2>
 
         <form onSubmit={handleSubmit} className="ai-analysis-form">
-          <div className="form-group">
-            <label htmlFor="accessToken">Access Token</label>
-            <input
-              id="accessToken"
-              type="password"
-              value={accessToken}
-              onChange={(e) => setAccessToken(e.target.value)}
-              placeholder="Enter your Groww API access token"
-              className="form-input"
-            />
-          </div>
-
           <div className="form-row">
             <div className="form-group">
               <label htmlFor="exchange">Exchange</label>

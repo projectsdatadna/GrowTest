@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001'
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -8,12 +8,6 @@ const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 })
-
-// Set access token for authenticated requests
-export const setAccessToken = (accessToken) => {
-  apiClient.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`
-  localStorage.setItem('accessToken', accessToken)
-}
 
 // Get all instruments/symbols
 export const getInstruments = async () => {
@@ -60,6 +54,17 @@ export const getOptionChain = async (underlying_symbol, exchange = 'NSE', expiry
     return response.data
   } catch (error) {
     console.error('Error fetching option chain:', error)
+    throw error
+  }
+}
+
+// Analyze option chain within a +/- points range, with full Greeks, via AI
+export const analyzeOptionChainRange = async (data) => {
+  try {
+    const response = await apiClient.post('/analyze-option-chain-range', data)
+    return response.data
+  } catch (error) {
+    console.error('Error analyzing option chain range:', error)
     throw error
   }
 }

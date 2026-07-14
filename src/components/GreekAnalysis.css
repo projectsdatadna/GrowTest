@@ -1,0 +1,411 @@
+.greek-analysis-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  padding: 20px;
+  background: #f5f5f5;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.greek-analysis-form-section {
+  background: white;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  height: fit-content;
+  position: sticky;
+  top: 0;
+}
+
+.greek-analysis-form-section h2 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.greek-analysis-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.output-column {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  overflow-y: auto;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-group label {
+  font-size: 14px;
+  font-weight: 500;
+  color: #555;
+}
+
+.form-input {
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: #4CAF50;
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.1);
+}
+
+.form-input:disabled {
+  background-color: #f5f5f5;
+  cursor: not-allowed;
+}
+
+.error-message {
+  padding: 12px;
+  background-color: #ffebee;
+  color: #c62828;
+  border-radius: 4px;
+  font-size: 14px;
+  border-left: 4px solid #c62828;
+}
+
+.submit-btn {
+  padding: 12px 24px;
+  background-color: #4CAF50;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.submit-btn:hover:not(:disabled) {
+  background-color: #45a049;
+}
+
+.submit-btn:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.calculated-range-section {
+  background: white;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.calculated-range-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.range-display {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.range-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  border-left: 4px solid #ddd;
+}
+
+.range-item.min {
+  border-left-color: #f44336;
+}
+
+.range-item.max {
+  border-left-color: #4CAF50;
+}
+
+.range-item.current {
+  border-left-color: #2196F3;
+}
+
+.range-label {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.range-value {
+  font-size: 24px;
+  font-weight: bold;
+  color: #333;
+}
+
+.range-value.min {
+  color: #f44336;
+}
+
+.range-value.max {
+  color: #4CAF50;
+}
+
+.range-value.current {
+  color: #2196F3;
+}
+
+.refresh-status {
+  margin-top: 16px;
+  font-size: 12px;
+  color: #888;
+}
+
+.refresh-error {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background-color: #fff3e0;
+  color: #e65100;
+  border-radius: 4px;
+  border-left: 4px solid #e65100;
+}
+
+.greeks-table-section {
+  background: white;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.greeks-table-section h3 {
+  margin: 0 0 16px 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.options-table {
+  overflow-x: auto;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.options-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.options-table th {
+  background-color: #f9f9f9;
+  padding: 10px;
+  text-align: left;
+  position: sticky;
+  top: 0;
+}
+
+.options-table td {
+  padding: 10px;
+  border-bottom: 1px solid #eee;
+  color: #555;
+}
+
+.options-table td.strike {
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.options-table td.type {
+  font-weight: 600;
+  padding: 10px;
+  border-radius: 3px;
+}
+
+.options-table td.type.ce {
+  background-color: #d4edda;
+  color: #155724;
+}
+
+.options-table td.type.pe {
+  background-color: #f8d7da;
+  color: #721c24;
+}
+
+.options-table td.ltp {
+  font-weight: 600;
+  color: #27ae60;
+}
+
+.options-table td.oi {
+  text-align: right;
+  font-size: 12px;
+}
+
+.options-table td.greek {
+  font-size: 11px;
+  text-align: right;
+  color: #667eea;
+}
+
+.options-table td.iv {
+  font-weight: 600;
+  text-align: right;
+  color: #e74c3c;
+}
+
+.options-table tr:hover {
+  background-color: #f9f9f9;
+}
+
+.analysis-result-section {
+  background: white;
+  padding: 24px;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
+}
+
+.analysis-result-section h3 {
+  margin: 0 0 20px 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.analysis-explanation {
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #f0f7ff;
+  border-radius: 6px;
+  border-left: 4px solid #2196F3;
+}
+
+.analysis-explanation h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #1976D2;
+  font-weight: 600;
+}
+
+.analysis-explanation p {
+  margin: 0;
+  font-size: 14px;
+  color: #333;
+  line-height: 1.6;
+}
+
+.analysis-details {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.analysis-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.analysis-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: #f9f9f9;
+  border-radius: 6px;
+}
+
+.analysis-item .label {
+  font-size: 12px;
+  color: #666;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.analysis-item .value {
+  font-size: 16px;
+  color: #333;
+  font-weight: 600;
+}
+
+.sentiment-bullish {
+  color: #4CAF50;
+}
+
+.sentiment-bearish {
+  color: #f44336;
+}
+
+.sentiment-neutral {
+  color: #FF9800;
+}
+
+.analysis-section {
+  padding: 16px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  border-left: 4px solid #9C27B0;
+}
+
+.analysis-section h5 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  color: #7B1FA2;
+  font-weight: 600;
+}
+
+.analysis-section p {
+  margin: 0;
+  font-size: 14px;
+  color: #333;
+  line-height: 1.6;
+}
+
+.detail-analysis-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.detail-item {
+  padding: 12px;
+  background: #fff;
+  border-radius: 4px;
+  border-left: 3px solid #9C27B0;
+}
+
+.detail-item h6 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  color: #7B1FA2;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.detail-item p {
+  margin: 0;
+  font-size: 13px;
+  color: #555;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .greek-analysis-container {
+    grid-template-columns: 1fr;
+  }
+}
