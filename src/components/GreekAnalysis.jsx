@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { analyzeOptionChainRange, compareOptionChainSnapshots } from '../services/api'
 import { store } from '../store'
-import { setFormData, applyAnalysisResult, setComparison } from '../store/greekAnalysisSlice'
+import { setFormData, applyAnalysisResult, setComparison, resetAll } from '../store/greekAnalysisSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import MarketPulsePanel from './MarketPulsePanel'
 import ProbabilityGauge from './ProbabilityGauge'
@@ -10,7 +10,9 @@ import TimelineChart from './TimelineChart'
 import OiBuildupPanel from './OiBuildupPanel'
 import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, exportSnapshotsAsJson } from './greekAnalysisUtils'
 
-const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000
+// TEMPORARY: shortened to 5 min for testing - revert to 15 * 60 * 1000 when done.
+const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+const AUTO_REFRESH_INTERVAL_MINUTES = AUTO_REFRESH_INTERVAL_MS / 60000
 
 function ServerClock() {
   const [now, setNow] = useState(new Date())
@@ -67,11 +69,7 @@ function GreekAnalysis() {
   useEffect(() => {
     if (analysis && formData.underlying_symbol && !intervalRef.current) {
       paramsRef.current = buildParams(formData)
-      intervalRef.current = setInterval(() => {
-        if (paramsRef.current) {
-          runAnalysis(paramsRef.current, { isAutoRefresh: true })
-        }
-      }, AUTO_REFRESH_INTERVAL_MS)
+      scheduleAutoRefresh()
     }
     return () => {
       if (intervalRef.current) {
@@ -156,6 +154,20 @@ function GreekAnalysis() {
     }
   }
 
+  // Clears any existing timer and (re)schedules the next auto-refresh tick
+  // from now. Shared by the initial submit, the mount-resume effect, and
+  // the manual retrigger button, so every path keeps the cadence in sync.
+  const scheduleAutoRefresh = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current)
+    }
+    intervalRef.current = setInterval(() => {
+      if (paramsRef.current) {
+        runAnalysis(paramsRef.current, { isAutoRefresh: true })
+      }
+    }, AUTO_REFRESH_INTERVAL_MS)
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
@@ -168,15 +180,35 @@ function GreekAnalysis() {
     paramsRef.current = params
 
     await runAnalysis(params)
+    scheduleAutoRefresh()
+  }
 
+  // Manual "refresh now" - lets you force a new snapshot (and, once a
+  // previous one exists, a fresh comparison) without waiting out the full
+  // auto-refresh interval, e.g. to compare two points less than
+  // AUTO_REFRESH_INTERVAL_MINUTES apart. Reuses the same isAutoRefresh path
+  // as the timer tick (previous/current rotation + comparison trigger are
+  // identical either way) and resets the cycle to count down from now.
+  const handleManualRefresh = async () => {
+    if (!paramsRef.current || loading || refreshing) {
+      return
+    }
+    await runAnalysis(paramsRef.current, { isAutoRefresh: true })
+    scheduleAutoRefresh()
+  }
+
+  // Wipes the form back to defaults and drops every persisted snapshot -
+  // stops the auto-refresh cycle too, since there's nothing left to refresh.
+  const handleClear = () => {
     if (intervalRef.current) {
       clearInterval(intervalRef.current)
+      intervalRef.current = null
     }
-    intervalRef.current = setInterval(() => {
-      if (paramsRef.current) {
-        runAnalysis(paramsRef.current, { isAutoRefresh: true })
-      }
-    }, AUTO_REFRESH_INTERVAL_MS)
+    paramsRef.current = null
+    setError('')
+    setRefreshError('')
+    setComparisonError('')
+    dispatch(resetAll())
   }
 
   const probabilityGauge = analysis?.parsed_analysis ? computeProbabilityGauge(analysis.parsed_analysis) : null
@@ -201,12 +233,22 @@ function GreekAnalysis() {
             )}
           </div>
           <p className="text-on-surface-variant text-sm">
-            Auto-refreshing every 15 minutes
+            Auto-refreshing every {AUTO_REFRESH_INTERVAL_MINUTES} minutes
             {refreshing ? ' · refreshing now...' : ''}
           </p>
         </div>
         <div className="flex items-center gap-md">
           <ServerClock />
+          <button
+            type="button"
+            disabled={!analysis || loading || refreshing}
+            onClick={handleManualRefresh}
+            title={`Force a new snapshot now instead of waiting for the next ${AUTO_REFRESH_INTERVAL_MINUTES}-minute cycle`}
+            className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined">refresh</span>
+            {refreshing ? 'Refreshing...' : 'Refresh Now'}
+          </button>
           <button
             type="button"
             disabled={!analysis}
@@ -215,6 +257,16 @@ function GreekAnalysis() {
           >
             <span className="material-symbols-outlined">download</span>
             Export
+          </button>
+          <button
+            type="button"
+            disabled={!analysis && !formData.underlying_symbol}
+            onClick={handleClear}
+            title="Clear the form and every stored analysis snapshot"
+            className="flex items-center gap-sm px-md py-base border border-bearish/40 text-bearish rounded-lg hover:bg-bearish/10 transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined">delete</span>
+            Clear
           </button>
         </div>
       </section>
@@ -317,7 +369,7 @@ function GreekAnalysis() {
           <section className="grid grid-cols-1 md:grid-cols-3 gap-md items-start">
             <AnalysisSnapshotCard
               analysis={analysis}
-              label="Current 15 Minutes"
+              label={`Current ${AUTO_REFRESH_INTERVAL_MINUTES} Minutes`}
               variant="latest"
               timestamp={lastUpdated ? new Date(lastUpdated) : null}
             />
@@ -325,7 +377,7 @@ function GreekAnalysis() {
             {previousAnalysis ? (
               <AnalysisSnapshotCard
                 analysis={previousAnalysis}
-                label="Previous 15 Minutes"
+                label={`Previous ${AUTO_REFRESH_INTERVAL_MINUTES} Minutes`}
                 variant="previous"
                 timestamp={previousUpdated ? new Date(previousUpdated) : null}
               />

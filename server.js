@@ -1059,7 +1059,7 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
 })
 
 /**
- * Compare two option-chain analysis snapshots (e.g. latest vs. ~15 min prior)
+ * Compare two option-chain analysis snapshots (e.g. latest vs. ~5 min prior, or less if manually refreshed)
  * and get an AI-generated trend inference: what changed and what it means.
  */
 app.post('/compare-option-chain-snapshots', async (req, res) => {
@@ -1076,7 +1076,7 @@ app.post('/compare-option-chain-snapshots', async (req, res) => {
 
     const describeSnapshot = (snapshot) => `LTP: ₹${snapshot.underlying_ltp}, Sentiment: ${snapshot.parsed_analysis?.sentiment || 'N/A'}, Support: ₹${snapshot.parsed_analysis?.support_level || 'N/A'}, Resistance: ₹${snapshot.parsed_analysis?.resistance_level || 'N/A'}, Confidence: ${snapshot.parsed_analysis?.confidence ?? 'N/A'}%, Strategy: ${snapshot.parsed_analysis?.strategy || 'N/A'}`
 
-    const promptContent = `Compare these two option chain analyses for ${latest.trading_symbol || latest.symbol}, taken ~15 minutes apart, and explain the trend between them.
+    const promptContent = `Compare these two option chain analyses for ${latest.trading_symbol || latest.symbol}, taken up to ~5 minutes apart (could be less if manually refreshed), and explain the trend between them.
 
 Previous snapshot:
 ${describeSnapshot(previous)}

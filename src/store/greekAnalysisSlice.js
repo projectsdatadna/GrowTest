@@ -27,9 +27,9 @@ const greekAnalysisSlice = createSlice({
     },
     // Rotates the current analysis into "previous" (if one exists) and
     // commits the new one as current - this is what makes the latest/previous
-    // 15-minute zones work. Reading `state.analysis` here (rather than a ref
-    // mirroring it) is safe because Redux state is always current at dispatch
-    // time, unlike a value captured in a React closure.
+    // refresh-cycle zones work. Reading `state.analysis` here (rather than a
+    // ref mirroring it) is safe because Redux state is always current at
+    // dispatch time, unlike a value captured in a React closure.
     applyAnalysisResult(state, action) {
       const { data, now } = action.payload
       if (state.analysis) {
@@ -45,8 +45,19 @@ const greekAnalysisSlice = createSlice({
     setComparison(state, action) {
       state.comparison = action.payload
     },
+    // Full reset for the "Clear" button - wipes the form back to defaults
+    // and drops every persisted snapshot/comparison.
+    resetAll(state) {
+      state.formData = { ...initialState.formData }
+      state.analysis = null
+      state.lastUpdated = null
+      state.previousAnalysis = null
+      state.previousUpdated = null
+      state.comparison = null
+      state.ltpHistory = []
+    },
   },
 })
 
-export const { setFormData, applyAnalysisResult, setComparison } = greekAnalysisSlice.actions
+export const { setFormData, applyAnalysisResult, setComparison, resetAll } = greekAnalysisSlice.actions
 export default greekAnalysisSlice.reducer
