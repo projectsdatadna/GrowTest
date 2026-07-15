@@ -77,19 +77,31 @@ command as above. This still requires the **one-time secrets setup** above
 (GitHub Actions deploys the function code; it does not set Secret Manager
 values) plus a **one-time CI auth setup**:
 
-1. Create a service account with deploy rights on `devgraders` (Cloud
-   Functions Admin, Cloud Build Editor, Service Account User, Firebase Admin
-   roles — or just `roles/editor` for a quicker/broader setup), then download
-   its JSON key:
+1. Create a service account with deploy rights on `devgraders`, scoped to
+   the specific roles a 2nd-gen Firebase Functions deploy needs (verified by
+   an actual deploy — narrower than blanket `roles/editor`, since
+   `devgraders` is shared with other apps):
    ```bash
    gcloud iam service-accounts create github-deploy-devgraders \
      --project devgraders --display-name "GitHub Actions deploy"
-   gcloud projects add-iam-policy-binding devgraders \
-     --member="serviceAccount:github-deploy-devgraders@devgraders.iam.gserviceaccount.com" \
-     --role="roles/editor"
-   gcloud iam service-accounts keys create key.json \
-     --iam-account="github-deploy-devgraders@devgraders.iam.gserviceaccount.com"
+
+   SA="github-deploy-devgraders@devgraders.iam.gserviceaccount.com"
+   for ROLE in roles/cloudfunctions.admin roles/run.admin \
+     roles/iam.serviceAccountUser roles/cloudbuild.builds.editor \
+     roles/artifactregistry.admin roles/storage.admin \
+     roles/secretmanager.admin roles/serviceusage.serviceUsageAdmin; do
+     gcloud projects add-iam-policy-binding devgraders \
+       --member="serviceAccount:$SA" --role="$ROLE" --condition=None
+   done
+
+   gcloud iam service-accounts keys create key.json --iam-account="$SA"
    ```
+   (`secretmanager.admin` is needed because `firebase deploy` grants the
+   function's runtime service account access to each declared secret as
+   part of deploying; `serviceusage.serviceUsageAdmin` is needed because
+   deploy auto-enables any required API — e.g. `eventarc.googleapis.com`,
+   `run.googleapis.com` — that isn't already on, and without this role that
+   step fails with a permissions error instead.)
 2. Add the contents of `key.json` as a GitHub Actions secret named
    `FIREBASE_SERVICE_ACCOUNT_DEVGRADERS` on this repo (Settings → Secrets and
    variables → Actions → New repository secret, or `gh secret set
@@ -101,6 +113,15 @@ values) plus a **one-time CI auth setup**:
 
 Manual `firebase deploy` (the section above) still works any time and is
 useful for one-off deploys without waiting on CI.
+
+**Gotcha hit on the first real deploy:** an old 1st-gen `api` function was
+already sitting on `devgraders` from before `functions/index.js` was
+rewritten to 2nd-gen (`firebase-functions/v2/https`) syntax. Firebase refuses
+to deploy a 2nd-gen function over a 1st-gen one of the same name
+(`Upgrading from 1st Gen to 2nd Gen is not yet supported`) — it has to be
+deleted first: `gcloud functions delete api --project devgraders --region
+us-central1`. This should only ever be needed once; noting it here in case
+the function ever needs to be recreated from scratch.
 
 ## Frontend
 
