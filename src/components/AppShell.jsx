@@ -2,10 +2,11 @@ import { useEffect, useState } from 'react'
 
 /**
  * Dark "terminal" app shell (sidebar + top header) from the Stitch mockup.
- * Only "AI Analysis" and "Greek Analysis" are real, functional nav items -
- * everything else (Dashboard-as-a-separate-page, Volatility, Strategy
- * Builder, Portfolio, Settings, Support, the search bar, Watchlist/Alerts,
- * notifications, avatar) is decorative - those pages don't exist yet.
+ * Only "Greek Analysis" is a real, functional nav item - everything else
+ * (AI Analysis is hidden here rather than removed - the component/route
+ * still exists, just not linked from the nav; Volatility, Strategy Builder,
+ * Portfolio, Settings, Support, the search bar, Watchlist/Alerts,
+ * notifications, avatar) is decorative or unlinked.
  */
 function ServerTimeClock() {
   const [now, setNow] = useState(new Date())
@@ -26,7 +27,6 @@ function ServerTimeClock() {
 }
 
 const NAV_ITEMS = [
-  { key: 'ai-analysis', label: 'AI Analysis', icon: 'dashboard', functional: true },
   { key: 'greek-analysis', label: 'Greek Analysis', icon: 'analytics', functional: true },
   { key: 'volatility', label: 'Volatility', icon: 'show_chart', functional: false },
   { key: 'strategy-builder', label: 'Strategy Builder', icon: 'construction', functional: false },

@@ -1,5 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useRef, useState, useEffect } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
 import { analyzeOptionChainRange, compareOptionChainSnapshots } from '../services/api'
+import { store } from '../store'
+import { setFormData, applyAnalysisResult, setComparison } from '../store/greekAnalysisSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import MarketPulsePanel from './MarketPulsePanel'
 import ProbabilityGauge from './ProbabilityGauge'
@@ -8,7 +11,6 @@ import OiBuildupPanel from './OiBuildupPanel'
 import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, exportSnapshotsAsJson } from './greekAnalysisUtils'
 
 const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000
-const LTP_HISTORY_LIMIT = 20
 
 function ServerClock() {
   const [now, setNow] = useState(new Date())
@@ -24,49 +26,64 @@ function ServerClock() {
   )
 }
 
+function buildParams(formData) {
+  const { exchange, underlying_symbol, trading_symbol, expiry_date, points_range } = formData
+  return {
+    symbol: underlying_symbol,
+    underlying_symbol,
+    trading_symbol,
+    exchange,
+    expiry_date,
+    points_range: parseFloat(points_range),
+  }
+}
+
 function GreekAnalysis() {
-  const [formData, setFormData] = useState({
-    exchange: 'NSE',
-    underlying_symbol: '',
-    trading_symbol: '',
-    expiry_date: '',
-    points_range: '500',
-  })
+  const dispatch = useDispatch()
+  const formData = useSelector((state) => state.greekAnalysis.formData)
+  const analysis = useSelector((state) => state.greekAnalysis.analysis)
+  const lastUpdated = useSelector((state) => state.greekAnalysis.lastUpdated)
+  const previousAnalysis = useSelector((state) => state.greekAnalysis.previousAnalysis)
+  const previousUpdated = useSelector((state) => state.greekAnalysis.previousUpdated)
+  const comparison = useSelector((state) => state.greekAnalysis.comparison)
+  const ltpHistory = useSelector((state) => state.greekAnalysis.ltpHistory)
 
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [refreshError, setRefreshError] = useState('')
 
-  const [analysis, setAnalysis] = useState(null)
-  const [lastUpdated, setLastUpdated] = useState(null)
-  const [previousAnalysis, setPreviousAnalysis] = useState(null)
-  const [previousUpdated, setPreviousUpdated] = useState(null)
-
-  const [comparison, setComparison] = useState(null)
   const [comparing, setComparing] = useState(false)
   const [comparisonError, setComparisonError] = useState('')
 
-  const [ltpHistory, setLtpHistory] = useState([])
-
   const intervalRef = useRef(null)
   const paramsRef = useRef(null)
-  // Mirrors `analysis` for reliable reads inside the async refresh flow
-  // (avoids a stale closure over the `analysis` state value).
-  const currentAnalysisRef = useRef(null)
-  const currentUpdatedRef = useRef(null)
 
+  // Resume the auto-refresh cycle after a remount (tab switch) or a full
+  // page reload if we already have a persisted analysis + form params to
+  // work from - otherwise the data shown would silently go stale forever.
+  // This only reschedules the next tick; it doesn't re-fetch immediately,
+  // since the persisted `analysis` is already there to show right away.
   useEffect(() => {
+    if (analysis && formData.underlying_symbol && !intervalRef.current) {
+      paramsRef.current = buildParams(formData)
+      intervalRef.current = setInterval(() => {
+        if (paramsRef.current) {
+          runAnalysis(paramsRef.current, { isAutoRefresh: true })
+        }
+      }, AUTO_REFRESH_INTERVAL_MS)
+    }
     return () => {
       if (intervalRef.current) {
         clearInterval(intervalRef.current)
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
-    setFormData((prev) => ({ ...prev, [name]: value }))
+    dispatch(setFormData({ [name]: value }))
   }
 
   const validateForm = () => {
@@ -91,7 +108,7 @@ function GreekAnalysis() {
     setComparisonError('')
     try {
       const result = await compareOptionChainSnapshots(previous, latest)
-      setComparison(result)
+      dispatch(setComparison(result))
     } catch (err) {
       setComparisonError(err.response?.data?.error || err.message || 'Failed to generate comparison')
     } finally {
@@ -110,24 +127,15 @@ function GreekAnalysis() {
 
     try {
       const data = await analyzeOptionChainRange(params)
-      const now = new Date()
+      const now = new Date().toISOString()
 
-      const priorAnalysis = currentAnalysisRef.current
-      const priorUpdated = currentUpdatedRef.current
-      if (priorAnalysis) {
-        setPreviousAnalysis(priorAnalysis)
-        setPreviousUpdated(priorUpdated)
-      }
+      // Read the freshest committed state directly from the store rather
+      // than a value captured in this closure, which is what makes this
+      // safe to call from a setInterval callback that outlives any single
+      // render.
+      const priorAnalysis = store.getState().greekAnalysis.analysis
 
-      setAnalysis(data)
-      setLastUpdated(now)
-      currentAnalysisRef.current = data
-      currentUpdatedRef.current = now
-
-      setLtpHistory((prev) => {
-        const next = [...prev, { time: now, ltp: data.underlying_ltp }]
-        return next.length > LTP_HISTORY_LIMIT ? next.slice(next.length - LTP_HISTORY_LIMIT) : next
-      })
+      dispatch(applyAnalysisResult({ data, now }))
 
       if (priorAnalysis) {
         runComparison(priorAnalysis, data)
@@ -156,15 +164,7 @@ function GreekAnalysis() {
       return
     }
 
-    const { exchange, underlying_symbol, trading_symbol, expiry_date, points_range } = formData
-    const params = {
-      symbol: underlying_symbol,
-      underlying_symbol,
-      trading_symbol,
-      exchange,
-      expiry_date,
-      points_range: parseFloat(points_range),
-    }
+    const params = buildParams(formData)
     paramsRef.current = params
 
     await runAnalysis(params)
@@ -315,14 +315,19 @@ function GreekAnalysis() {
       {analysis && (
         <>
           <section className="grid grid-cols-1 md:grid-cols-3 gap-md items-start">
-            <AnalysisSnapshotCard analysis={analysis} label="Current 15 Minutes" variant="latest" timestamp={lastUpdated} />
+            <AnalysisSnapshotCard
+              analysis={analysis}
+              label="Current 15 Minutes"
+              variant="latest"
+              timestamp={lastUpdated ? new Date(lastUpdated) : null}
+            />
 
             {previousAnalysis ? (
               <AnalysisSnapshotCard
                 analysis={previousAnalysis}
                 label="Previous 15 Minutes"
                 variant="previous"
-                timestamp={previousUpdated}
+                timestamp={previousUpdated ? new Date(previousUpdated) : null}
               />
             ) : (
               <div className="glass-panel rounded-xl p-md flex items-center justify-center text-on-surface-variant text-sm text-center min-h-[200px]">
@@ -466,7 +471,7 @@ function GreekAnalysis() {
           </section>
 
           <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <TimelineChart history={ltpHistory} />
+            <TimelineChart history={ltpHistory.map((point) => ({ ...point, time: new Date(point.time) }))} />
 
             <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
               <div className="flex items-center gap-base mb-md">

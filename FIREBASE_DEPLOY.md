@@ -1,10 +1,13 @@
-# Deploying the API to Firebase Cloud Functions
+# Deploying to Firebase (API + Frontend)
 
 The Express API (`server.js`) has been adapted into a Firebase Cloud Function
-at `functions/index.js`, targeting the **`devgraders`** project
-(`.firebaserc`). This only covers the **API** — the frontend (`dist/`) is not
-part of this setup, since `devgraders` is a shared project used by other
-apps and its Hosting config wasn't touched.
+at `functions/index.js`, and the React frontend (`dist/`, built by Vite) is
+served via Firebase Hosting — both on the **`devgraders`** project
+(`.firebaserc`). Both are scoped defensively since `devgraders` is a shared
+project used by other apps: the Function deploy always targets
+`--only functions:api`, and Hosting deploys to a **dedicated site**
+(`growtest`, target `growtest-ui`) created specifically for this app rather
+than the project's shared default Hosting site — see "Frontend" below.
 
 ## What's different from `server.js`
 
@@ -89,7 +92,8 @@ values) plus a **one-time CI auth setup**:
    for ROLE in roles/cloudfunctions.admin roles/run.admin \
      roles/iam.serviceAccountUser roles/cloudbuild.builds.editor \
      roles/artifactregistry.admin roles/storage.admin \
-     roles/secretmanager.admin roles/serviceusage.serviceUsageAdmin; do
+     roles/secretmanager.admin roles/serviceusage.serviceUsageAdmin \
+     roles/firebasehosting.admin; do
      gcloud projects add-iam-policy-binding devgraders \
        --member="serviceAccount:$SA" --role="$ROLE" --condition=None
    done
@@ -101,7 +105,8 @@ values) plus a **one-time CI auth setup**:
    part of deploying; `serviceusage.serviceUsageAdmin` is needed because
    deploy auto-enables any required API — e.g. `eventarc.googleapis.com`,
    `run.googleapis.com` — that isn't already on, and without this role that
-   step fails with a permissions error instead.)
+   step fails with a permissions error instead; `firebasehosting.admin` is
+   for the separate frontend Hosting deploy, see "Frontend" below.)
 2. Add the contents of `key.json` as a GitHub Actions secret named
    `FIREBASE_SERVICE_ACCOUNT_DEVGRADERS` on this repo (Settings → Secrets and
    variables → Actions → New repository secret, or `gh secret set
@@ -125,8 +130,40 @@ the function ever needs to be recreated from scratch.
 
 ## Frontend
 
-Once deployed, point `VITE_API_BASE_URL` at the deployed function's URL
-(printed after `firebase deploy`, or visible in the GitHub Actions log for
-CI deploys — of the form
-`https://us-central1-devgraders.cloudfunctions.net/api`) instead of
-`http://localhost:5055`.
+The frontend deploys to a **dedicated Hosting site** (`growtest`,
+`https://growtest.web.app`) rather than `devgraders`' shared default
+Hosting site — `devgraders` is a multi-app project and its default site may
+already serve something else. The site and target were created once via:
+
+```bash
+firebase hosting:sites:create growtest --project devgraders
+firebase target:apply hosting growtest-ui growtest --project devgraders
+```
+
+`.firebaserc`'s `targets` block and `firebase.json`'s `hosting.target` both
+already point at `growtest-ui` — this only needs to be redone if the site is
+ever recreated from scratch.
+
+`.env.production` pins the build's `VITE_API_BASE_URL` to the deployed
+Cloud Function (`https://us-central1-devgraders.cloudfunctions.net/api`) —
+`vite build` picks this up automatically in production mode, baking the API
+URL into the static bundle (no runtime config needed). If the Function URL
+ever changes (e.g. a different region), update this file and redeploy.
+
+### Deploy (manual)
+
+```bash
+npm run build
+firebase deploy --only hosting:growtest-ui --project devgraders
+```
+
+### Continuous deployment (GitHub Actions)
+
+Pushes to `main` touching frontend files (`src/**`, `index.html`,
+`package.json`, etc.) auto-deploy via `.github/workflows/deploy-ui.yml`,
+which builds and runs the same scoped `firebase deploy --only
+hosting:growtest-ui` command above. It reuses the same
+`FIREBASE_SERVICE_ACCOUNT_DEVGRADERS` GitHub secret and service account as
+the Functions workflow (see above) — that service account also needs
+`roles/firebasehosting.admin`, which is included in the setup already
+documented there.

@@ -1,20 +1,15 @@
 import { useState } from 'react'
 import AppShell from './components/AppShell'
-import AIAnalysis from './components/AIAnalysis'
 import GreekAnalysis from './components/GreekAnalysis'
 
+// AI Analysis tab is hidden (not deleted) - src/components/AIAnalysis.jsx
+// still exists and can be re-linked from AppShell's NAV_ITEMS if needed.
 function App() {
-  const [activeTab, setActiveTab] = useState('ai-analysis') // 'ai-analysis' or 'greek-analysis'
+  const [activeTab, setActiveTab] = useState('greek-analysis')
 
   return (
     <AppShell activeTab={activeTab} onTabChange={setActiveTab}>
-      {activeTab === 'ai-analysis' ? (
-        <div className="bg-background min-h-[calc(100vh-96px)] -m-xl p-xl">
-          <AIAnalysis />
-        </div>
-      ) : (
-        <GreekAnalysis />
-      )}
+      <GreekAnalysis />
     </AppShell>
   )
 }

@@ -1,5 +1,15 @@
 {
   "projects": {
     "default": "devgraders"
-  }
+  },
+  "targets": {
+    "devgraders": {
+      "hosting": {
+        "growtest-ui": [
+          "growtest"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }
