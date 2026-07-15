@@ -1,8 +1,28 @@
 import { useState, useRef, useEffect } from 'react'
-import { analyzeOptionChainRange } from '../services/api'
-import './GreekAnalysis.css'
+import { analyzeOptionChainRange, compareOptionChainSnapshots } from '../services/api'
+import AnalysisSnapshotCard from './AnalysisSnapshotCard'
+import MarketPulsePanel from './MarketPulsePanel'
+import ProbabilityGauge from './ProbabilityGauge'
+import TimelineChart from './TimelineChart'
+import OiBuildupPanel from './OiBuildupPanel'
+import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, exportSnapshotsAsJson } from './greekAnalysisUtils'
 
 const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000
+const LTP_HISTORY_LIMIT = 20
+
+function ServerClock() {
+  const [now, setNow] = useState(new Date())
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  return (
+    <div className="text-right">
+      <p className="text-[10px] uppercase text-on-surface-variant">Server Time</p>
+      <p className="text-on-surface font-mono">{now.toLocaleTimeString('en-US', { hour12: false })}</p>
+    </div>
+  )
+}
 
 function GreekAnalysis() {
   const [formData, setFormData] = useState({
@@ -17,11 +37,24 @@ function GreekAnalysis() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [refreshError, setRefreshError] = useState('')
+
   const [analysis, setAnalysis] = useState(null)
   const [lastUpdated, setLastUpdated] = useState(null)
+  const [previousAnalysis, setPreviousAnalysis] = useState(null)
+  const [previousUpdated, setPreviousUpdated] = useState(null)
+
+  const [comparison, setComparison] = useState(null)
+  const [comparing, setComparing] = useState(false)
+  const [comparisonError, setComparisonError] = useState('')
+
+  const [ltpHistory, setLtpHistory] = useState([])
 
   const intervalRef = useRef(null)
   const paramsRef = useRef(null)
+  // Mirrors `analysis` for reliable reads inside the async refresh flow
+  // (avoids a stale closure over the `analysis` state value).
+  const currentAnalysisRef = useRef(null)
+  const currentUpdatedRef = useRef(null)
 
   useEffect(() => {
     return () => {
@@ -33,10 +66,7 @@ function GreekAnalysis() {
 
   const handleInputChange = (e) => {
     const { name, value } = e.target
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }))
+    setFormData((prev) => ({ ...prev, [name]: value }))
   }
 
   const validateForm = () => {
@@ -56,6 +86,19 @@ function GreekAnalysis() {
     return true
   }
 
+  const runComparison = async (previous, latest) => {
+    setComparing(true)
+    setComparisonError('')
+    try {
+      const result = await compareOptionChainSnapshots(previous, latest)
+      setComparison(result)
+    } catch (err) {
+      setComparisonError(err.response?.data?.error || err.message || 'Failed to generate comparison')
+    } finally {
+      setComparing(false)
+    }
+  }
+
   const runAnalysis = async (params, { isAutoRefresh = false } = {}) => {
     if (isAutoRefresh) {
       setRefreshing(true)
@@ -67,8 +110,28 @@ function GreekAnalysis() {
 
     try {
       const data = await analyzeOptionChainRange(params)
+      const now = new Date()
+
+      const priorAnalysis = currentAnalysisRef.current
+      const priorUpdated = currentUpdatedRef.current
+      if (priorAnalysis) {
+        setPreviousAnalysis(priorAnalysis)
+        setPreviousUpdated(priorUpdated)
+      }
+
       setAnalysis(data)
-      setLastUpdated(new Date())
+      setLastUpdated(now)
+      currentAnalysisRef.current = data
+      currentUpdatedRef.current = now
+
+      setLtpHistory((prev) => {
+        const next = [...prev, { time: now, ltp: data.underlying_ltp }]
+        return next.length > LTP_HISTORY_LIMIT ? next.slice(next.length - LTP_HISTORY_LIMIT) : next
+      })
+
+      if (priorAnalysis) {
+        runComparison(priorAnalysis, data)
+      }
     } catch (err) {
       const message = err.response?.data?.error || err.message || 'An error occurred during analysis'
       if (isAutoRefresh) {
@@ -116,249 +179,333 @@ function GreekAnalysis() {
     }, AUTO_REFRESH_INTERVAL_MS)
   }
 
-  const strikeRows = analysis
-    ? Object.keys(analysis.filtered_strikes)
-        .map(parseFloat)
-        .sort((a, b) => a - b)
-        .flatMap((strike) => {
-          const data = analysis.filtered_strikes[strike.toString()]
-          const rows = []
-          if (data?.CE) rows.push({ strike, type: 'CE', ...data.CE })
-          if (data?.PE) rows.push({ strike, type: 'PE', ...data.PE })
-          return rows
-        })
-    : []
+  const probabilityGauge = analysis?.parsed_analysis ? computeProbabilityGauge(analysis.parsed_analysis) : null
+  const oiChanges = previousAnalysis && analysis ? computeOiChanges(previousAnalysis, analysis) : null
+  const greeksDelta = previousAnalysis && analysis ? computeGreeksDelta(previousAnalysis, analysis) : []
+
+  const insightTrend = comparison?.parsed_comparison?.trend || analysis?.parsed_analysis?.sentiment
+  const insightConfidence = comparison?.parsed_comparison?.confidence ?? analysis?.parsed_analysis?.confidence
+  const insightAction = comparison?.parsed_comparison?.updated_recommendation || analysis?.parsed_analysis?.strategy
 
   return (
-    <div className="greek-analysis-container">
-      <div className="greek-analysis-form-section">
-        <h2>Greek Analysis</h2>
-
-        <form onSubmit={handleSubmit} className="greek-analysis-form">
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="ga-exchange">Exchange</label>
-              <select
-                id="ga-exchange"
-                name="exchange"
-                value={formData.exchange}
-                onChange={handleInputChange}
-                className="form-input"
-              >
-                <option value="NSE">NSE</option>
-                <option value="BSE">BSE</option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="ga-underlying_symbol">Underlying Symbol</label>
-              <input
-                id="ga-underlying_symbol"
-                type="text"
-                name="underlying_symbol"
-                value={formData.underlying_symbol}
-                onChange={handleInputChange}
-                placeholder="e.g., NIFTY"
-                className="form-input"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="ga-trading_symbol">Trading Symbol</label>
-              <input
-                id="ga-trading_symbol"
-                type="text"
-                name="trading_symbol"
-                value={formData.trading_symbol}
-                onChange={handleInputChange}
-                placeholder="e.g., NIFTY24JUL25000CE"
-                className="form-input"
-              />
-            </div>
+    <div className="flex flex-col gap-lg">
+      <section className="flex justify-between items-end flex-wrap gap-md">
+        <div className="flex flex-col gap-xs">
+          <div className="flex items-center gap-md">
+            <h2 className="text-2xl font-bold text-white">Greek Analysis</h2>
+            {analysis && (
+              <span className="flex items-center gap-xs px-base py-0.5 bg-bullish/10 text-bullish text-[11px] font-bold rounded uppercase tracking-wider">
+                <span className="w-2 h-2 bg-bullish rounded-full pulse-live" />
+                LIVE
+              </span>
+            )}
           </div>
-
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="ga-points_range">Points Range (+/-)</label>
-              <input
-                id="ga-points_range"
-                type="number"
-                name="points_range"
-                value={formData.points_range}
-                onChange={handleInputChange}
-                placeholder="e.g., 500"
-                step="50"
-                min="1"
-                className="form-input"
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="ga-expiry_date">Expiry Date</label>
-              <input
-                id="ga-expiry_date"
-                type="date"
-                name="expiry_date"
-                value={formData.expiry_date}
-                onChange={handleInputChange}
-                placeholder="YYYY-MM-DD"
-                className="form-input"
-              />
-            </div>
-          </div>
-
-          {error && <div className="error-message">{error}</div>}
-
-          <button type="submit" disabled={loading} className="submit-btn">
-            {loading ? 'Analyzing...' : 'Start Greek Analysis'}
+          <p className="text-on-surface-variant text-sm">
+            Auto-refreshing every 15 minutes
+            {refreshing ? ' · refreshing now...' : ''}
+          </p>
+        </div>
+        <div className="flex items-center gap-md">
+          <ServerClock />
+          <button
+            type="button"
+            disabled={!analysis}
+            onClick={() => exportSnapshotsAsJson(analysis, previousAnalysis, comparison)}
+            className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined">download</span>
+            Export
           </button>
-        </form>
-      </div>
+        </div>
+      </section>
+
+      <form
+        onSubmit={handleSubmit}
+        className="glass-panel p-md rounded-xl flex items-end gap-lg flex-wrap"
+      >
+        <div className="flex flex-col gap-xs">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-exchange">
+            Exchange
+          </label>
+          <select
+            id="ga-exchange"
+            name="exchange"
+            value={formData.exchange}
+            onChange={handleInputChange}
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[120px] text-on-surface"
+          >
+            <option value="NSE">NSE</option>
+            <option value="BSE">BSE</option>
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-xs">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-underlying_symbol">
+            Underlying Symbol
+          </label>
+          <input
+            id="ga-underlying_symbol"
+            type="text"
+            name="underlying_symbol"
+            value={formData.underlying_symbol}
+            onChange={handleInputChange}
+            placeholder="e.g., NIFTY"
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[140px] text-on-surface"
+          />
+        </div>
+
+        <div className="flex flex-col gap-xs">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-trading_symbol">
+            Trading Symbol
+          </label>
+          <input
+            id="ga-trading_symbol"
+            type="text"
+            name="trading_symbol"
+            value={formData.trading_symbol}
+            onChange={handleInputChange}
+            placeholder="e.g., NIFTY24JUL25000CE"
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[180px] text-on-surface"
+          />
+        </div>
+
+        <div className="flex flex-col gap-xs flex-1 min-w-[160px]">
+          <label className="text-[11px] uppercase text-on-surface-variant flex justify-between" htmlFor="ga-points_range">
+            Points Range (+/-) <span>{formData.points_range}</span>
+          </label>
+          <input
+            id="ga-points_range"
+            type="number"
+            name="points_range"
+            value={formData.points_range}
+            onChange={handleInputChange}
+            placeholder="e.g., 500"
+            step="50"
+            min="50"
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
+          />
+        </div>
+
+        <div className="flex flex-col gap-xs">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-expiry_date">
+            Expiry Date
+          </label>
+          <input
+            id="ga-expiry_date"
+            type="date"
+            name="expiry_date"
+            value={formData.expiry_date}
+            onChange={handleInputChange}
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
+          />
+        </div>
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="bg-primary-container text-on-primary-container text-sm px-xl py-lg rounded-lg shadow-lg shadow-primary-container/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          {loading ? 'Analyzing...' : 'Start Greek Analysis'}
+        </button>
+      </form>
+
+      {error && <div className="text-bearish text-sm px-base">{error}</div>}
+      {refreshError && <div className="text-tertiary text-sm px-base">{refreshError}</div>}
 
       {analysis && (
-        <div className="output-column">
-          <div className="calculated-range-section">
-            <h3>Calculated Range</h3>
-            <div className="range-display">
-              <div className="range-item min">
-                <span className="range-label">Minimum (LTP - {analysis.points_range})</span>
-                <span className="range-value min">₹{analysis.calculated_range?.min}</span>
-              </div>
-              <div className="range-item current">
-                <span className="range-label">Current LTP</span>
-                <span className="range-value current">₹{analysis.underlying_ltp}</span>
-              </div>
-              <div className="range-item max">
-                <span className="range-label">Maximum (LTP + {analysis.points_range})</span>
-                <span className="range-value max">₹{analysis.calculated_range?.max}</span>
-              </div>
-            </div>
+        <>
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-md items-start">
+            <AnalysisSnapshotCard analysis={analysis} label="Current 15 Minutes" variant="latest" timestamp={lastUpdated} />
 
-            <div className="refresh-status">
-              {lastUpdated && (
-                <span>
-                  Last updated at {lastUpdated.toLocaleTimeString()} · auto-refreshing every 15 min
-                  {refreshing ? ' · refreshing now...' : ''}
-                </span>
-              )}
-              {refreshError && <div className="refresh-error">{refreshError}</div>}
-            </div>
-          </div>
-
-          <div className="greeks-table-section">
-            <h3>CE &amp; PE Greeks ({analysis.filtered_strikes_count} strikes)</h3>
-            <div className="options-table">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Strike</th>
-                    <th>Type</th>
-                    <th>LTP</th>
-                    <th>OI</th>
-                    <th>Delta</th>
-                    <th>Gamma</th>
-                    <th>Theta</th>
-                    <th>Vega</th>
-                    <th>Rho</th>
-                    <th>IV</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {strikeRows.map((row, idx) => (
-                    <tr key={idx}>
-                      <td className="strike">₹{row.strike}</td>
-                      <td className={`type ${row.type === 'CE' ? 'ce' : 'pe'}`}>{row.type}</td>
-                      <td className="ltp">₹{row.ltp ?? 'N/A'}</td>
-                      <td className="oi">{row.open_interest ?? 0}</td>
-                      <td className="greek">{row.greeks?.delta?.toFixed(4) ?? 'N/A'}</td>
-                      <td className="greek">{row.greeks?.gamma?.toFixed(4) ?? 'N/A'}</td>
-                      <td className="greek">{row.greeks?.theta?.toFixed(4) ?? 'N/A'}</td>
-                      <td className="greek">{row.greeks?.vega?.toFixed(4) ?? 'N/A'}</td>
-                      <td className="greek">{row.greeks?.rho?.toFixed(4) ?? 'N/A'}</td>
-                      <td className="iv">{row.greeks?.iv?.toFixed(2) ?? 'N/A'}%</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div className="analysis-result-section">
-            <h3>AI Analysis Result</h3>
-
-            {analysis.raw_text && (
-              <div className="analysis-explanation">
-                <h4>Analysis Summary</h4>
-                <p>{analysis.raw_text}</p>
+            {previousAnalysis ? (
+              <AnalysisSnapshotCard
+                analysis={previousAnalysis}
+                label="Previous 15 Minutes"
+                variant="previous"
+                timestamp={previousUpdated}
+              />
+            ) : (
+              <div className="glass-panel rounded-xl p-md flex items-center justify-center text-on-surface-variant text-sm text-center min-h-[200px]">
+                Waiting for the next auto-refresh cycle to have a prior snapshot to show.
               </div>
             )}
 
-            {analysis.parsed_analysis && (
-              <div className="analysis-details">
-                <div className="analysis-grid">
-                  {analysis.parsed_analysis.sentiment && (
-                    <div className="analysis-item">
-                      <span className="label">Sentiment:</span>
-                      <span className={`value sentiment-${analysis.parsed_analysis.sentiment.toLowerCase()}`}>
-                        {analysis.parsed_analysis.sentiment}
-                      </span>
-                    </div>
-                  )}
-                  {analysis.parsed_analysis.support_level && (
-                    <div className="analysis-item">
-                      <span className="label">Support Level:</span>
-                      <span className="value">₹{analysis.parsed_analysis.support_level}</span>
-                    </div>
-                  )}
-                  {analysis.parsed_analysis.resistance_level && (
-                    <div className="analysis-item">
-                      <span className="label">Resistance Level:</span>
-                      <span className="value">₹{analysis.parsed_analysis.resistance_level}</span>
-                    </div>
-                  )}
-                  {analysis.parsed_analysis.confidence && (
-                    <div className="analysis-item">
-                      <span className="label">Confidence:</span>
-                      <span className="value">{analysis.parsed_analysis.confidence}%</span>
-                    </div>
-                  )}
-                </div>
-
-                {analysis.parsed_analysis.strategy && (
-                  <div className="analysis-section">
-                    <h5>Recommended Strategy</h5>
-                    <p>{analysis.parsed_analysis.strategy}</p>
+            <div className="glass-panel rounded-xl overflow-hidden">
+              <div className="p-md border-b border-terminal-border bg-white/5">
+                <h3 className="text-base font-bold text-white">Difference</h3>
+              </div>
+              <div className="p-md flex flex-col gap-md">
+                {!previousAnalysis ? (
+                  <div className="text-on-surface-variant text-sm text-center py-lg">
+                    Comparison appears once there are two snapshots to compare.
                   </div>
-                )}
-
-                {analysis.parsed_analysis.risk_assessment && (
-                  <div className="analysis-section">
-                    <h5>Risk Assessment</h5>
-                    <p>{analysis.parsed_analysis.risk_assessment}</p>
-                  </div>
-                )}
-
-                {analysis.parsed_analysis.detail_analysis && (
-                  <div className="analysis-section">
-                    <h5>Detailed Analysis</h5>
-                    {typeof analysis.parsed_analysis.detail_analysis === 'object' ? (
-                      <div className="detail-analysis-content">
-                        {Object.entries(analysis.parsed_analysis.detail_analysis).map(([key, value]) => (
-                          <div key={key} className="detail-item">
-                            <h6>{key}</h6>
-                            <p>{value}</p>
+                ) : comparing ? (
+                  <div className="text-on-surface-variant text-sm text-center py-lg">Generating comparison inference...</div>
+                ) : comparisonError ? (
+                  <div className="text-bearish text-sm">{comparisonError}</div>
+                ) : (
+                  <>
+                    {comparison?.parsed_comparison && (
+                      <div className="flex flex-col gap-base text-sm">
+                        <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                          <span className="text-on-surface-variant">Trend</span>
+                          <span
+                            className={`font-bold ${
+                              comparison.parsed_comparison.trend?.toLowerCase().includes('strength')
+                                ? 'text-bullish'
+                                : comparison.parsed_comparison.trend?.toLowerCase().includes('revers') ||
+                                  comparison.parsed_comparison.trend?.toLowerCase().includes('weak')
+                                ? 'text-bearish'
+                                : 'text-tertiary'
+                            }`}
+                          >
+                            {comparison.parsed_comparison.trend}
+                          </span>
+                        </div>
+                        {comparison.parsed_comparison.confidence && (
+                          <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                            <span className="text-on-surface-variant">Confidence</span>
+                            <span className="text-on-surface">{comparison.parsed_comparison.confidence}%</span>
                           </div>
-                        ))}
+                        )}
+                        {comparison.parsed_comparison.ltp_change_summary && (
+                          <p className="text-on-surface-variant">{comparison.parsed_comparison.ltp_change_summary}</p>
+                        )}
                       </div>
-                    ) : (
-                      <p>{analysis.parsed_analysis.detail_analysis}</p>
                     )}
+
+                    {greeksDelta.length > 0 && (
+                      <table className="w-full text-xs mt-base">
+                        <thead>
+                          <tr className="text-on-surface-variant text-left border-b border-terminal-border">
+                            <th className="pb-sm font-medium">Change (avg)</th>
+                            <th className="pb-sm font-medium text-right">Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-terminal-border/50">
+                          {greeksDelta.map((g) => (
+                            <tr key={g.key}>
+                              <td className="py-sm">
+                                <div className="flex items-center gap-base">
+                                  <span
+                                    className={`material-symbols-outlined text-base ${
+                                      g.avgChange >= 0 ? 'text-bullish' : 'text-bearish'
+                                    }`}
+                                  >
+                                    {g.avgChange >= 0 ? 'trending_up' : 'trending_down'}
+                                  </span>
+                                  <div>
+                                    <div className={`font-mono ${g.avgChange >= 0 ? 'text-bullish' : 'text-bearish'}`}>
+                                      {g.avgChange >= 0 ? '+' : ''}
+                                      {g.avgChange.toFixed(4)}
+                                    </div>
+                                    <div className="text-[10px] opacity-60">{g.label}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td className="py-sm text-right text-on-surface-variant">{g.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
+            <OiBuildupPanel
+              title="Key Strike Changes"
+              rows={oiChanges?.keyStrikeChanges || []}
+              barColorClass="bg-primary"
+              formatLabel={(r) => `${r.strike} ${r.type}`}
+            />
+            <OiBuildupPanel
+              title="Top OI Buildup Calls"
+              rows={oiChanges?.topCallBuildup || []}
+              barColorClass="bg-bullish"
+              formatLabel={(r) => `${r.strike} CE`}
+            />
+            <OiBuildupPanel
+              title="Top OI Buildup Puts"
+              rows={oiChanges?.topPutBuildup || []}
+              barColorClass="bg-bearish"
+              formatLabel={(r) => `${r.strike} PE`}
+            />
+          </section>
+
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
+            <div className="md:col-span-2">
+              <MarketPulsePanel parsedAnalysis={analysis.parsed_analysis} />
+            </div>
+            <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
+              <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
+              <div
+                className={`text-4xl font-bold leading-none mb-base ${
+                  analysis.parsed_analysis?.sentiment?.toLowerCase() === 'bullish'
+                    ? 'text-bullish'
+                    : analysis.parsed_analysis?.sentiment?.toLowerCase() === 'bearish'
+                    ? 'text-bearish'
+                    : 'text-tertiary'
+                }`}
+              >
+                {(analysis.parsed_analysis?.sentiment || 'N/A').toUpperCase()}
+              </div>
+              <div className="mt-md w-full px-xl">
+                <div className="h-1 w-full bg-surface-container-high rounded-full">
+                  <div
+                    className="h-full bg-bullish rounded-full"
+                    style={{ width: `${analysis.parsed_analysis?.confidence || 0}%` }}
+                  />
+                </div>
+                <div className="text-xs text-on-surface-variant mt-xs">{analysis.parsed_analysis?.confidence ?? 'N/A'}% confidence</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
+            <TimelineChart history={ltpHistory} />
+
+            <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
+              <div className="flex items-center gap-base mb-md">
+                <span className="material-symbols-outlined text-primary">psychology</span>
+                <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
+              </div>
+              <div className="flex flex-col gap-sm text-sm">
+                {insightTrend && (
+                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                    <span className="text-on-surface-variant">Trend</span>
+                    <span className="font-bold text-on-surface">{insightTrend}</span>
+                  </div>
+                )}
+                {insightConfidence != null && (
+                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                    <span className="text-on-surface-variant">Confidence</span>
+                    <span className="text-on-surface">{insightConfidence}%</span>
+                  </div>
+                )}
+                {analysis.parsed_analysis?.support_level && analysis.parsed_analysis?.resistance_level && (
+                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                    <span className="text-on-surface-variant">S/R Zones</span>
+                    <span className="text-on-surface font-mono">
+                      {analysis.parsed_analysis.support_level} / {analysis.parsed_analysis.resistance_level}
+                    </span>
+                  </div>
+                )}
+                {insightAction && (
+                  <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
+                    <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
+                    <div className="text-on-surface italic text-sm">{insightAction}</div>
                   </div>
                 )}
               </div>
-            )}
-          </div>
-        </div>
+            </div>
+
+            {probabilityGauge && <ProbabilityGauge bullishPct={probabilityGauge.bullishPct} bearishPct={probabilityGauge.bearishPct} />}
+          </section>
+        </>
       )}
     </div>
   )

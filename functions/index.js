@@ -15,7 +15,10 @@ import { defineSecret } from 'firebase-functions/params'
 
 const GROWW_API_KEY_SECRET = defineSecret('GROWW_API_KEY')
 const GROWW_API_SECRET_SECRET = defineSecret('GROWW_API_SECRET')
-const CLAUDE_API_KEY_SECRET = defineSecret('CLAUDE_API_KEY')
+const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
+const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
+const AZURE_OPENAI_DEPLOYMENT_SECRET = defineSecret('AZURE_OPENAI_DEPLOYMENT')
+const AZURE_OPENAI_API_VERSION_SECRET = defineSecret('AZURE_OPENAI_API_VERSION')
 
 const app = express()
 app.use(cors())
@@ -26,10 +29,6 @@ const GROWW_API_BASE_URL = 'https://api.groww.in/v1'
 const GROWW_API_VERSION = '1.0'
 const GROWW_TOKEN_URL = 'https://api.groww.in/v1/token/api/access'
 const INSTRUMENTS_JSON_LOCAL = './instruments-sample.json'
-
-// Claude API Configuration
-const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
-const CLAUDE_MODEL = 'claude-3-haiku-20240307'
 
 // In-memory cache for the exchanged Groww access token (valid until ~6 AM IST daily)
 let cachedToken = null
@@ -91,32 +90,39 @@ async function fetchInstrumentsJSON() {
 }
 
 /**
- * Call Claude with a prepared prompt and parse its JSON response.
+ * Call Azure OpenAI with a prepared prompt and parse its JSON response.
  * Shared by endpoints that need option-chain AI inference.
  */
-async function analyzeWithClaude(promptContent) {
-  const claudeResponse = await axios.post(
-    CLAUDE_API_URL,
+async function analyzeWithAI(promptContent) {
+  const apiKey = AZURE_OPENAI_API_KEY_SECRET.value()
+  const endpoint = AZURE_OPENAI_ENDPOINT_SECRET.value()
+  const deployment = AZURE_OPENAI_DEPLOYMENT_SECRET.value()
+  const apiVersion = AZURE_OPENAI_API_VERSION_SECRET.value() || '2024-10-21'
+
+  if (!apiKey || !endpoint || !deployment) {
+    throw new Error('Azure OpenAI is not configured (missing AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, or AZURE_OPENAI_DEPLOYMENT)')
+  }
+
+  const azureResponse = await axios.post(
+    `${endpoint.replace(/\/+$/, '')}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`,
     {
-      model: CLAUDE_MODEL,
-      max_tokens: 1024,
       messages: [{ role: 'user', content: promptContent }],
+      max_tokens: 1024,
     },
     {
       headers: {
-        'x-api-key': CLAUDE_API_KEY_SECRET.value(),
-        'anthropic-version': '2023-06-01',
+        'api-key': apiKey,
         'content-type': 'application/json',
       },
       timeout: 30000,
     }
   )
 
-  if (claudeResponse.status !== 200 || !claudeResponse.data.content || claudeResponse.data.content.length === 0) {
-    throw new Error('Failed to get analysis from Claude API')
+  if (azureResponse.status !== 200 || !azureResponse.data.choices || azureResponse.data.choices.length === 0) {
+    throw new Error('Failed to get analysis from Azure OpenAI')
   }
 
-  const analysisText = claudeResponse.data.content[0].text
+  const analysisText = azureResponse.data.choices[0].message.content
 
   let parsedAnalysis = null
   let explanation = ''
@@ -521,7 +527,7 @@ Please provide:
 
 Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
-      const result = await analyzeWithClaude(promptContent)
+      const result = await analyzeWithAI(promptContent)
       aiAnalysis = {
         status: 'SUCCESS',
         symbol: trading_symbol,
@@ -651,10 +657,11 @@ Please provide:
 4. Risk assessment
 5. Confidence level (0-100)
 6. Detail Analysis
+7. Five additional 0-100 market-pulse scores based on the option data: price_strength (how strongly price is trending vs. its range), momentum (rate of recent price change), volatility_score (derived from IV levels across strikes), buying_pressure and selling_pressure (derived from CE vs PE open interest/volume skew), and institutional_activity (derived from overall OI concentration/magnitude)
 
-Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
+Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis, price_strength, momentum, volatility_score, buying_pressure, selling_pressure, institutional_activity`
 
-      const result = await analyzeWithClaude(promptContent)
+      const result = await analyzeWithAI(promptContent)
       parsed_analysis = result.parsed_analysis
       raw_text = result.raw_text
     } catch (error) {
@@ -684,7 +691,7 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
 })
 
 /**
- * Get AI inference on market data using Claude API (option chain passed directly)
+ * Get AI inference on market data using Azure OpenAI (option chain passed directly)
  */
 app.post('/ai/inference', async (req, res) => {
   try {
@@ -727,7 +734,7 @@ Please provide:
 
 Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
-    const result = await analyzeWithClaude(promptContent)
+    const result = await analyzeWithAI(promptContent)
 
     return res.json({
       status: 'SUCCESS',
@@ -749,6 +756,55 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
 })
 
 /**
+ * Compare two option-chain analysis snapshots (e.g. latest vs. ~15 min prior)
+ * and get an AI-generated trend inference: what changed and what it means.
+ */
+app.post('/compare-option-chain-snapshots', async (req, res) => {
+  try {
+    const { previous, latest } = req.body
+
+    if (!previous || !latest) {
+      return res.status(400).json({
+        error: 'Both previous and latest snapshots are required',
+        required: ['previous', 'latest'],
+        received: Object.keys(req.body),
+      })
+    }
+
+    const describeSnapshot = (snapshot) => `LTP: ₹${snapshot.underlying_ltp}, Sentiment: ${snapshot.parsed_analysis?.sentiment || 'N/A'}, Support: ₹${snapshot.parsed_analysis?.support_level || 'N/A'}, Resistance: ₹${snapshot.parsed_analysis?.resistance_level || 'N/A'}, Confidence: ${snapshot.parsed_analysis?.confidence ?? 'N/A'}%, Strategy: ${snapshot.parsed_analysis?.strategy || 'N/A'}`
+
+    const promptContent = `Compare these two option chain analyses for ${latest.trading_symbol || latest.symbol}, taken ~15 minutes apart, and explain the trend between them.
+
+Previous snapshot:
+${describeSnapshot(previous)}
+
+Latest snapshot:
+${describeSnapshot(latest)}
+
+Please provide:
+1. Trend (Strengthening/Weakening/Reversing/Unchanged)
+2. A short summary of the LTP change
+3. How sentiment shifted (or stayed the same) and why that matters
+4. An updated trading recommendation given this trend
+5. Confidence in this trend assessment (0-100)
+6. A short narrative explanation tying it together
+
+Format your response as JSON with keys: trend, ltp_change_summary, sentiment_shift, updated_recommendation, confidence, narrative`
+
+    const result = await analyzeWithAI(promptContent)
+
+    return res.json({
+      status: 'SUCCESS',
+      parsed_comparison: result.parsed_analysis,
+      raw_text: result.raw_text,
+    })
+  } catch (error) {
+    console.error('Comparison Error:', error.message)
+    res.status(error.response?.status || 500).json({ error: error.message })
+  }
+})
+
+/**
  * 404 handler for unmatched API routes
  */
 app.use((_, res) => {
@@ -757,7 +813,14 @@ app.use((_, res) => {
 
 export const api = onRequest(
   {
-    secrets: [GROWW_API_KEY_SECRET, GROWW_API_SECRET_SECRET, CLAUDE_API_KEY_SECRET],
+    secrets: [
+      GROWW_API_KEY_SECRET,
+      GROWW_API_SECRET_SECRET,
+      AZURE_OPENAI_API_KEY_SECRET,
+      AZURE_OPENAI_ENDPOINT_SECRET,
+      AZURE_OPENAI_DEPLOYMENT_SECRET,
+      AZURE_OPENAI_API_VERSION_SECRET,
+    ],
     timeoutSeconds: 60,
     memory: '256MiB',
   },

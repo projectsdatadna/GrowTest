@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5001'
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5055'
 
 const apiClient = axios.create({
   baseURL: API_BASE_URL,
@@ -65,6 +65,17 @@ export const analyzeOptionChainRange = async (data) => {
     return response.data
   } catch (error) {
     console.error('Error analyzing option chain range:', error)
+    throw error
+  }
+}
+
+// Compare two Greek Analysis snapshots (e.g. latest vs ~15 min prior) for an AI trend inference
+export const compareOptionChainSnapshots = async (previous, latest) => {
+  try {
+    const response = await apiClient.post('/compare-option-chain-snapshots', { previous, latest })
+    return response.data
+  } catch (error) {
+    console.error('Error comparing option chain snapshots:', error)
     throw error
   }
 }

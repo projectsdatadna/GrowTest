@@ -344,8 +344,9 @@ Please provide:
 4. Risk assessment
 5. Confidence level (0-100)
 6. Detail Analysis
+7. Five additional 0-100 market-pulse scores: price_strength, momentum, volatility_score, buying_pressure, selling_pressure, institutional_activity
 
-Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis
+Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis, price_strength, momentum, volatility_score, buying_pressure, selling_pressure, institutional_activity
 ```
 
 ### Resulting API response shape
@@ -363,7 +364,11 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
   "calculated_range": { "min": "24000.25", "max": "25000.25" },
   "filtered_strikes": { "...": "every strike within the +/-500 band, full CE/PE objects incl. greeks" },
   "filtered_strikes_count": 3,
-  "parsed_analysis": { "...": "the JSON object shown above" },
+  "parsed_analysis": {
+    "...": "the JSON object shown above, now also including",
+    "price_strength": 68, "momentum": 55, "volatility_score": 40,
+    "buying_pressure": 62, "selling_pressure": 38, "institutional_activity": 57
+  },
   "raw_text": "Based on the option chain data, here is my analysis:"
 }
 ```
@@ -444,6 +449,46 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
 
 Missing required fields → `400` with the field list; missing `CLAUDE_API_KEY`
 → `500 { "error": "Claude API key not configured" }`.
+
+## `POST /compare-option-chain-snapshots`
+
+Powers Greek Analysis' Zone 3 (Trend Comparison): takes two full
+`/analyze-option-chain-range` response snapshots (typically ~15 minutes
+apart, per the frontend's auto-refresh) and asks Claude to interpret the
+trend between them, reusing the same `analyzeWithClaude` helper as the
+other AI-inference endpoints.
+
+```bash
+curl -X POST -H "Content-Type: application/json" \
+  -d '{
+    "previous": { "trading_symbol": "NIFTY", "underlying_ltp": 24450.0, "parsed_analysis": { "sentiment": "Neutral", "support_level": "24200", "resistance_level": "24700", "confidence": 55, "strategy": "Iron condor" } },
+    "latest":   { "trading_symbol": "NIFTY", "underlying_ltp": 24580.0, "parsed_analysis": { "sentiment": "Bullish", "support_level": "24300", "resistance_level": "24800", "confidence": 68, "strategy": "Bull call spread" } }
+  }' \
+  "http://localhost:5051/compare-option-chain-snapshots"
+```
+
+Missing either snapshot → `400`:
+
+```json
+{ "error": "Both previous and latest snapshots are required", "required": ["previous", "latest"], "received": [] }
+```
+
+### Resulting API response shape
+
+```json
+{
+  "status": "SUCCESS",
+  "parsed_comparison": {
+    "trend": "Strengthening",
+    "ltp_change_summary": "NIFTY rose ~130 points (24450 -> 24580) over the last 15 minutes.",
+    "sentiment_shift": "Shifted from Neutral to Bullish as price broke above the prior resistance zone.",
+    "updated_recommendation": "Consider rolling into a bull call spread given the breakout.",
+    "confidence": 70,
+    "narrative": "The move above 24500 with rising confidence suggests short-term bullish momentum is building."
+  },
+  "raw_text": "Comparing the two snapshots:"
+}
+```
 
 ## `GET /nope` (unmatched route)
 

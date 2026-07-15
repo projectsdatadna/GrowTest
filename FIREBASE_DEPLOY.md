@@ -11,8 +11,9 @@ apps and its Hosting config wasn't touched.
 - No `app.listen()` — Cloud Functions invoke the exported handler directly.
 - No static file serving / SPA catch-all — that's Hosting's job, not this
   Function's.
-- Secrets (`GROWW_API_KEY`, `GROWW_API_SECRET`, `CLAUDE_API_KEY`) come from
-  Firebase Secret Manager via `defineSecret(...).value()`, not `.env`.
+- Secrets (`GROWW_API_KEY`, `GROWW_API_SECRET`, `AZURE_OPENAI_API_KEY`,
+  `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION`)
+  come from Firebase Secret Manager via `defineSecret(...).value()`, not `.env`.
 - `instruments-sample.json` is copied into `functions/` so it's included in
   the deployed bundle (local `readFileSync('./instruments-sample.json')`
   resolves relative to the function's own directory).
@@ -26,12 +27,19 @@ All route logic/behavior is otherwise identical to `server.js`.
    ```bash
    firebase functions:secrets:set GROWW_API_KEY --project devgraders
    firebase functions:secrets:set GROWW_API_SECRET --project devgraders
-   firebase functions:secrets:set CLAUDE_API_KEY --project devgraders
+   firebase functions:secrets:set AZURE_OPENAI_API_KEY --project devgraders
+   firebase functions:secrets:set AZURE_OPENAI_ENDPOINT --project devgraders
+   firebase functions:secrets:set AZURE_OPENAI_DEPLOYMENT --project devgraders
+   firebase functions:secrets:set AZURE_OPENAI_API_VERSION --project devgraders
    ```
    Each prompts for the value interactively — paste it and press enter.
+   (`AZURE_OPENAI_API_VERSION` falls back to `2024-10-21` in code if you skip
+   it, but Secret Manager has no notion of "unset optional" once the function
+   declares it — set it explicitly to whatever `.env`'s `AZURE_OPENAI_API_VERSION`
+   is, e.g. `2024-08-01-preview`.)
 
 2. Confirm the **Blaze (pay-as-you-go) plan** is enabled on `devgraders` —
-   required because this function makes outbound calls to Groww/Anthropic.
+   required because this function makes outbound calls to Groww/Azure OpenAI.
    Spark (free) plan blocks all outbound network requests.
 
 ## Deploy
@@ -53,15 +61,51 @@ in this same project. Scoping to `:api` deploys/updates only this one.
 firebase emulators:exec --only functions "curl http://localhost:5002/devgraders/us-central1/api/health"
 ```
 
-(Port 5002 is set in `firebase.json`'s `emulators.functions.port` — the
-default 5001 collides with this repo's own local dev server.) The emulator
+(Port 5002 is set in `firebase.json`'s `emulators.functions.port` since the
+Functions emulator's own default, 5001, tends to collide with other local
+dev servers.) The emulator
 will warn that it can't reach Secret Manager unless you've run the secrets
 setup above or provide overrides in `functions/.secret.local` (gitignored) —
-that's expected for routes that don't touch Groww/Claude, like `/health`.
+that's expected for routes that don't touch Groww/Azure, like `/health`.
+
+## Continuous deployment (GitHub Actions)
+
+Pushes to `main` that touch `functions/**` auto-deploy via
+`.github/workflows/deploy-functions.yml`, which runs the same scoped
+`firebase deploy --only functions:api --project devgraders --non-interactive`
+command as above. This still requires the **one-time secrets setup** above
+(GitHub Actions deploys the function code; it does not set Secret Manager
+values) plus a **one-time CI auth setup**:
+
+1. Create a service account with deploy rights on `devgraders` (Cloud
+   Functions Admin, Cloud Build Editor, Service Account User, Firebase Admin
+   roles — or just `roles/editor` for a quicker/broader setup), then download
+   its JSON key:
+   ```bash
+   gcloud iam service-accounts create github-deploy-devgraders \
+     --project devgraders --display-name "GitHub Actions deploy"
+   gcloud projects add-iam-policy-binding devgraders \
+     --member="serviceAccount:github-deploy-devgraders@devgraders.iam.gserviceaccount.com" \
+     --role="roles/editor"
+   gcloud iam service-accounts keys create key.json \
+     --iam-account="github-deploy-devgraders@devgraders.iam.gserviceaccount.com"
+   ```
+2. Add the contents of `key.json` as a GitHub Actions secret named
+   `FIREBASE_SERVICE_ACCOUNT_DEVGRADERS` on this repo (Settings → Secrets and
+   variables → Actions → New repository secret, or `gh secret set
+   FIREBASE_SERVICE_ACCOUNT_DEVGRADERS < key.json`), then delete the local
+   `key.json` — it's a live credential.
+3. Push to `main`. The workflow picks up the secret automatically; no further
+   config needed. Until step 2 is done, the workflow will run and fail at the
+   auth step — commits still push fine, they just won't auto-deploy yet.
+
+Manual `firebase deploy` (the section above) still works any time and is
+useful for one-off deploys without waiting on CI.
 
 ## Frontend
 
 Once deployed, point `VITE_API_BASE_URL` at the deployed function's URL
-(printed after `firebase deploy`, of the form
+(printed after `firebase deploy`, or visible in the GitHub Actions log for
+CI deploys — of the form
 `https://us-central1-devgraders.cloudfunctions.net/api`) instead of
-`http://localhost:5001`.
+`http://localhost:5055`.

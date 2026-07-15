@@ -1,0 +1,46 @@
+/* Shared dark "terminal" visual primitives, matching the Stitch mockup's
+   own <style> block. Used by AppShell and GreekAnalysis. */
+
+body {
+  background-color: #060b16;
+  color: #e4e1ec;
+  font-family: 'Inter', sans-serif;
+}
+
+.glass-panel {
+  background: rgba(13, 23, 40, 0.8);
+  backdrop-filter: blur(12px);
+  border: 1px solid #243248;
+}
+
+.pulse-live {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #060b16;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #243248;
+  border-radius: 10px;
+}
+
+.glow-line {
+  filter: drop-shadow(0 0 4px #27d67b);
+}
