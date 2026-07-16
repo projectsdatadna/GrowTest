@@ -9,7 +9,11 @@ import {
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import ComparisonPanel from './ComparisonPanel'
 import OiBuildupPanel from './OiBuildupPanel'
-import { computeOiChanges, computeGreeksDelta } from './greekAnalysisUtils'
+import MarketPulsePanel from './MarketPulsePanel'
+import ProbabilityGauge from './ProbabilityGauge'
+import TimelineChart from './TimelineChart'
+import { computeOiChanges, computeGreeksDelta, computeProbabilityGauge } from './greekAnalysisUtils'
+import { computeMarketPulse } from './marketPulseEngine'
 
 const underlyingSymbolSelectClassNames = {
   control: () =>
@@ -91,8 +95,14 @@ function CompareSnapshots() {
       const comparison = await compareOptionChainSnapshots(previous, latest)
       const oiChanges = computeOiChanges(previous, latest)
       const greeksDelta = computeGreeksDelta(previous, latest)
+      const marketPulse = computeMarketPulse(latest, previous)
+      const probabilityGauge = latest.parsed_analysis ? computeProbabilityGauge(latest.parsed_analysis) : null
+      const priceTimeline = [
+        { time: new Date(previous.createdAt), ltp: previous.underlying_ltp },
+        { time: new Date(latest.createdAt), ltp: latest.underlying_ltp },
+      ]
 
-      setResult({ previous, latest, comparison, oiChanges, greeksDelta })
+      setResult({ previous, latest, comparison, oiChanges, greeksDelta, marketPulse, probabilityGauge, priceTimeline })
     } catch (err) {
       setCompareError(err.response?.data?.error || err.message || 'Failed to compare snapshots')
     } finally {
@@ -104,6 +114,10 @@ function CompareSnapshots() {
 
   const snapshotAOptions = snapshots.filter((s) => s.id !== snapshotBId)
   const snapshotBOptions = snapshots.filter((s) => s.id !== snapshotAId)
+
+  const insightTrend = result?.comparison?.parsed_comparison?.trend || result?.latest.parsed_analysis?.sentiment
+  const insightConfidence = result?.comparison?.parsed_comparison?.confidence ?? result?.latest.parsed_analysis?.confidence
+  const insightAction = result?.comparison?.parsed_comparison?.updated_recommendation || result?.latest.parsed_analysis?.strategy
 
   return (
     <div className="flex flex-col gap-lg">
@@ -232,6 +246,83 @@ function CompareSnapshots() {
               barColorClass="bg-bearish"
               formatLabel={(r) => `${r.strike} PE`}
             />
+          </section>
+
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
+            <div className="md:col-span-2">
+              <MarketPulsePanel
+                parsedAnalysis={result.marketPulse}
+                meta={result.marketPulse ? { pcr: result.marketPulse.pcr, maxPainStrike: result.marketPulse.maxPainStrike } : null}
+              />
+            </div>
+            <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
+              <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
+              <div
+                className={`text-4xl font-bold leading-none mb-base ${
+                  result.latest.parsed_analysis?.sentiment?.toLowerCase() === 'bullish'
+                    ? 'text-bullish'
+                    : result.latest.parsed_analysis?.sentiment?.toLowerCase() === 'bearish'
+                    ? 'text-bearish'
+                    : 'text-tertiary'
+                }`}
+              >
+                {(result.latest.parsed_analysis?.sentiment || 'N/A').toUpperCase()}
+              </div>
+              <div className="mt-md w-full px-xl">
+                <div className="h-1 w-full bg-surface-container-high rounded-full">
+                  <div
+                    className="h-full bg-bullish rounded-full"
+                    style={{ width: `${result.latest.parsed_analysis?.confidence || 0}%` }}
+                  />
+                </div>
+                <div className="text-xs text-on-surface-variant mt-xs">
+                  {result.latest.parsed_analysis?.confidence ?? 'N/A'}% confidence
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
+            <TimelineChart history={result.priceTimeline} />
+
+            <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
+              <div className="flex items-center gap-base mb-md">
+                <span className="material-symbols-outlined text-primary">psychology</span>
+                <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
+              </div>
+              <div className="flex flex-col gap-sm text-sm">
+                {insightTrend && (
+                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                    <span className="text-on-surface-variant">Trend</span>
+                    <span className="font-bold text-on-surface">{insightTrend}</span>
+                  </div>
+                )}
+                {insightConfidence != null && (
+                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                    <span className="text-on-surface-variant">Confidence</span>
+                    <span className="text-on-surface">{insightConfidence}%</span>
+                  </div>
+                )}
+                {result.latest.parsed_analysis?.support_level && result.latest.parsed_analysis?.resistance_level && (
+                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                    <span className="text-on-surface-variant">S/R Zones</span>
+                    <span className="text-on-surface font-mono">
+                      {result.latest.parsed_analysis.support_level} / {result.latest.parsed_analysis.resistance_level}
+                    </span>
+                  </div>
+                )}
+                {insightAction && (
+                  <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
+                    <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
+                    <div className="text-on-surface italic text-sm">{insightAction}</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {result.probabilityGauge && (
+              <ProbabilityGauge bullishPct={result.probabilityGauge.bullishPct} bearishPct={result.probabilityGauge.bearishPct} />
+            )}
           </section>
         </>
       )}
