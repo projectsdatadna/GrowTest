@@ -6,7 +6,6 @@ const initialState = {
   formData: {
     exchange: 'NSE',
     underlying_symbol: '',
-    trading_symbol: '',
     expiry_date: '',
     points_range: '500',
   },

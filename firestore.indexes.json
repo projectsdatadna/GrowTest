@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "optionChainSnapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "underlying_symbol", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

@@ -8,9 +8,14 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import axios from 'axios'
 import crypto from 'crypto'
-import { readFileSync } from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import {
+  getUnderlyingSymbols,
+  saveOptionChainSnapshot,
+  listOptionChainSnapshots,
+  getOptionChainSnapshot,
+} from './functions/firestoreClient.js'
 
 dotenv.config()
 
@@ -30,7 +35,6 @@ const GROWW_API_VERSION = '1.0'
 const GROWW_TOKEN_URL = 'https://api.groww.in/v1/token/api/access'
 const GROWW_API_KEY = process.env.GROWW_API_KEY
 const GROWW_API_SECRET = process.env.GROWW_API_SECRET
-const INSTRUMENTS_JSON_LOCAL = './instruments-sample.json'
 
 // Azure OpenAI Configuration
 const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY
@@ -80,97 +84,22 @@ async function getGrowwAccessToken() {
 }
 
 /**
- * Fetch instruments list from local sample JSON (no caching)
- */
-async function fetchInstrumentsJSON() {
-  try {
-    console.log(`Fetching instruments from local sample JSON: ${INSTRUMENTS_JSON_LOCAL}`)
-    const jsonData = readFileSync(INSTRUMENTS_JSON_LOCAL, 'utf-8')
-
-    // Parse JSON
-    const instruments = JSON.parse(jsonData)
-    console.log(`Successfully fetched ${instruments.length} instruments from sample JSON`)
-    return instruments
-  } catch (error) {
-    console.error('Error fetching instruments JSON:', error.message)
-    return null
-  }
-}
-
-/**
  * Health check endpoint
  */
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Groww API Server is running' })
 })
 
-
-
 /**
- * Search for symbols from instruments JSON
+ * Get the canonical underlying-symbol list (from Firestore) for the
+ * searchable dropdown in Greek Analysis
  */
-app.get('/search', async (req, res) => {
+app.get('/underlying-symbols', async (req, res) => {
   try {
-    const query = (req.query.q || '').trim()
-    const intraday = req.query.intraday // Optional filter: 0 or 1
-
-    if (!query || query.length < 1) {
-      return res.status(400).json({ error: 'Search query too short' })
-    }
-
-    // Fetch from JSON - no caching
-    let instruments = await fetchInstrumentsJSON()
-    if (!instruments) {
-      console.log('JSON fetch failed, returning empty results')
-      return res.json([])
-    }
-
-    // Search: match query in symbol or name
-    const queryLower = query.toLowerCase()
-    let results = instruments
-      .filter((i) => {
-        const symbol = (i.trading_symbol || '').toLowerCase()
-        const name = (i.name || '').toLowerCase()
-        
-        // Match if query is in symbol or name
-        return (
-          symbol.includes(queryLower) ||
-          queryLower.includes(symbol) ||
-          name.includes(queryLower)
-        )
-      })
-
-    // Filter by is_intraday if provided
-    if (intraday !== undefined && intraday !== null && intraday !== '') {
-      const intradayValue = intraday === '1' || intraday === 1 || intraday === true
-      results = results.filter((i) => {
-        const isIntraday = i.is_intraday === 1 || i.is_intraday === '1' || i.is_intraday === true
-        return isIntraday === intradayValue
-      })
-    }
-
-    // Sort results - prioritize exact matches
-    results = results
-      .sort((a, b) => {
-        const aSymbol = (a.trading_symbol || '').toLowerCase()
-        const bSymbol = (b.trading_symbol || '').toLowerCase()
-        
-        // Exact match
-        if (aSymbol === queryLower) return -1
-        if (bSymbol === queryLower) return 1
-        
-        // Starts with query
-        if (aSymbol.startsWith(queryLower) && !bSymbol.startsWith(queryLower)) return -1
-        if (bSymbol.startsWith(queryLower) && !aSymbol.startsWith(queryLower)) return 1
-        
-        return 0
-      })
-      .slice(0, 50)
-
-    console.log(`Search query: "${query}", intraday: ${intraday}, results: ${results.length}`)
-    res.json(results)
+    const symbols = await getUnderlyingSymbols()
+    res.json({ symbols })
   } catch (error) {
-    console.error('Search error:', error.message)
+    console.error('Underlying symbols fetch error:', error.message)
     res.status(500).json({ error: error.message })
   }
 })
@@ -749,12 +678,12 @@ async function analyzeWithAI(promptContent) {
  */
 app.post('/analyze-option-chain-range', async (req, res) => {
   try {
-    const { symbol, underlying_symbol, trading_symbol, exchange, expiry_date, points_range } = req.body
+    const { symbol, underlying_symbol, exchange, expiry_date, points_range } = req.body
 
-    if (!symbol || !underlying_symbol || !trading_symbol || !exchange || !expiry_date) {
+    if (!symbol || !underlying_symbol || !exchange || !expiry_date) {
       return res.status(400).json({
         error: 'Missing required fields',
-        required: ['symbol', 'underlying_symbol', 'trading_symbol', 'exchange', 'expiry_date'],
+        required: ['symbol', 'underlying_symbol', 'exchange', 'expiry_date'],
         received: Object.keys(req.body),
       })
     }
@@ -863,7 +792,7 @@ app.post('/analyze-option-chain-range', async (req, res) => {
         pe_greeks: data.PE?.greeks || {},
       }))
 
-      const promptContent = `Analyze the following option chain data for ${trading_symbol} (underlying LTP: ₹${underlying_ltp}, Expiry: ${expiry_date}) and provide trading insights and detail_analysis:
+      const promptContent = `Analyze the following option chain data for ${underlying_symbol} (underlying LTP: ₹${underlying_ltp}, Expiry: ${expiry_date}) and provide trading insights and detail_analysis:
 
 Option Chain Summary (+/-${pointsRange} points around LTP, full Greeks per strike):
 ${JSON.stringify(optionsSummary, null, 2)}
@@ -875,9 +804,8 @@ Please provide:
 4. Risk assessment
 5. Confidence level (0-100)
 6. Detail Analysis
-7. Five additional 0-100 market-pulse scores based on the option data: price_strength (how strongly price is trending vs. its range), momentum (rate of recent price change), volatility_score (derived from IV levels across strikes), buying_pressure and selling_pressure (derived from CE vs PE open interest/volume skew), and institutional_activity (derived from overall OI concentration/magnitude)
 
-Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis, price_strength, momentum, volatility_score, buying_pressure, selling_pressure, institutional_activity`
+Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
       const result = await analyzeWithAI(promptContent)
       parsed_analysis = result.parsed_analysis
@@ -891,11 +819,10 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
     }
 
     // Step 6: Return result to UI
-    return res.json({
+    const result = {
       status: 'SUCCESS',
-      symbol: trading_symbol,
+      symbol: underlying_symbol,
       underlying_symbol,
-      trading_symbol,
       underlying_ltp,
       expiry_date,
       exchange,
@@ -908,7 +835,18 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
       filtered_strikes_count: Object.keys(sortedFilteredStrikes).length,
       parsed_analysis,
       raw_text,
-    })
+    }
+
+    // Step 7: Persist every run so it's browsable/comparable later from the
+    // Compare tab - a storage hiccup here must never fail the response the
+    // user is actively waiting on.
+    try {
+      await saveOptionChainSnapshot(result)
+    } catch (error) {
+      console.error('Failed to save option chain snapshot:', error.message)
+    }
+
+    return res.json(result)
   } catch (error) {
     console.error('Error:', error.message)
     res.status(error.statusCode || 500).json({ error: error.message, groww_error: error.growwError || null })
@@ -1104,6 +1042,38 @@ Format your response as JSON with keys: trend, ltp_change_summary, sentiment_shi
   } catch (error) {
     console.error('Comparison Error:', error.message)
     res.status(error.response?.status || 500).json({ error: error.message })
+  }
+})
+
+/**
+ * List saved option-chain analysis snapshots, optionally filtered by
+ * underlying symbol - powers the Compare tab's snapshot pickers.
+ */
+app.get('/option-chain-snapshots', async (req, res) => {
+  try {
+    const { underlying_symbol, limit } = req.query
+    const snapshots = await listOptionChainSnapshots(underlying_symbol || null, limit ? parseInt(limit) : 50)
+    res.json({ status: 'SUCCESS', snapshots })
+  } catch (error) {
+    console.error('Error listing option chain snapshots:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Fetch one full saved snapshot by ID - used to feed the Compare tab's
+ * analyze step (compareOptionChainSnapshots/computeGreeksDelta).
+ */
+app.get('/option-chain-snapshots/:id', async (req, res) => {
+  try {
+    const snapshot = await getOptionChainSnapshot(req.params.id)
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Snapshot not found' })
+    }
+    res.json({ status: 'SUCCESS', snapshot })
+  } catch (error) {
+    console.error('Error fetching option chain snapshot:', error.message)
+    res.status(500).json({ error: error.message })
   }
 })
 

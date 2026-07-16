@@ -9,12 +9,9 @@ function AnalysisSnapshotCard({ analysis, label, variant = 'latest', timestamp }
   const strikeRows = Object.keys(analysis.filtered_strikes)
     .map(parseFloat)
     .sort((a, b) => a - b)
-    .flatMap((strike) => {
+    .map((strike) => {
       const data = analysis.filtered_strikes[strike.toString()]
-      const rows = []
-      if (data?.CE) rows.push({ strike, type: 'CE', ...data.CE })
-      if (data?.PE) rows.push({ strike, type: 'PE', ...data.PE })
-      return rows
+      return { strike, ce: data?.CE, pe: data?.PE }
     })
 
   const isPrevious = variant === 'previous'
@@ -52,40 +49,53 @@ function AnalysisSnapshotCard({ analysis, label, variant = 'latest', timestamp }
         <div className="overflow-auto max-h-[320px] custom-scrollbar">
           <table className="w-full text-xs">
             <thead className="sticky top-0 bg-surface-container-low">
+              <tr className="border-b border-terminal-border/50">
+                <th colSpan={8} className="pb-xs text-center text-bullish font-medium">CALL (CE)</th>
+                <th></th>
+                <th colSpan={8} className="pb-xs text-center text-bearish font-medium">PUT (PE)</th>
+              </tr>
               <tr className="text-on-surface-variant text-left border-b border-terminal-border">
-                <th className="py-sm pr-sm font-medium">Strike</th>
-                <th className="py-sm pr-sm font-medium">Type</th>
-                <th className="py-sm pr-sm font-medium text-right">LTP</th>
-                <th className="py-sm pr-sm font-medium text-right">OI</th>
-                <th className="py-sm pr-sm font-medium text-right">Delta</th>
-                <th className="py-sm pr-sm font-medium text-right">Gamma</th>
-                <th className="py-sm pr-sm font-medium text-right">Theta</th>
-                <th className="py-sm pr-sm font-medium text-right">Vega</th>
-                <th className="py-sm pr-sm font-medium text-right">Rho</th>
-                <th className="py-sm font-medium text-right">IV</th>
+                <th className="py-sm pr-sm pl-sm font-medium text-right bg-bullish/5">LTP</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">OI</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">Delta</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">Gamma</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">Theta</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">Vega</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">Rho</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bullish/5">IV</th>
+                <th className="py-sm px-md font-medium text-center border-x border-terminal-border">Strike</th>
+                <th className="py-sm pr-sm pl-md font-medium text-right bg-bearish/5">LTP</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">OI</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">Delta</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">Gamma</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">Theta</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">Vega</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">Rho</th>
+                <th className="py-sm pr-sm font-medium text-right bg-bearish/5">IV</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-terminal-border/50">
-              {strikeRows.map((row, idx) => (
-                <tr key={idx}>
-                  <td className="py-sm pr-sm font-mono text-on-surface">₹{row.strike}</td>
-                  <td className="py-sm pr-sm">
-                    <span
-                      className={`px-base py-0.5 rounded text-[10px] font-bold ${
-                        row.type === 'CE' ? 'bg-bullish/10 text-bullish' : 'bg-bearish/10 text-bearish'
-                      }`}
-                    >
-                      {row.type}
-                    </span>
-                  </td>
-                  <td className="py-sm pr-sm text-right font-mono text-bullish">₹{row.ltp ?? 'N/A'}</td>
-                  <td className="py-sm pr-sm text-right font-mono text-on-surface-variant">{row.open_interest ?? 0}</td>
-                  <td className="py-sm pr-sm text-right font-mono text-primary">{row.greeks?.delta?.toFixed(4) ?? 'N/A'}</td>
-                  <td className="py-sm pr-sm text-right font-mono text-primary">{row.greeks?.gamma?.toFixed(4) ?? 'N/A'}</td>
-                  <td className="py-sm pr-sm text-right font-mono text-primary">{row.greeks?.theta?.toFixed(4) ?? 'N/A'}</td>
-                  <td className="py-sm pr-sm text-right font-mono text-primary">{row.greeks?.vega?.toFixed(4) ?? 'N/A'}</td>
-                  <td className="py-sm pr-sm text-right font-mono text-primary">{row.greeks?.rho?.toFixed(4) ?? 'N/A'}</td>
-                  <td className="py-sm text-right font-mono text-tertiary">{row.greeks?.iv?.toFixed(2) ?? 'N/A'}%</td>
+              {strikeRows.map((row) => (
+                <tr key={row.strike}>
+                  <td className="py-sm pr-sm pl-sm text-right font-mono text-bullish bg-bullish/5">{row.ce?.ltp != null ? `₹${row.ce.ltp}` : 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-on-surface-variant bg-bullish/5">{row.ce?.open_interest ?? 0}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bullish/5">{row.ce?.greeks?.delta?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bullish/5">{row.ce?.greeks?.gamma?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bullish/5">{row.ce?.greeks?.theta?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bullish/5">{row.ce?.greeks?.vega?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bullish/5">{row.ce?.greeks?.rho?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-tertiary bg-bullish/5">{row.ce?.greeks?.iv?.toFixed(2) ?? 'N/A'}%</td>
+
+                  <td className="py-sm px-md text-center font-mono font-bold text-on-surface border-x border-terminal-border/50 bg-surface-container-low">₹{row.strike}</td>
+
+                  <td className="py-sm pr-sm pl-md text-right font-mono text-bearish bg-bearish/5">{row.pe?.ltp != null ? `₹${row.pe.ltp}` : 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-on-surface-variant bg-bearish/5">{row.pe?.open_interest ?? 0}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bearish/5">{row.pe?.greeks?.delta?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bearish/5">{row.pe?.greeks?.gamma?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bearish/5">{row.pe?.greeks?.theta?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bearish/5">{row.pe?.greeks?.vega?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-primary bg-bearish/5">{row.pe?.greeks?.rho?.toFixed(4) ?? 'N/A'}</td>
+                  <td className="py-sm pr-sm text-right font-mono text-tertiary bg-bearish/5">{row.pe?.greeks?.iv?.toFixed(2) ?? 'N/A'}%</td>
                 </tr>
               ))}
             </tbody>

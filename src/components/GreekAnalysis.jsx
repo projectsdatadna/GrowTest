@@ -1,17 +1,38 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useMemo } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { analyzeOptionChainRange, compareOptionChainSnapshots } from '../services/api'
+import Select from 'react-select'
+import { analyzeOptionChainRange, compareOptionChainSnapshots, getUnderlyingSymbols } from '../services/api'
 import { store } from '../store'
 import { setFormData, applyAnalysisResult, setComparison, resetAll } from '../store/greekAnalysisSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
+import ComparisonPanel from './ComparisonPanel'
 import MarketPulsePanel from './MarketPulsePanel'
 import ProbabilityGauge from './ProbabilityGauge'
 import TimelineChart from './TimelineChart'
 import OiBuildupPanel from './OiBuildupPanel'
 import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, exportSnapshotsAsJson } from './greekAnalysisUtils'
+import { computeMarketPulse } from './marketPulseEngine'
 
-// TEMPORARY: shortened to 5 min for testing - revert to 15 * 60 * 1000 when done.
-const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000
+const underlyingSymbolSelectClassNames = {
+  control: () =>
+    'bg-surface-container-low border border-terminal-border rounded-lg text-sm px-xs min-w-[180px] text-on-surface',
+  placeholder: () => 'text-on-surface-variant',
+  input: () => 'text-on-surface',
+  singleValue: () => 'text-on-surface',
+  menu: () => 'bg-surface-container-low border border-terminal-border rounded-lg mt-xs overflow-hidden',
+  menuPortal: () => 'z-[9999]',
+  menuList: () => 'py-xs',
+  option: ({ isFocused, isSelected }) =>
+    `px-md py-sm text-sm cursor-pointer ${
+      isSelected ? 'bg-primary-container text-on-primary-container' : isFocused ? 'bg-surface-container-highest text-on-surface' : 'text-on-surface'
+    }`,
+  noOptionsMessage: () => 'text-on-surface-variant text-sm px-md py-sm',
+  indicatorSeparator: () => 'bg-terminal-border',
+  dropdownIndicator: () => 'text-on-surface-variant',
+  clearIndicator: () => 'text-on-surface-variant',
+}
+
+const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000
 const AUTO_REFRESH_INTERVAL_MINUTES = AUTO_REFRESH_INTERVAL_MS / 60000
 
 function ServerClock() {
@@ -29,11 +50,10 @@ function ServerClock() {
 }
 
 function buildParams(formData) {
-  const { exchange, underlying_symbol, trading_symbol, expiry_date, points_range } = formData
+  const { exchange, underlying_symbol, expiry_date, points_range } = formData
   return {
     symbol: underlying_symbol,
     underlying_symbol,
-    trading_symbol,
     exchange,
     expiry_date,
     points_range: parseFloat(points_range),
@@ -58,8 +78,16 @@ function GreekAnalysis() {
   const [comparing, setComparing] = useState(false)
   const [comparisonError, setComparisonError] = useState('')
 
+  const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
+
   const intervalRef = useRef(null)
   const paramsRef = useRef(null)
+
+  useEffect(() => {
+    getUnderlyingSymbols()
+      .then(({ symbols }) => setUnderlyingSymbolOptions((symbols || []).map((symbol) => ({ value: symbol, label: symbol }))))
+      .catch((err) => console.error('Failed to load underlying symbols:', err))
+  }, [])
 
   // Resume the auto-refresh cycle after a remount (tab switch) or a full
   // page reload if we already have a persisted analysis + form params to
@@ -85,9 +113,9 @@ function GreekAnalysis() {
   }
 
   const validateForm = () => {
-    const { exchange, underlying_symbol, trading_symbol, expiry_date, points_range } = formData
+    const { exchange, underlying_symbol, expiry_date, points_range } = formData
 
-    if (!exchange || !underlying_symbol || !trading_symbol || !expiry_date || points_range === '') {
+    if (!exchange || !underlying_symbol || !expiry_date || points_range === '') {
       setError('All fields are required')
       return false
     }
@@ -214,6 +242,7 @@ function GreekAnalysis() {
   const probabilityGauge = analysis?.parsed_analysis ? computeProbabilityGauge(analysis.parsed_analysis) : null
   const oiChanges = previousAnalysis && analysis ? computeOiChanges(previousAnalysis, analysis) : null
   const greeksDelta = previousAnalysis && analysis ? computeGreeksDelta(previousAnalysis, analysis) : []
+  const marketPulse = useMemo(() => (analysis ? computeMarketPulse(analysis, previousAnalysis) : null), [analysis, previousAnalysis])
 
   const insightTrend = comparison?.parsed_comparison?.trend || analysis?.parsed_analysis?.sentiment
   const insightConfidence = comparison?.parsed_comparison?.confidence ?? analysis?.parsed_analysis?.confidence
@@ -295,29 +324,16 @@ function GreekAnalysis() {
           <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-underlying_symbol">
             Underlying Symbol
           </label>
-          <input
-            id="ga-underlying_symbol"
-            type="text"
-            name="underlying_symbol"
-            value={formData.underlying_symbol}
-            onChange={handleInputChange}
+          <Select
+            inputId="ga-underlying_symbol"
+            unstyled
+            isClearable
+            options={underlyingSymbolOptions}
+            value={formData.underlying_symbol ? { value: formData.underlying_symbol, label: formData.underlying_symbol } : null}
+            onChange={(selected) => dispatch(setFormData({ underlying_symbol: selected?.value || '' }))}
             placeholder="e.g., NIFTY"
-            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[140px] text-on-surface"
-          />
-        </div>
-
-        <div className="flex flex-col gap-xs">
-          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-trading_symbol">
-            Trading Symbol
-          </label>
-          <input
-            id="ga-trading_symbol"
-            type="text"
-            name="trading_symbol"
-            value={formData.trading_symbol}
-            onChange={handleInputChange}
-            placeholder="e.g., NIFTY24JUL25000CE"
-            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[180px] text-on-surface"
+            classNames={underlyingSymbolSelectClassNames}
+            menuPortalTarget={document.body}
           />
         </div>
 
@@ -387,89 +403,12 @@ function GreekAnalysis() {
               </div>
             )}
 
-            <div className="glass-panel rounded-xl overflow-hidden">
-              <div className="p-md border-b border-terminal-border bg-white/5">
-                <h3 className="text-base font-bold text-white">Difference</h3>
-              </div>
-              <div className="p-md flex flex-col gap-md">
-                {!previousAnalysis ? (
-                  <div className="text-on-surface-variant text-sm text-center py-lg">
-                    Comparison appears once there are two snapshots to compare.
-                  </div>
-                ) : comparing ? (
-                  <div className="text-on-surface-variant text-sm text-center py-lg">Generating comparison inference...</div>
-                ) : comparisonError ? (
-                  <div className="text-bearish text-sm">{comparisonError}</div>
-                ) : (
-                  <>
-                    {comparison?.parsed_comparison && (
-                      <div className="flex flex-col gap-base text-sm">
-                        <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                          <span className="text-on-surface-variant">Trend</span>
-                          <span
-                            className={`font-bold ${
-                              comparison.parsed_comparison.trend?.toLowerCase().includes('strength')
-                                ? 'text-bullish'
-                                : comparison.parsed_comparison.trend?.toLowerCase().includes('revers') ||
-                                  comparison.parsed_comparison.trend?.toLowerCase().includes('weak')
-                                ? 'text-bearish'
-                                : 'text-tertiary'
-                            }`}
-                          >
-                            {comparison.parsed_comparison.trend}
-                          </span>
-                        </div>
-                        {comparison.parsed_comparison.confidence && (
-                          <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                            <span className="text-on-surface-variant">Confidence</span>
-                            <span className="text-on-surface">{comparison.parsed_comparison.confidence}%</span>
-                          </div>
-                        )}
-                        {comparison.parsed_comparison.ltp_change_summary && (
-                          <p className="text-on-surface-variant">{comparison.parsed_comparison.ltp_change_summary}</p>
-                        )}
-                      </div>
-                    )}
-
-                    {greeksDelta.length > 0 && (
-                      <table className="w-full text-xs mt-base">
-                        <thead>
-                          <tr className="text-on-surface-variant text-left border-b border-terminal-border">
-                            <th className="pb-sm font-medium">Change (avg)</th>
-                            <th className="pb-sm font-medium text-right">Reason</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-terminal-border/50">
-                          {greeksDelta.map((g) => (
-                            <tr key={g.key}>
-                              <td className="py-sm">
-                                <div className="flex items-center gap-base">
-                                  <span
-                                    className={`material-symbols-outlined text-base ${
-                                      g.avgChange >= 0 ? 'text-bullish' : 'text-bearish'
-                                    }`}
-                                  >
-                                    {g.avgChange >= 0 ? 'trending_up' : 'trending_down'}
-                                  </span>
-                                  <div>
-                                    <div className={`font-mono ${g.avgChange >= 0 ? 'text-bullish' : 'text-bearish'}`}>
-                                      {g.avgChange >= 0 ? '+' : ''}
-                                      {g.avgChange.toFixed(4)}
-                                    </div>
-                                    <div className="text-[10px] opacity-60">{g.label}</div>
-                                  </div>
-                                </div>
-                              </td>
-                              <td className="py-sm text-right text-on-surface-variant">{g.reason}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                  </>
-                )}
-              </div>
-            </div>
+            <ComparisonPanel
+              comparing={comparing}
+              comparisonError={comparisonError}
+              comparison={comparison}
+              greeksDelta={greeksDelta}
+            />
           </section>
 
           <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
@@ -495,7 +434,10 @@ function GreekAnalysis() {
 
           <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
             <div className="md:col-span-2">
-              <MarketPulsePanel parsedAnalysis={analysis.parsed_analysis} />
+              <MarketPulsePanel
+                parsedAnalysis={marketPulse}
+                meta={marketPulse ? { pcr: marketPulse.pcr, maxPainStrike: marketPulse.maxPainStrike } : null}
+              />
             </div>
             <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
               <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>

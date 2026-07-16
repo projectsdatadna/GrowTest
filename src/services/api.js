@@ -9,13 +9,13 @@ const apiClient = axios.create({
   },
 })
 
-// Get all instruments/symbols
-export const getInstruments = async () => {
+// Get the canonical underlying-symbol list for the searchable dropdown
+export const getUnderlyingSymbols = async () => {
   try {
-    const response = await apiClient.get('/instruments')
+    const response = await apiClient.get('/underlying-symbols')
     return response.data
   } catch (error) {
-    console.error('Error fetching instruments:', error)
+    console.error('Error fetching underlying symbols:', error)
     throw error
   }
 }
@@ -76,6 +76,30 @@ export const compareOptionChainSnapshots = async (previous, latest) => {
     return response.data
   } catch (error) {
     console.error('Error comparing option chain snapshots:', error)
+    throw error
+  }
+}
+
+// List saved option-chain analysis snapshots (lightweight metadata only), optionally filtered by underlying symbol
+export const getOptionChainSnapshots = async (underlying_symbol, limit = 50) => {
+  try {
+    const response = await apiClient.get('/option-chain-snapshots', {
+      params: { underlying_symbol, limit },
+    })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching option chain snapshots:', error)
+    throw error
+  }
+}
+
+// Get one full saved snapshot by ID (for feeding into compareOptionChainSnapshots)
+export const getOptionChainSnapshotById = async (id) => {
+  try {
+    const response = await apiClient.get(`/option-chain-snapshots/${id}`)
+    return response.data
+  } catch (error) {
+    console.error('Error fetching option chain snapshot:', error)
     throw error
   }
 }

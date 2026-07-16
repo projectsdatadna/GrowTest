@@ -25,17 +25,21 @@ function StarRating({ score }) {
 }
 
 /**
- * "Market Pulse" - six 0-100 scores that come directly from Claude's own
- * analysis of the option chain data (same prompt that produces sentiment/
- * confidence), not a locally invented formula. See parsed_analysis.* in
- * the /analyze-option-chain-range response.
+ * "Market Pulse" - six 0-100 scores computed deterministically from the live
+ * option chain (OI, Greeks, volume, PCR, Max Pain - see marketPulseEngine.js).
+ * No AI is involved in these numbers; the AI call is only used for the
+ * separate qualitative fields (sentiment, strategy, etc.) shown elsewhere.
  */
-function MarketPulsePanel({ parsedAnalysis }) {
+function MarketPulsePanel({ parsedAnalysis, meta }) {
   return (
     <div className="glass-panel p-md rounded-xl">
       <div className="flex justify-between items-center mb-md">
         <h3 className="text-lg font-bold text-white">Market Pulse</h3>
-        <div className="text-xs text-on-surface-variant">AI-derived from option chain data</div>
+        <div className="flex items-center gap-md text-xs text-on-surface-variant">
+          {meta?.pcr != null && <span>PCR {meta.pcr.toFixed(2)}</span>}
+          {meta?.maxPainStrike != null && <span>Max Pain {meta.maxPainStrike}</span>}
+          <span>Computed from live option chain data</span>
+        </div>
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-md">
         {PULSE_METRICS.map((metric) => {
