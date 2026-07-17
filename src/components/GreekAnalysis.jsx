@@ -11,7 +11,7 @@ import ProbabilityGauge from './ProbabilityGauge'
 import TimelineChart from './TimelineChart'
 import OiBuildupPanel from './OiBuildupPanel'
 import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, exportSnapshotsAsJson } from './greekAnalysisUtils'
-import { computeMarketPulse } from './marketPulseEngine'
+import { computeMarketPulse, isSameInstrument } from './marketPulseEngine'
 
 const underlyingSymbolSelectClassNames = {
   control: () =>
@@ -174,7 +174,7 @@ function GreekAnalysis() {
 
       dispatch(applyAnalysisResult({ data, now }))
 
-      if (priorAnalysis) {
+      if (priorAnalysis && isSameInstrument(priorAnalysis, data)) {
         runComparison(priorAnalysis, data)
       }
     } catch (err) {

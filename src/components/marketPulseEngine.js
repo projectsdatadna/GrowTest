@@ -105,7 +105,7 @@ function strikeWeight(distanceInStrikes) {
   return 0.3
 }
 
-function isSameInstrument(a, b) {
+export function isSameInstrument(a, b) {
   return a.underlying_symbol === b.underlying_symbol && a.expiry_date === b.expiry_date && a.exchange === b.exchange
 }
 

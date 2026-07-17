@@ -1,4 +1,5 @@
 import { createSlice } from '@reduxjs/toolkit'
+import { isSameInstrument } from '../components/marketPulseEngine'
 
 const LTP_HISTORY_LIMIT = 20
 
@@ -38,10 +39,22 @@ const greekAnalysisSlice = createSlice({
     // dispatch time, unlike a value captured in a React closure.
     applyAnalysisResult(state, action) {
       const { data, now } = action.payload
-      if (state.analysis) {
+      const sameInstrument = state.analysis && isSameInstrument(state.analysis, data)
+
+      if (sameInstrument) {
         state.previousAnalysis = state.analysis
         state.previousUpdated = state.lastUpdated
+      } else {
+        // Underlying symbol/expiry/exchange changed since the last run
+        // (without clicking Clear) - comparing across two different
+        // instruments is meaningless, so start fresh instead of carrying
+        // forward stale cross-instrument state.
+        state.previousAnalysis = null
+        state.previousUpdated = null
+        state.comparison = null
+        state.ltpHistory = []
       }
+
       state.analysis = data
       state.lastUpdated = now
 
