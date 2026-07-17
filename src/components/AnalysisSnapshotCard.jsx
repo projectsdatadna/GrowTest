@@ -1,3 +1,5 @@
+import InstitutionalAnalysisReport from './InstitutionalAnalysisReport'
+
 /**
  * Renders one Greek Analysis snapshot (range + full per-strike Greeks table
  * + AI result) in the dark "terminal" theme. Shared by GreekAnalysis.jsx's
@@ -106,66 +108,14 @@ function AnalysisSnapshotCard({ analysis, label, variant = 'latest', timestamp }
       <div className="p-md pt-0 flex flex-col gap-md">
         <h4 className="text-xs font-medium text-on-surface-variant uppercase">AI Analysis Result</h4>
 
-        {analysis.raw_text && (
-          <div className="bg-primary/5 border-l-4 border-primary rounded p-base text-sm text-on-surface">
+        {!analysis.parsed_analysis && analysis.raw_text && (
+          <div className="bg-bearish/5 border-l-4 border-bearish rounded p-base text-sm text-on-surface">
+            <div className="text-[11px] uppercase text-bearish font-bold mb-xs">AI response could not be parsed - raw output</div>
             {analysis.raw_text}
           </div>
         )}
 
-        {analysis.parsed_analysis && (
-          <div className="flex flex-col gap-md">
-            <div className="grid grid-cols-2 gap-base text-xs">
-              {analysis.parsed_analysis.sentiment && (
-                <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                  <span className="text-on-surface-variant">Sentiment</span>
-                  <span
-                    className={`font-bold ${
-                      analysis.parsed_analysis.sentiment.toLowerCase() === 'bullish'
-                        ? 'text-bullish'
-                        : analysis.parsed_analysis.sentiment.toLowerCase() === 'bearish'
-                        ? 'text-bearish'
-                        : 'text-tertiary'
-                    }`}
-                  >
-                    {analysis.parsed_analysis.sentiment}
-                  </span>
-                </div>
-              )}
-              {analysis.parsed_analysis.confidence && (
-                <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                  <span className="text-on-surface-variant">Confidence</span>
-                  <span className="text-on-surface">{analysis.parsed_analysis.confidence}%</span>
-                </div>
-              )}
-              {analysis.parsed_analysis.support_level && (
-                <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                  <span className="text-on-surface-variant">Support</span>
-                  <span className="text-on-surface font-mono">₹{analysis.parsed_analysis.support_level}</span>
-                </div>
-              )}
-              {analysis.parsed_analysis.resistance_level && (
-                <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                  <span className="text-on-surface-variant">Resistance</span>
-                  <span className="text-on-surface font-mono">₹{analysis.parsed_analysis.resistance_level}</span>
-                </div>
-              )}
-            </div>
-
-            {analysis.parsed_analysis.strategy && (
-              <div className="p-base bg-white/5 rounded border-l-4 border-primary-container">
-                <div className="text-[11px] uppercase text-primary font-bold mb-xs">Recommended Strategy</div>
-                <div className="text-sm text-on-surface">{analysis.parsed_analysis.strategy}</div>
-              </div>
-            )}
-
-            {analysis.parsed_analysis.risk_assessment && (
-              <div className="p-base bg-white/5 rounded border-l-4 border-tertiary">
-                <div className="text-[11px] uppercase text-tertiary font-bold mb-xs">Risk Assessment</div>
-                <div className="text-sm text-on-surface">{analysis.parsed_analysis.risk_assessment}</div>
-              </div>
-            )}
-          </div>
-        )}
+        {analysis.parsed_analysis && <InstitutionalAnalysisReport sections={analysis.parsed_analysis} />}
       </div>
     </div>
   )

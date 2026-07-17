@@ -1,16 +1,24 @@
 import { useRef, useState, useEffect, useMemo } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import Select from 'react-select'
-import { analyzeOptionChainRange, compareOptionChainSnapshots, getUnderlyingSymbols } from '../services/api'
+import { analyzeOptionChainRange, getUnderlyingSymbols } from '../services/api'
 import { store } from '../store'
-import { setFormData, setGrowToken, applyAnalysisResult, setComparison, resetAll } from '../store/greekAnalysisSlice'
+import { setFormData, setGrowToken, applyAnalysisResult, resetAll } from '../store/greekAnalysisSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import ComparisonPanel from './ComparisonPanel'
+import { NarrativeText } from './InstitutionalAnalysisReport'
+import NoChangeBanner from './NoChangeBanner'
 import MarketPulsePanel from './MarketPulsePanel'
 import ProbabilityGauge from './ProbabilityGauge'
 import TimelineChart from './TimelineChart'
 import OiBuildupPanel from './OiBuildupPanel'
-import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, exportSnapshotsAsJson } from './greekAnalysisUtils'
+import {
+  computeProbabilityGauge,
+  computeOiChanges,
+  computeGreeksDelta,
+  exportSnapshotsAsJson,
+  getMarketSummary,
+} from './greekAnalysisUtils'
 import { computeMarketPulse, isSameInstrument } from './marketPulseEngine'
 
 const underlyingSymbolSelectClassNames = {
@@ -68,16 +76,12 @@ function GreekAnalysis() {
   const lastUpdated = useSelector((state) => state.greekAnalysis.lastUpdated)
   const previousAnalysis = useSelector((state) => state.greekAnalysis.previousAnalysis)
   const previousUpdated = useSelector((state) => state.greekAnalysis.previousUpdated)
-  const comparison = useSelector((state) => state.greekAnalysis.comparison)
   const ltpHistory = useSelector((state) => state.greekAnalysis.ltpHistory)
 
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
   const [refreshError, setRefreshError] = useState('')
-
-  const [comparing, setComparing] = useState(false)
-  const [comparisonError, setComparisonError] = useState('')
 
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
 
@@ -135,19 +139,6 @@ function GreekAnalysis() {
     return true
   }
 
-  const runComparison = async (previous, latest) => {
-    setComparing(true)
-    setComparisonError('')
-    try {
-      const result = await compareOptionChainSnapshots(previous, latest)
-      dispatch(setComparison(result))
-    } catch (err) {
-      setComparisonError(err.response?.data?.error || err.message || 'Failed to generate comparison')
-    } finally {
-      setComparing(false)
-    }
-  }
-
   const runAnalysis = async (params, { isAutoRefresh = false } = {}) => {
     if (isAutoRefresh) {
       setRefreshing(true)
@@ -163,20 +154,29 @@ function GreekAnalysis() {
       // from a setInterval callback scheduled earlier, whose closure would
       // otherwise send a stale token if the user updates it mid-session.
       const currentGrowToken = store.getState().greekAnalysis.growToken
-      const data = await analyzeOptionChainRange({ ...params, groww_token: currentGrowToken })
-      const now = new Date().toISOString()
 
       // Read the freshest committed state directly from the store rather
       // than a value captured in this closure, which is what makes this
       // safe to call from a setInterval callback that outlives any single
-      // render.
+      // render. Only forwarded when it's the same instrument as the new
+      // params - the backend independently re-validates this regardless.
       const priorAnalysis = store.getState().greekAnalysis.analysis
+      const previous_snapshot =
+        priorAnalysis && isSameInstrument(params, priorAnalysis)
+          ? {
+              underlying_symbol: priorAnalysis.underlying_symbol,
+              exchange: priorAnalysis.exchange,
+              expiry_date: priorAnalysis.expiry_date,
+              underlying_ltp: priorAnalysis.underlying_ltp,
+              points_range: priorAnalysis.points_range,
+              filtered_strikes: priorAnalysis.filtered_strikes,
+            }
+          : undefined
+
+      const data = await analyzeOptionChainRange({ ...params, groww_token: currentGrowToken, previous_snapshot })
+      const now = new Date().toISOString()
 
       dispatch(applyAnalysisResult({ data, now }))
-
-      if (priorAnalysis && isSameInstrument(priorAnalysis, data)) {
-        runComparison(priorAnalysis, data)
-      }
     } catch (err) {
       const message = err.response?.data?.error || err.message || 'An error occurred during analysis'
       if (isAutoRefresh) {
@@ -250,18 +250,27 @@ function GreekAnalysis() {
     paramsRef.current = null
     setError('')
     setRefreshError('')
-    setComparisonError('')
     dispatch(resetAll())
   }
 
-  const probabilityGauge = analysis?.parsed_analysis ? computeProbabilityGauge(analysis.parsed_analysis) : null
+  const marketSummary = getMarketSummary(analysis?.parsed_analysis)
+  const probabilityGauge = marketSummary ? computeProbabilityGauge(marketSummary) : null
   const oiChanges = previousAnalysis && analysis ? computeOiChanges(previousAnalysis, analysis) : null
   const greeksDelta = previousAnalysis && analysis ? computeGreeksDelta(previousAnalysis, analysis) : []
   const marketPulse = useMemo(() => (analysis ? computeMarketPulse(analysis, previousAnalysis) : null), [analysis, previousAnalysis])
 
-  const insightTrend = comparison?.parsed_comparison?.trend || analysis?.parsed_analysis?.sentiment
-  const insightConfidence = comparison?.parsed_comparison?.confidence ?? analysis?.parsed_analysis?.confidence
-  const insightAction = comparison?.parsed_comparison?.updated_recommendation || analysis?.parsed_analysis?.strategy
+  // Distinguishes a real, correctly-computed zero (the two snapshots' saved
+  // OI/Greeks are genuinely identical) from a broken result, which otherwise
+  // render identically as an all-zero/empty set of cards.
+  const hasMeaningfulChange =
+    !previousAnalysis || !analysis
+      ? true
+      : greeksDelta.some((g) => g.direction !== 'flat') || (oiChanges?.keyStrikeChanges || []).some((r) => r.oiChange !== 0)
+
+  const insightTrend = analysis?.parsed_analysis?.oi_migration?.market_shift || marketSummary?.sentiment
+  const insightConfidence = marketSummary?.confidence
+  const insightAction =
+    marketSummary?.narrative || analysis?.parsed_analysis?.strategy_recommendations?.[0]?.strategy || analysis?.parsed_analysis?.strategy
 
   return (
     <div className="flex flex-col gap-lg">
@@ -296,7 +305,7 @@ function GreekAnalysis() {
           <button
             type="button"
             disabled={!analysis}
-            onClick={() => exportSnapshotsAsJson(analysis, previousAnalysis, comparison)}
+            onClick={() => exportSnapshotsAsJson(analysis, previousAnalysis, null)}
             className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <span className="material-symbols-outlined">download</span>
@@ -432,106 +441,108 @@ function GreekAnalysis() {
               </div>
             )}
 
-            <ComparisonPanel
-              comparing={comparing}
-              comparisonError={comparisonError}
-              comparison={comparison}
-              greeksDelta={greeksDelta}
-            />
-          </section>
+            {/* Every compact/derived card stacked in the 3rd column, filling the
+                height next to the two full institutional reports instead of
+                leaving empty space below a lone Difference panel. */}
+            <div className="flex flex-col gap-md">
+              {previousAnalysis && analysis && !hasMeaningfulChange && <NoChangeBanner />}
 
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <OiBuildupPanel
-              title="Key Strike Changes"
-              rows={oiChanges?.keyStrikeChanges || []}
-              barColorClass="bg-primary"
-              formatLabel={(r) => `${r.strike} ${r.type}`}
-            />
-            <OiBuildupPanel
-              title="Top OI Buildup Calls"
-              rows={oiChanges?.topCallBuildup || []}
-              barColorClass="bg-bullish"
-              formatLabel={(r) => `${r.strike} CE`}
-            />
-            <OiBuildupPanel
-              title="Top OI Buildup Puts"
-              rows={oiChanges?.topPutBuildup || []}
-              barColorClass="bg-bearish"
-              formatLabel={(r) => `${r.strike} PE`}
-            />
-          </section>
+              <ComparisonPanel
+                comparing={false}
+                comparisonError=""
+                oiMigration={analysis?.parsed_analysis?.oi_migration}
+                greeksDelta={greeksDelta}
+              />
 
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <div className="md:col-span-2">
+              <OiBuildupPanel
+                title="Key Strike Changes"
+                rows={oiChanges?.keyStrikeChanges || []}
+                barColorClass="bg-primary"
+                formatLabel={(r) => `${r.strike} ${r.type}`}
+              />
+              <OiBuildupPanel
+                title="Top OI Buildup Calls"
+                rows={oiChanges?.topCallBuildup || []}
+                barColorClass="bg-bullish"
+                formatLabel={(r) => `${r.strike} CE`}
+              />
+              <OiBuildupPanel
+                title="Top OI Buildup Puts"
+                rows={oiChanges?.topPutBuildup || []}
+                barColorClass="bg-bearish"
+                formatLabel={(r) => `${r.strike} PE`}
+              />
+
               <MarketPulsePanel
                 parsedAnalysis={marketPulse}
                 meta={marketPulse ? { pcr: marketPulse.pcr, maxPainStrike: marketPulse.maxPainStrike } : null}
               />
-            </div>
-            <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
-              <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
-              <div
-                className={`text-4xl font-bold leading-none mb-base ${
-                  analysis.parsed_analysis?.sentiment?.toLowerCase() === 'bullish'
-                    ? 'text-bullish'
-                    : analysis.parsed_analysis?.sentiment?.toLowerCase() === 'bearish'
-                    ? 'text-bearish'
-                    : 'text-tertiary'
-                }`}
-              >
-                {(analysis.parsed_analysis?.sentiment || 'N/A').toUpperCase()}
-              </div>
-              <div className="mt-md w-full px-xl">
-                <div className="h-1 w-full bg-surface-container-high rounded-full">
-                  <div
-                    className="h-full bg-bullish rounded-full"
-                    style={{ width: `${analysis.parsed_analysis?.confidence || 0}%` }}
-                  />
+
+              <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
+                <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
+                <div
+                  className={`text-4xl font-bold leading-none mb-base ${
+                    marketSummary?.sentiment?.toLowerCase() === 'bullish'
+                      ? 'text-bullish'
+                      : marketSummary?.sentiment?.toLowerCase() === 'bearish'
+                      ? 'text-bearish'
+                      : 'text-tertiary'
+                  }`}
+                >
+                  {(marketSummary?.sentiment || 'N/A').toUpperCase()}
                 </div>
-                <div className="text-xs text-on-surface-variant mt-xs">{analysis.parsed_analysis?.confidence ?? 'N/A'}% confidence</div>
+                <div className="mt-md w-full px-xl">
+                  <div className="h-1 w-full bg-surface-container-high rounded-full">
+                    <div
+                      className="h-full bg-bullish rounded-full"
+                      style={{ width: `${marketSummary?.confidence || 0}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-on-surface-variant mt-xs">
+                    {marketSummary?.confidence ?? 'N/A'}% confidence
+                  </div>
+                </div>
               </div>
+
+              <TimelineChart history={ltpHistory.map((point) => ({ ...point, time: new Date(point.time) }))} />
+
+              <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
+                <div className="flex items-center gap-base mb-md">
+                  <span className="material-symbols-outlined text-primary">psychology</span>
+                  <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
+                </div>
+                <div className="flex flex-col gap-sm text-sm">
+                  {insightTrend && (
+                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                      <span className="text-on-surface-variant">Trend</span>
+                      <span className="font-bold text-on-surface">{insightTrend}</span>
+                    </div>
+                  )}
+                  {insightConfidence != null && (
+                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                      <span className="text-on-surface-variant">Confidence</span>
+                      <span className="text-on-surface">{insightConfidence}%</span>
+                    </div>
+                  )}
+                  {marketSummary?.support_level && marketSummary?.resistance_level && (
+                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                      <span className="text-on-surface-variant">S/R Zones</span>
+                      <span className="text-on-surface font-mono">
+                        {marketSummary.support_level} / {marketSummary.resistance_level}
+                      </span>
+                    </div>
+                  )}
+                  {insightAction && (
+                    <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
+                      <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
+                      <NarrativeText text={insightAction} className="text-on-surface italic text-sm" />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {probabilityGauge && <ProbabilityGauge bullishPct={probabilityGauge.bullishPct} bearishPct={probabilityGauge.bearishPct} />}
             </div>
-          </section>
-
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <TimelineChart history={ltpHistory.map((point) => ({ ...point, time: new Date(point.time) }))} />
-
-            <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
-              <div className="flex items-center gap-base mb-md">
-                <span className="material-symbols-outlined text-primary">psychology</span>
-                <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
-              </div>
-              <div className="flex flex-col gap-sm text-sm">
-                {insightTrend && (
-                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                    <span className="text-on-surface-variant">Trend</span>
-                    <span className="font-bold text-on-surface">{insightTrend}</span>
-                  </div>
-                )}
-                {insightConfidence != null && (
-                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                    <span className="text-on-surface-variant">Confidence</span>
-                    <span className="text-on-surface">{insightConfidence}%</span>
-                  </div>
-                )}
-                {analysis.parsed_analysis?.support_level && analysis.parsed_analysis?.resistance_level && (
-                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                    <span className="text-on-surface-variant">S/R Zones</span>
-                    <span className="text-on-surface font-mono">
-                      {analysis.parsed_analysis.support_level} / {analysis.parsed_analysis.resistance_level}
-                    </span>
-                  </div>
-                )}
-                {insightAction && (
-                  <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
-                    <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
-                    <div className="text-on-surface italic text-sm">{insightAction}</div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {probabilityGauge && <ProbabilityGauge bullishPct={probabilityGauge.bullishPct} bearishPct={probabilityGauge.bearishPct} />}
           </section>
         </>
       )}

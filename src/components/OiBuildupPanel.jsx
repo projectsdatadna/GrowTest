@@ -11,7 +11,7 @@ function OiBuildupPanel({ title, rows, barColorClass = 'bg-bullish', formatLabel
     <div className="glass-panel p-md rounded-xl">
       <h4 className="text-xs font-medium text-on-surface-variant uppercase mb-md">{title}</h4>
       {rows.length === 0 ? (
-        <div className="text-on-surface-variant text-sm">No data yet - appears after the next refresh cycle.</div>
+        <div className="text-on-surface-variant text-sm">No OI buildup between these two snapshots.</div>
       ) : (
         <div className="flex flex-col gap-md">
           {rows.map((row, idx) => {

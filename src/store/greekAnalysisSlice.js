@@ -18,7 +18,6 @@ const initialState = {
   lastUpdated: null,
   previousAnalysis: null,
   previousUpdated: null,
-  comparison: null,
   ltpHistory: [],
 }
 
@@ -51,7 +50,6 @@ const greekAnalysisSlice = createSlice({
         // forward stale cross-instrument state.
         state.previousAnalysis = null
         state.previousUpdated = null
-        state.comparison = null
         state.ltpHistory = []
       }
 
@@ -61,9 +59,6 @@ const greekAnalysisSlice = createSlice({
       const next = [...state.ltpHistory, { time: now, ltp: data.underlying_ltp }]
       state.ltpHistory = next.length > LTP_HISTORY_LIMIT ? next.slice(next.length - LTP_HISTORY_LIMIT) : next
     },
-    setComparison(state, action) {
-      state.comparison = action.payload
-    },
     // Full reset for the "Clear" button - wipes the form back to defaults
     // and drops every persisted snapshot/comparison.
     resetAll(state) {
@@ -72,11 +67,10 @@ const greekAnalysisSlice = createSlice({
       state.lastUpdated = null
       state.previousAnalysis = null
       state.previousUpdated = null
-      state.comparison = null
       state.ltpHistory = []
     },
   },
 })
 
-export const { setFormData, setGrowToken, applyAnalysisResult, setComparison, resetAll } = greekAnalysisSlice.actions
+export const { setFormData, setGrowToken, applyAnalysisResult, resetAll } = greekAnalysisSlice.actions
 export default greekAnalysisSlice.reducer

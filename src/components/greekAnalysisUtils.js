@@ -18,6 +18,69 @@ export function computeProbabilityGauge(parsedAnalysis) {
   return { bullishPct: 50, bearishPct: 50 }
 }
 
+const NUMBERED_POINT_RE = /(?:^|\n|\.\s+)(\d{1,2})[.)]\s+(?=[A-Z])/g
+const BULLET_LINE_RE = /^\s*[-•*]\s+/
+
+/**
+ * Detects whether a free-text AI narrative/summary field is actually a
+ * numbered or bulleted list written out as one string (the schema defines
+ * these fields as plain strings, but the model frequently numbers its
+ * points within them) - so it can be rendered as real list items instead of
+ * one run-on paragraph. The numbered-marker regex requires the digit to
+ * follow start-of-string, a newline, or ". " and precede a capital letter,
+ * which keeps it from misfiring on ordinary numbers in prose (e.g. a price
+ * like "24500." doesn't match, since its digits are preceded by another
+ * digit, not a sentence/line boundary). Returns null when the text is just
+ * prose - callers should fall back to rendering it as-is.
+ */
+export function splitNarrativePoints(text) {
+  if (typeof text !== 'string' || !text.trim()) return null
+  const trimmed = text.trim()
+
+  const numberedMatches = [...trimmed.matchAll(NUMBERED_POINT_RE)]
+  if (numberedMatches.length >= 2) {
+    const points = numberedMatches
+      .map((m, i) => {
+        const start = m.index + m[0].length
+        const end = i + 1 < numberedMatches.length ? numberedMatches[i + 1].index : trimmed.length
+        return trimmed.slice(start, end).trim()
+      })
+      .filter(Boolean)
+    if (points.length >= 2) return { type: 'numbered', points }
+  }
+
+  const lines = trimmed
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (lines.length >= 2 && lines.every((l) => BULLET_LINE_RE.test(l))) {
+    return { type: 'bullet', points: lines.map((l) => l.replace(BULLET_LINE_RE, '')) }
+  }
+
+  return null
+}
+
+/**
+ * Normalizes the new Master Prompt schema's `market_summary` object and the
+ * old flat schema (`sentiment`/`confidence`/`support_level`/`resistance_level`
+ * at the top level of `parsed_analysis`) into one shape, so Overall Bias/AI
+ * Final Insight/Probability Gauge render real data for legacy snapshots
+ * instead of going blank - the shared Firestore collection holds a permanent
+ * mix of both schemas.
+ */
+export function getMarketSummary(parsedAnalysis) {
+  if (!parsedAnalysis) return null
+  if (parsedAnalysis.market_summary) return parsedAnalysis.market_summary
+  if (!parsedAnalysis.sentiment) return null
+  return {
+    sentiment: parsedAnalysis.sentiment,
+    confidence: parsedAnalysis.confidence,
+    support_level: parsedAnalysis.support_level,
+    resistance_level: parsedAnalysis.resistance_level,
+    narrative: undefined,
+  }
+}
+
 function collectMatchedStrikes(previous, latest) {
   if (!previous?.filtered_strikes || !latest?.filtered_strikes) return []
   return Object.keys(latest.filtered_strikes).filter((strike) => previous.filtered_strikes[strike])
@@ -56,11 +119,21 @@ export function computeOiChanges(previous, latest, topN = 5) {
   return { keyStrikeChanges, topCallBuildup, topPutBuildup }
 }
 
+// Anything averaging out to less than this reads as "unchanged" - keeps the
+// reason text, icon direction, and displayed sign (all derived from this same
+// threshold) mutually consistent instead of an exact/near-zero change
+// silently falling into the negative-sounding branch.
+const GREEK_CHANGE_EPSILON = 0.00005
+
 const GREEK_REASON = {
-  delta: (change) => (change > 0 ? 'Bullish delta shift' : 'Bearish delta shift'),
-  gamma: (change) => (change > 0 ? 'Gamma acceleration' : 'Gamma deceleration'),
-  theta: (change) => (change < 0 ? 'Time decay increasing' : 'Time decay easing'),
-  vega: (change) => (change > 0 ? 'IV expansion' : 'IV contraction'),
+  delta: (change) =>
+    change > GREEK_CHANGE_EPSILON ? 'Bullish delta shift' : change < -GREEK_CHANGE_EPSILON ? 'Bearish delta shift' : 'Delta unchanged',
+  gamma: (change) =>
+    change > GREEK_CHANGE_EPSILON ? 'Gamma acceleration' : change < -GREEK_CHANGE_EPSILON ? 'Gamma deceleration' : 'Gamma unchanged',
+  theta: (change) =>
+    change < -GREEK_CHANGE_EPSILON ? 'Time decay increasing' : change > GREEK_CHANGE_EPSILON ? 'Time decay easing' : 'Time decay unchanged',
+  vega: (change) =>
+    change > GREEK_CHANGE_EPSILON ? 'IV expansion' : change < -GREEK_CHANGE_EPSILON ? 'IV contraction' : 'IV unchanged',
 }
 
 /**
@@ -95,11 +168,13 @@ export function computeGreeksDelta(previous, latest) {
     const avgChange = sums[key] / legCount
     const avgPrev = prevSums[key] / legCount
     const pctChange = avgPrev !== 0 ? (avgChange / Math.abs(avgPrev)) * 100 : 0
+    const direction = avgChange > GREEK_CHANGE_EPSILON ? 'up' : avgChange < -GREEK_CHANGE_EPSILON ? 'down' : 'flat'
     return {
       key,
       label: key[0].toUpperCase() + key.slice(1),
       avgChange,
       pctChange,
+      direction,
       reason: GREEK_REASON[key](avgChange),
     }
   })

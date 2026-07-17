@@ -104,6 +104,19 @@ export const getOptionChainSnapshotById = async (id) => {
   }
 }
 
+// Regenerates a saved snapshot's AI analysis from its own filtered_strikes
+// (no previous-snapshot context) and persists it back - used by the Compare
+// tab to upgrade a legacy-schema snapshot to the full institutional report.
+export const regenerateSnapshotAnalysis = async (id) => {
+  try {
+    const response = await apiClient.post(`/option-chain-snapshots/${id}/regenerate-analysis`)
+    return response.data
+  } catch (error) {
+    console.error('Error regenerating snapshot analysis:', error)
+    throw error
+  }
+}
+
 // Get AI inference
 export const getAIInference = async (data) => {
   try {

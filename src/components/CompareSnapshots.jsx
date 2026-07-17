@@ -1,18 +1,23 @@
 import { useEffect, useState } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
 import Select from 'react-select'
 import {
   getUnderlyingSymbols,
   getOptionChainSnapshots,
   getOptionChainSnapshotById,
   compareOptionChainSnapshots,
+  regenerateSnapshotAnalysis,
 } from '../services/api'
+import { setSelectedSymbol, setSnapshotAId, setSnapshotBId, setCompareResult } from '../store/compareSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import ComparisonPanel from './ComparisonPanel'
+import { NarrativeText } from './InstitutionalAnalysisReport'
 import OiBuildupPanel from './OiBuildupPanel'
+import NoChangeBanner from './NoChangeBanner'
 import MarketPulsePanel from './MarketPulsePanel'
 import ProbabilityGauge from './ProbabilityGauge'
 import TimelineChart from './TimelineChart'
-import { computeOiChanges, computeGreeksDelta, computeProbabilityGauge } from './greekAnalysisUtils'
+import { computeOiChanges, computeGreeksDelta, computeProbabilityGauge, getMarketSummary } from './greekAnalysisUtils'
 import { computeMarketPulse } from './marketPulseEngine'
 
 const underlyingSymbolSelectClassNames = {
@@ -41,19 +46,20 @@ function formatSnapshotLabel(snapshot) {
 }
 
 function CompareSnapshots() {
+  const dispatch = useDispatch()
+  const selectedSymbol = useSelector((state) => state.compare.selectedSymbol)
+  const snapshotAId = useSelector((state) => state.compare.snapshotAId)
+  const snapshotBId = useSelector((state) => state.compare.snapshotBId)
+  const result = useSelector((state) => state.compare.result)
+
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
-  const [selectedSymbol, setSelectedSymbol] = useState('')
 
   const [snapshots, setSnapshots] = useState([])
   const [loadingSnapshots, setLoadingSnapshots] = useState(false)
   const [snapshotsError, setSnapshotsError] = useState('')
 
-  const [snapshotAId, setSnapshotAId] = useState('')
-  const [snapshotBId, setSnapshotBId] = useState('')
-
   const [comparing, setComparing] = useState(false)
   const [compareError, setCompareError] = useState('')
-  const [result, setResult] = useState(null)
 
   useEffect(() => {
     getUnderlyingSymbols()
@@ -61,10 +67,11 @@ function CompareSnapshots() {
       .catch((err) => console.error('Failed to load underlying symbols:', err))
   }, [])
 
+  // Snapshot selections/result reset atomically in the setSelectedSymbol
+  // reducer itself (see compareSlice.js) - this effect only handles
+  // (re-)fetching the snapshot list for whichever symbol is now selected,
+  // including on mount when a symbol was restored from persisted state.
   useEffect(() => {
-    setSnapshotAId('')
-    setSnapshotBId('')
-    setResult(null)
     setCompareError('')
 
     if (!selectedSymbol) {
@@ -92,17 +99,77 @@ function CompareSnapshots() {
       const [previous, latest] =
         new Date(snapshotA.createdAt) <= new Date(snapshotB.createdAt) ? [snapshotA, snapshotB] : [snapshotB, snapshotA]
 
-      const comparison = await compareOptionChainSnapshots(previous, latest)
+      // All of these are computed straight from filtered_strikes (raw OI/
+      // Greeks), never from parsed_analysis - unaffected by regenerating
+      // either snapshot's AI report below.
       const oiChanges = computeOiChanges(previous, latest)
       const greeksDelta = computeGreeksDelta(previous, latest)
       const marketPulse = computeMarketPulse(latest, previous)
-      const probabilityGauge = latest.parsed_analysis ? computeProbabilityGauge(latest.parsed_analysis) : null
-      const priceTimeline = [
-        { time: new Date(previous.createdAt), ltp: previous.underlying_ltp },
-        { time: new Date(latest.createdAt), ltp: latest.underlying_ltp },
-      ]
 
-      setResult({ previous, latest, comparison, oiChanges, greeksDelta, marketPulse, probabilityGauge, priceTimeline })
+      // Distinguishes a real, correctly-computed zero (the two snapshots'
+      // saved OI/Greeks are genuinely identical - common for pairs pulled
+      // from a stale/quiet stretch of history) from a broken result, which
+      // otherwise render identically as an all-zero/empty set of cards.
+      const hasMeaningfulChange =
+        greeksDelta.some((g) => g.direction !== 'flat') || (oiChanges?.keyStrikeChanges || []).some((r) => r.oiChange !== 0)
+
+      // Full same-instrument history (already fetched for the dropdowns, no
+      // extra network call) instead of just the 2 picked points, so this
+      // reads like Greek Analysis's own rolling ltpHistory. Keeps `time` as
+      // an ISO string (like ltpHistory does) rather than a Date, since Redux
+      // state must stay serializable - converted to Date only at render time.
+      const priceTimeline = snapshots
+        .filter((s) => s.expiry_date === latest.expiry_date && s.exchange === latest.exchange)
+        .map((s) => ({ time: s.createdAt, ltp: s.underlying_ltp }))
+        .sort((a, b) => new Date(a.time) - new Date(b.time))
+
+      // Snapshot A and B are almost always legacy-schema documents (their
+      // stored analysis is the old flat 3-section format), so each gets a
+      // fresh institutional report regenerated from its own filtered_strikes
+      // and persisted back - permanently upgrading it once viewed. Run
+      // alongside the dedicated A-vs-B comparison call (for the compact
+      // Difference card) so all three live AI calls happen concurrently
+      // instead of tripling the wait. Each has its own try/catch so one
+      // failure can't wipe out the others - a failed regeneration just keeps
+      // that snapshot's original stored analysis instead of going blank.
+      const [previousRegenerated, latestRegenerated, comparisonResult] = await Promise.all([
+        regenerateSnapshotAnalysis(previous.id).catch((err) => {
+          console.error('Failed to regenerate previous snapshot analysis:', err)
+          return null
+        }),
+        regenerateSnapshotAnalysis(latest.id).catch((err) => {
+          console.error('Failed to regenerate latest snapshot analysis:', err)
+          return null
+        }),
+        compareOptionChainSnapshots(previous, latest)
+          .then((data) => ({ data }))
+          .catch((err) => ({
+            error: err.response?.data?.error || err.message || 'Comparison inference failed - other data below is still accurate.',
+          })),
+      ])
+
+      const finalPrevious = previousRegenerated ? { ...previous, ...previousRegenerated.snapshot } : previous
+      const finalLatest = latestRegenerated ? { ...latest, ...latestRegenerated.snapshot } : latest
+      const comparison = comparisonResult.data || null
+      const comparisonError = comparisonResult.error || ''
+
+      const latestMarketSummary = getMarketSummary(finalLatest.parsed_analysis)
+      const probabilityGauge = latestMarketSummary ? computeProbabilityGauge(latestMarketSummary) : null
+
+      dispatch(
+        setCompareResult({
+          previous: finalPrevious,
+          latest: finalLatest,
+          comparison,
+          comparisonError,
+          oiChanges,
+          greeksDelta,
+          marketPulse,
+          probabilityGauge,
+          priceTimeline,
+          hasMeaningfulChange,
+        })
+      )
     } catch (err) {
       setCompareError(err.response?.data?.error || err.message || 'Failed to compare snapshots')
     } finally {
@@ -112,12 +179,35 @@ function CompareSnapshots() {
 
   const canAnalyze = snapshotAId && snapshotBId && snapshotAId !== snapshotBId && !comparing
 
-  const snapshotAOptions = snapshots.filter((s) => s.id !== snapshotBId)
-  const snapshotBOptions = snapshots.filter((s) => s.id !== snapshotAId)
+  // Beyond excluding each other's exact pick, also restrict to the same
+  // instrument (expiry + exchange) as whatever's already selected on the
+  // other side - comparing two different expiries means non-overlapping
+  // strikes, which silently empties Key Strike Changes/OI Buildup/Market Pulse.
+  const selectedSnapshotA = snapshots.find((s) => s.id === snapshotAId)
+  const selectedSnapshotB = snapshots.find((s) => s.id === snapshotBId)
 
-  const insightTrend = result?.comparison?.parsed_comparison?.trend || result?.latest.parsed_analysis?.sentiment
-  const insightConfidence = result?.comparison?.parsed_comparison?.confidence ?? result?.latest.parsed_analysis?.confidence
-  const insightAction = result?.comparison?.parsed_comparison?.updated_recommendation || result?.latest.parsed_analysis?.strategy
+  const snapshotAOptions = snapshots.filter(
+    (s) =>
+      s.id !== snapshotBId &&
+      (!selectedSnapshotB || (s.expiry_date === selectedSnapshotB.expiry_date && s.exchange === selectedSnapshotB.exchange))
+  )
+  const snapshotBOptions = snapshots.filter(
+    (s) =>
+      s.id !== snapshotAId &&
+      (!selectedSnapshotA || (s.expiry_date === selectedSnapshotA.expiry_date && s.exchange === selectedSnapshotA.exchange))
+  )
+
+  // Trend prefers the dedicated A-vs-B comparison (mirrors GreekAnalysis.jsx
+  // preferring its own self-consistent oi_migration first). Confidence/Action
+  // stay sourced from Snapshot B's own report - same single source as the
+  // Overall Bias card, so those two never disagree with each other.
+  const marketSummary = getMarketSummary(result?.latest?.parsed_analysis)
+  const insightTrend = result?.comparison?.parsed_comparison?.oi_migration?.market_shift || marketSummary?.sentiment
+  const insightConfidence = marketSummary?.confidence
+  const insightAction =
+    marketSummary?.narrative ||
+    result?.latest.parsed_analysis?.strategy_recommendations?.[0]?.strategy ||
+    result?.latest.parsed_analysis?.strategy
 
   return (
     <div className="flex flex-col gap-lg">
@@ -139,7 +229,7 @@ function CompareSnapshots() {
             isClearable
             options={underlyingSymbolOptions}
             value={selectedSymbol ? { value: selectedSymbol, label: selectedSymbol } : null}
-            onChange={(selected) => setSelectedSymbol(selected?.value || '')}
+            onChange={(selected) => dispatch(setSelectedSymbol(selected?.value || ''))}
             placeholder="e.g., NIFTY"
             classNames={underlyingSymbolSelectClassNames}
           />
@@ -152,7 +242,7 @@ function CompareSnapshots() {
           <select
             id="cmp-snapshot-a"
             value={snapshotAId}
-            onChange={(e) => setSnapshotAId(e.target.value)}
+            onChange={(e) => dispatch(setSnapshotAId(e.target.value))}
             disabled={!selectedSymbol || loadingSnapshots}
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface disabled:opacity-50"
           >
@@ -172,7 +262,7 @@ function CompareSnapshots() {
           <select
             id="cmp-snapshot-b"
             value={snapshotBId}
-            onChange={(e) => setSnapshotBId(e.target.value)}
+            onChange={(e) => dispatch(setSnapshotBId(e.target.value))}
             disabled={!selectedSymbol || loadingSnapshots}
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface disabled:opacity-50"
           >
@@ -218,111 +308,111 @@ function CompareSnapshots() {
               variant="latest"
               timestamp={result.latest.createdAt ? new Date(result.latest.createdAt) : null}
             />
-            <ComparisonPanel
-              comparing={false}
-              comparisonError=""
-              comparison={result.comparison}
-              greeksDelta={result.greeksDelta}
-              title="Trend Inference"
-            />
-          </section>
 
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <OiBuildupPanel
-              title="Key Strike Changes"
-              rows={result.oiChanges?.keyStrikeChanges || []}
-              barColorClass="bg-primary"
-              formatLabel={(r) => `${r.strike} ${r.type}`}
-            />
-            <OiBuildupPanel
-              title="Top OI Buildup Calls"
-              rows={result.oiChanges?.topCallBuildup || []}
-              barColorClass="bg-bullish"
-              formatLabel={(r) => `${r.strike} CE`}
-            />
-            <OiBuildupPanel
-              title="Top OI Buildup Puts"
-              rows={result.oiChanges?.topPutBuildup || []}
-              barColorClass="bg-bearish"
-              formatLabel={(r) => `${r.strike} PE`}
-            />
-          </section>
+            {/* Every compact/derived card stacked in the 3rd column, filling the
+                height next to the two full institutional reports instead of
+                leaving empty space below a lone Difference panel. */}
+            <div className="flex flex-col gap-md">
+              {!result.hasMeaningfulChange && <NoChangeBanner />}
 
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <div className="md:col-span-2">
+              <ComparisonPanel
+                comparing={false}
+                comparisonError={result.comparisonError || ''}
+                oiMigration={result.comparison?.parsed_comparison?.oi_migration}
+                greeksDelta={result.greeksDelta}
+              />
+
+              <OiBuildupPanel
+                title="Key Strike Changes"
+                rows={result.oiChanges?.keyStrikeChanges || []}
+                barColorClass="bg-primary"
+                formatLabel={(r) => `${r.strike} ${r.type}`}
+              />
+              <OiBuildupPanel
+                title="Top OI Buildup Calls"
+                rows={result.oiChanges?.topCallBuildup || []}
+                barColorClass="bg-bullish"
+                formatLabel={(r) => `${r.strike} CE`}
+              />
+              <OiBuildupPanel
+                title="Top OI Buildup Puts"
+                rows={result.oiChanges?.topPutBuildup || []}
+                barColorClass="bg-bearish"
+                formatLabel={(r) => `${r.strike} PE`}
+              />
+
               <MarketPulsePanel
                 parsedAnalysis={result.marketPulse}
                 meta={result.marketPulse ? { pcr: result.marketPulse.pcr, maxPainStrike: result.marketPulse.maxPainStrike } : null}
               />
-            </div>
-            <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
-              <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
-              <div
-                className={`text-4xl font-bold leading-none mb-base ${
-                  result.latest.parsed_analysis?.sentiment?.toLowerCase() === 'bullish'
-                    ? 'text-bullish'
-                    : result.latest.parsed_analysis?.sentiment?.toLowerCase() === 'bearish'
-                    ? 'text-bearish'
-                    : 'text-tertiary'
-                }`}
-              >
-                {(result.latest.parsed_analysis?.sentiment || 'N/A').toUpperCase()}
-              </div>
-              <div className="mt-md w-full px-xl">
-                <div className="h-1 w-full bg-surface-container-high rounded-full">
-                  <div
-                    className="h-full bg-bullish rounded-full"
-                    style={{ width: `${result.latest.parsed_analysis?.confidence || 0}%` }}
-                  />
+
+              <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
+                <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
+                <div
+                  className={`text-4xl font-bold leading-none mb-base ${
+                    marketSummary?.sentiment?.toLowerCase() === 'bullish'
+                      ? 'text-bullish'
+                      : marketSummary?.sentiment?.toLowerCase() === 'bearish'
+                      ? 'text-bearish'
+                      : 'text-tertiary'
+                  }`}
+                >
+                  {(marketSummary?.sentiment || 'N/A').toUpperCase()}
                 </div>
-                <div className="text-xs text-on-surface-variant mt-xs">
-                  {result.latest.parsed_analysis?.confidence ?? 'N/A'}% confidence
+                <div className="mt-md w-full px-xl">
+                  <div className="h-1 w-full bg-surface-container-high rounded-full">
+                    <div
+                      className="h-full bg-bullish rounded-full"
+                      style={{ width: `${marketSummary?.confidence || 0}%` }}
+                    />
+                  </div>
+                  <div className="text-xs text-on-surface-variant mt-xs">
+                    {marketSummary?.confidence ?? 'N/A'}% confidence
+                  </div>
                 </div>
               </div>
-            </div>
-          </section>
 
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md">
-            <TimelineChart history={result.priceTimeline} />
+              <TimelineChart history={result.priceTimeline.map((point) => ({ ...point, time: new Date(point.time) }))} />
 
-            <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
-              <div className="flex items-center gap-base mb-md">
-                <span className="material-symbols-outlined text-primary">psychology</span>
-                <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
+              <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
+                <div className="flex items-center gap-base mb-md">
+                  <span className="material-symbols-outlined text-primary">psychology</span>
+                  <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
+                </div>
+                <div className="flex flex-col gap-sm text-sm">
+                  {insightTrend && (
+                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                      <span className="text-on-surface-variant">Trend</span>
+                      <span className="font-bold text-on-surface">{insightTrend}</span>
+                    </div>
+                  )}
+                  {insightConfidence != null && (
+                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                      <span className="text-on-surface-variant">Confidence</span>
+                      <span className="text-on-surface">{insightConfidence}%</span>
+                    </div>
+                  )}
+                  {marketSummary?.support_level && marketSummary?.resistance_level && (
+                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                      <span className="text-on-surface-variant">S/R Zones</span>
+                      <span className="text-on-surface font-mono">
+                        {marketSummary.support_level} / {marketSummary.resistance_level}
+                      </span>
+                    </div>
+                  )}
+                  {insightAction && (
+                    <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
+                      <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
+                      <NarrativeText text={insightAction} className="text-on-surface italic text-sm" />
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-col gap-sm text-sm">
-                {insightTrend && (
-                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                    <span className="text-on-surface-variant">Trend</span>
-                    <span className="font-bold text-on-surface">{insightTrend}</span>
-                  </div>
-                )}
-                {insightConfidence != null && (
-                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                    <span className="text-on-surface-variant">Confidence</span>
-                    <span className="text-on-surface">{insightConfidence}%</span>
-                  </div>
-                )}
-                {result.latest.parsed_analysis?.support_level && result.latest.parsed_analysis?.resistance_level && (
-                  <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                    <span className="text-on-surface-variant">S/R Zones</span>
-                    <span className="text-on-surface font-mono">
-                      {result.latest.parsed_analysis.support_level} / {result.latest.parsed_analysis.resistance_level}
-                    </span>
-                  </div>
-                )}
-                {insightAction && (
-                  <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
-                    <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
-                    <div className="text-on-surface italic text-sm">{insightAction}</div>
-                  </div>
-                )}
-              </div>
-            </div>
 
-            {result.probabilityGauge && (
-              <ProbabilityGauge bullishPct={result.probabilityGauge.bullishPct} bearishPct={result.probabilityGauge.bearishPct} />
-            )}
+              {result.probabilityGauge && (
+                <ProbabilityGauge bullishPct={result.probabilityGauge.bullishPct} bearishPct={result.probabilityGauge.bearishPct} />
+              )}
+            </div>
           </section>
         </>
       )}

@@ -33,25 +33,25 @@ function StarRating({ score }) {
 function MarketPulsePanel({ parsedAnalysis, meta }) {
   return (
     <div className="glass-panel p-md rounded-xl">
-      <div className="flex justify-between items-center mb-md">
+      <div className="flex flex-col gap-xs mb-md">
         <h3 className="text-lg font-bold text-white">Market Pulse</h3>
-        <div className="flex items-center gap-md text-xs text-on-surface-variant">
+        <div className="flex flex-wrap items-center gap-x-base gap-y-0.5 text-[11px] text-on-surface-variant">
           {meta?.pcr != null && <span>PCR {meta.pcr.toFixed(2)}</span>}
           {meta?.maxPainStrike != null && <span>Max Pain {meta.maxPainStrike}</span>}
           <span>Computed from live option chain data</span>
         </div>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-md">
+      <div className="grid grid-cols-2 gap-md">
         {PULSE_METRICS.map((metric) => {
           const score = parsedAnalysis?.[metric.key]
           const hasScore = typeof score === 'number'
           return (
-            <div key={metric.key} className="bg-white/5 p-md rounded-lg border border-terminal-border/30">
-              <div className="flex items-center gap-base mb-base text-primary">
-                <span className="material-symbols-outlined text-[20px]">{metric.icon}</span>
-                <span className="text-xs font-medium uppercase text-on-surface-variant">{metric.label}</span>
+            <div key={metric.key} className="bg-white/5 p-md rounded-lg border border-terminal-border/30 min-w-0">
+              <div className="flex items-center gap-base mb-base text-primary min-w-0">
+                <span className="material-symbols-outlined text-[20px] shrink-0">{metric.icon}</span>
+                <span className="text-xs font-medium uppercase text-on-surface-variant truncate">{metric.label}</span>
               </div>
-              <div className="flex justify-between items-end">
+              <div className="flex flex-col gap-xs">
                 <div className="text-2xl font-bold text-on-surface">{hasScore ? Math.round(score) : 'N/A'}</div>
                 <StarRating score={score} />
               </div>

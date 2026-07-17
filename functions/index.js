@@ -16,7 +16,9 @@ import {
   saveOptionChainSnapshot,
   listOptionChainSnapshots,
   getOptionChainSnapshot,
+  updateOptionChainSnapshotAnalysis,
 } from './firestoreClient.js'
+import { buildInstitutionalAnalysisPrompt, analyzeWithAI, isSameInstrument } from './aiAnalysisPrompt.js'
 
 const GROWW_API_KEY_SECRET = defineSecret('GROWW_API_KEY')
 const GROWW_API_SECRET_SECRET = defineSecret('GROWW_API_SECRET')
@@ -25,9 +27,18 @@ const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
 const AZURE_OPENAI_DEPLOYMENT_SECRET = defineSecret('AZURE_OPENAI_DEPLOYMENT')
 const AZURE_OPENAI_API_VERSION_SECRET = defineSecret('AZURE_OPENAI_API_VERSION')
 
+function getAzureConfig() {
+  return {
+    apiKey: AZURE_OPENAI_API_KEY_SECRET.value(),
+    endpoint: AZURE_OPENAI_ENDPOINT_SECRET.value(),
+    deployment: AZURE_OPENAI_DEPLOYMENT_SECRET.value(),
+    apiVersion: AZURE_OPENAI_API_VERSION_SECRET.value() || '2024-10-21',
+  }
+}
+
 const app = express()
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '5mb' }))
 
 // Groww API Configuration
 const GROWW_API_BASE_URL = 'https://api.groww.in/v1'
@@ -75,73 +86,6 @@ async function getGrowwAccessToken() {
     wrapped.statusCode = error.response?.status || 500
     throw wrapped
   }
-}
-
-/**
- * Call Azure OpenAI with a prepared prompt and parse its JSON response.
- * Shared by endpoints that need option-chain AI inference.
- */
-async function analyzeWithAI(promptContent) {
-  const apiKey = AZURE_OPENAI_API_KEY_SECRET.value()
-  const endpoint = AZURE_OPENAI_ENDPOINT_SECRET.value()
-  const deployment = AZURE_OPENAI_DEPLOYMENT_SECRET.value()
-  const apiVersion = AZURE_OPENAI_API_VERSION_SECRET.value() || '2024-10-21'
-
-  if (!apiKey || !endpoint || !deployment) {
-    throw new Error('Azure OpenAI is not configured (missing AZURE_OPENAI_API_KEY, AZURE_OPENAI_ENDPOINT, or AZURE_OPENAI_DEPLOYMENT)')
-  }
-
-  const azureResponse = await axios.post(
-    `${endpoint.replace(/\/+$/, '')}/openai/deployments/${deployment}/chat/completions?api-version=${apiVersion}`,
-    {
-      messages: [{ role: 'user', content: promptContent }],
-      max_tokens: 1024,
-    },
-    {
-      headers: {
-        'api-key': apiKey,
-        'content-type': 'application/json',
-      },
-      timeout: 30000,
-    }
-  )
-
-  if (azureResponse.status !== 200 || !azureResponse.data.choices || azureResponse.data.choices.length === 0) {
-    throw new Error('Failed to get analysis from Azure OpenAI')
-  }
-
-  const analysisText = azureResponse.data.choices[0].message.content
-
-  let parsedAnalysis = null
-  let explanation = ''
-
-  try {
-    const jsonMatch = analysisText.match(/\{[\s\S]*\}/)
-    if (jsonMatch) {
-      parsedAnalysis = JSON.parse(jsonMatch[0])
-      const jsonStartIndex = analysisText.indexOf('{')
-      if (jsonStartIndex > 0) {
-        explanation = analysisText.substring(0, jsonStartIndex).trim()
-      }
-    } else {
-      explanation = analysisText
-    }
-
-    explanation = explanation
-      .replace(/[\n\r\t]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .replace(/[{}[\]"'`]/g, '')
-      .trim()
-  } catch (parseError) {
-    console.error('Error parsing JSON:', parseError.message)
-    explanation = analysisText
-      .replace(/[\n\r\t]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .replace(/[{}[\]"'`]/g, '')
-      .trim()
-  }
-
-  return { parsed_analysis: parsedAnalysis, raw_text: explanation }
 }
 
 /**
@@ -476,7 +420,7 @@ Please provide:
 
 Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
-      const result = await analyzeWithAI(promptContent)
+      const result = await analyzeWithAI(promptContent, getAzureConfig())
       aiAnalysis = {
         status: 'SUCCESS',
         symbol: trading_symbol,
@@ -508,7 +452,7 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
  */
 app.post('/analyze-option-chain-range', async (req, res) => {
   try {
-    const { symbol, underlying_symbol, exchange, expiry_date, points_range, groww_token } = req.body
+    const { symbol, underlying_symbol, exchange, expiry_date, points_range, groww_token, previous_snapshot } = req.body
 
     if (!symbol || !underlying_symbol || !exchange || !expiry_date) {
       return res.status(400).json({
@@ -584,32 +528,20 @@ app.post('/analyze-option-chain-range', async (req, res) => {
     let parsed_analysis
     let raw_text
     try {
-      const optionsSummary = Object.entries(sortedFilteredStrikes).map(([strike, data]) => ({
-        strike,
-        ce_ltp: data.CE?.ltp || 0,
-        ce_oi: data.CE?.open_interest || 0,
-        ce_greeks: data.CE?.greeks || {},
-        pe_ltp: data.PE?.ltp || 0,
-        pe_oi: data.PE?.open_interest || 0,
-        pe_greeks: data.PE?.greeks || {},
-      }))
+      const current = {
+        underlying_symbol,
+        underlying_ltp,
+        expiry_date,
+        exchange,
+        points_range: pointsRange,
+        filtered_strikes: sortedFilteredStrikes,
+      }
+      const previous =
+        previous_snapshot && isSameInstrument(current, previous_snapshot) ? previous_snapshot : null
 
-      const promptContent = `Analyze the following option chain data for ${underlying_symbol} (underlying LTP: ₹${underlying_ltp}, Expiry: ${expiry_date}) and provide trading insights and detail_analysis:
+      const promptContent = buildInstitutionalAnalysisPrompt(current, previous)
 
-Option Chain Summary (+/-${pointsRange} points around LTP, full Greeks per strike):
-${JSON.stringify(optionsSummary, null, 2)}
-
-Please provide:
-1. Market sentiment (Bullish/Bearish/Neutral)
-2. Key support and resistance levels based on option data
-3. Recommended trading strategy
-4. Risk assessment
-5. Confidence level (0-100)
-6. Detail Analysis
-
-Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
-
-      const result = await analyzeWithAI(promptContent)
+      const result = await analyzeWithAI(promptContent, getAzureConfig())
       parsed_analysis = result.parsed_analysis
       raw_text = result.raw_text
     } catch (error) {
@@ -689,7 +621,7 @@ Please provide:
 
 Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
-    const result = await analyzeWithAI(promptContent)
+    const result = await analyzeWithAI(promptContent, getAzureConfig())
 
     return res.json({
       status: 'SUCCESS',
@@ -726,27 +658,9 @@ app.post('/compare-option-chain-snapshots', async (req, res) => {
       })
     }
 
-    const describeSnapshot = (snapshot) => `LTP: ₹${snapshot.underlying_ltp}, Sentiment: ${snapshot.parsed_analysis?.sentiment || 'N/A'}, Support: ₹${snapshot.parsed_analysis?.support_level || 'N/A'}, Resistance: ₹${snapshot.parsed_analysis?.resistance_level || 'N/A'}, Confidence: ${snapshot.parsed_analysis?.confidence ?? 'N/A'}%, Strategy: ${snapshot.parsed_analysis?.strategy || 'N/A'}`
+    const promptContent = buildInstitutionalAnalysisPrompt(latest, previous)
 
-    const promptContent = `Compare these two option chain analyses for ${latest.trading_symbol || latest.symbol}, taken up to ~5 minutes apart (could be less if manually refreshed), and explain the trend between them.
-
-Previous snapshot:
-${describeSnapshot(previous)}
-
-Latest snapshot:
-${describeSnapshot(latest)}
-
-Please provide:
-1. Trend (Strengthening/Weakening/Reversing/Unchanged)
-2. A short summary of the LTP change
-3. How sentiment shifted (or stayed the same) and why that matters
-4. An updated trading recommendation given this trend
-5. Confidence in this trend assessment (0-100)
-6. A short narrative explanation tying it together
-
-Format your response as JSON with keys: trend, ltp_change_summary, sentiment_shift, updated_recommendation, confidence, narrative`
-
-    const result = await analyzeWithAI(promptContent)
+    const result = await analyzeWithAI(promptContent, getAzureConfig())
 
     return res.json({
       status: 'SUCCESS',
@@ -792,6 +706,29 @@ app.get('/option-chain-snapshots/:id', async (req, res) => {
 })
 
 /**
+ * Regenerates one existing snapshot's AI analysis from its own saved
+ * filtered_strikes (no previous-snapshot context) and persists it back -
+ * used by the Compare tab to upgrade a legacy-schema snapshot to the full
+ * institutional report on demand, permanently replacing whatever was there.
+ */
+app.post('/option-chain-snapshots/:id/regenerate-analysis', async (req, res) => {
+  try {
+    const snapshot = await getOptionChainSnapshot(req.params.id)
+    if (!snapshot) {
+      return res.status(404).json({ error: 'Snapshot not found' })
+    }
+
+    const promptContent = buildInstitutionalAnalysisPrompt(snapshot, null)
+    const { parsed_analysis, raw_text } = await analyzeWithAI(promptContent, getAzureConfig())
+    await updateOptionChainSnapshotAnalysis(req.params.id, { parsed_analysis, raw_text })
+    res.json({ status: 'SUCCESS', snapshot: { ...snapshot, parsed_analysis, raw_text } })
+  } catch (error) {
+    console.error('Regenerate Analysis Error:', error.message)
+    res.status(error.response?.status || 500).json({ error: error.message })
+  }
+})
+
+/**
  * 404 handler for unmatched API routes
  */
 app.use((_, res) => {
@@ -808,7 +745,7 @@ export const api = onRequest(
       AZURE_OPENAI_DEPLOYMENT_SECRET,
       AZURE_OPENAI_API_VERSION_SECRET,
     ],
-    timeoutSeconds: 60,
+    timeoutSeconds: 120,
     memory: '256MiB',
   },
   app

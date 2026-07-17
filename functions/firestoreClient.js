@@ -87,3 +87,10 @@ export async function getOptionChainSnapshot(id) {
   const data = doc.data()
   return { id: doc.id, ...data, createdAt: data.createdAt?.toDate?.().toISOString() || null }
 }
+
+// Overwrites an existing snapshot's AI analysis in place - used to upgrade a
+// legacy-schema snapshot to the current institutional report format on
+// demand from the Compare tab, permanently replacing whatever was there.
+export async function updateOptionChainSnapshotAnalysis(id, { parsed_analysis, raw_text }) {
+  await db.collection(SNAPSHOTS_COLLECTION).doc(id).update({ parsed_analysis, raw_text })
+}
