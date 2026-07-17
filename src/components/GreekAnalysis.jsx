@@ -3,7 +3,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import Select from 'react-select'
 import { analyzeOptionChainRange, compareOptionChainSnapshots, getUnderlyingSymbols } from '../services/api'
 import { store } from '../store'
-import { setFormData, applyAnalysisResult, setComparison, resetAll } from '../store/greekAnalysisSlice'
+import { setFormData, setGrowToken, applyAnalysisResult, setComparison, resetAll } from '../store/greekAnalysisSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import ComparisonPanel from './ComparisonPanel'
 import MarketPulsePanel from './MarketPulsePanel'
@@ -63,6 +63,7 @@ function buildParams(formData) {
 function GreekAnalysis() {
   const dispatch = useDispatch()
   const formData = useSelector((state) => state.greekAnalysis.formData)
+  const growToken = useSelector((state) => state.greekAnalysis.growToken)
   const analysis = useSelector((state) => state.greekAnalysis.analysis)
   const lastUpdated = useSelector((state) => state.greekAnalysis.lastUpdated)
   const previousAnalysis = useSelector((state) => state.greekAnalysis.previousAnalysis)
@@ -126,6 +127,11 @@ function GreekAnalysis() {
       return false
     }
 
+    if (!growToken) {
+      setError('Groww access token is required - enter it above to run analysis')
+      return false
+    }
+
     return true
   }
 
@@ -152,7 +158,12 @@ function GreekAnalysis() {
     }
 
     try {
-      const data = await analyzeOptionChainRange(params)
+      // Read fresh from the store rather than the growToken selector value,
+      // for the same reason priorAnalysis below is read fresh - this runs
+      // from a setInterval callback scheduled earlier, whose closure would
+      // otherwise send a stale token if the user updates it mid-session.
+      const currentGrowToken = store.getState().greekAnalysis.growToken
+      const data = await analyzeOptionChainRange({ ...params, groww_token: currentGrowToken })
       const now = new Date().toISOString()
 
       // Read the freshest committed state directly from the store rather
@@ -219,6 +230,10 @@ function GreekAnalysis() {
   // identical either way) and resets the cycle to count down from now.
   const handleManualRefresh = async () => {
     if (!paramsRef.current || loading || refreshing) {
+      return
+    }
+    if (!growToken) {
+      setRefreshError('Groww access token is required - enter it above to run analysis')
       return
     }
     await runAnalysis(paramsRef.current, { isAutoRefresh: true })
@@ -364,6 +379,20 @@ function GreekAnalysis() {
             name="expiry_date"
             value={formData.expiry_date}
             onChange={handleInputChange}
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
+          />
+        </div>
+
+        <div className="flex flex-col gap-xs flex-1 min-w-[220px]">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-groww_token">
+            Groww Access Token
+          </label>
+          <input
+            id="ga-groww_token"
+            type="password"
+            value={growToken}
+            onChange={(e) => dispatch(setGrowToken(e.target.value))}
+            placeholder="Paste your Groww access token"
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
           />
         </div>

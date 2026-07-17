@@ -678,7 +678,7 @@ async function analyzeWithAI(promptContent) {
  */
 app.post('/analyze-option-chain-range', async (req, res) => {
   try {
-    const { symbol, underlying_symbol, exchange, expiry_date, points_range } = req.body
+    const { symbol, underlying_symbol, exchange, expiry_date, points_range, groww_token } = req.body
 
     if (!symbol || !underlying_symbol || !exchange || !expiry_date) {
       return res.status(400).json({
@@ -688,7 +688,7 @@ app.post('/analyze-option-chain-range', async (req, res) => {
       })
     }
 
-    const accessToken = await getGrowwAccessToken()
+    const accessToken = groww_token || (await getGrowwAccessToken())
 
     const range = parseFloat(points_range)
     const pointsRange = !isNaN(range) && range > 0 ? range : 500

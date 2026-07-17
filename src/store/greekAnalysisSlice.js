@@ -9,6 +9,10 @@ const initialState = {
     expiry_date: '',
     points_range: '500',
   },
+  // Sticky Groww access token, entered once from the UI - a credential, not
+  // a per-search form param, so it's kept separate from formData and left
+  // untouched by resetAll below.
+  growToken: '',
   analysis: null,
   lastUpdated: null,
   previousAnalysis: null,
@@ -23,6 +27,9 @@ const greekAnalysisSlice = createSlice({
   reducers: {
     setFormData(state, action) {
       state.formData = { ...state.formData, ...action.payload }
+    },
+    setGrowToken(state, action) {
+      state.growToken = action.payload
     },
     // Rotates the current analysis into "previous" (if one exists) and
     // commits the new one as current - this is what makes the latest/previous
@@ -58,5 +65,5 @@ const greekAnalysisSlice = createSlice({
   },
 })
 
-export const { setFormData, applyAnalysisResult, setComparison, resetAll } = greekAnalysisSlice.actions
+export const { setFormData, setGrowToken, applyAnalysisResult, setComparison, resetAll } = greekAnalysisSlice.actions
 export default greekAnalysisSlice.reducer
