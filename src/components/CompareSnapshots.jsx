@@ -8,7 +8,7 @@ import {
   compareOptionChainSnapshots,
   regenerateSnapshotAnalysis,
 } from '../services/api'
-import { setSelectedSymbol, setSnapshotAId, setSnapshotBId, setCompareResult } from '../store/compareSlice'
+import { setSelectedSymbol, setSnapshotAId, setSnapshotBId, setPromptType, setCompareResult } from '../store/compareSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import ComparisonPanel from './ComparisonPanel'
 import { NarrativeText } from './InstitutionalAnalysisReport'
@@ -50,6 +50,7 @@ function CompareSnapshots() {
   const selectedSymbol = useSelector((state) => state.compare.selectedSymbol)
   const snapshotAId = useSelector((state) => state.compare.snapshotAId)
   const snapshotBId = useSelector((state) => state.compare.snapshotBId)
+  const promptType = useSelector((state) => state.compare.promptType)
   const result = useSelector((state) => state.compare.result)
 
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
@@ -133,14 +134,17 @@ function CompareSnapshots() {
       // failure can't wipe out the others - a failed regeneration just keeps
       // that snapshot's original stored analysis instead of going blank.
       const [previousRegenerated, latestRegenerated, comparisonResult] = await Promise.all([
-        regenerateSnapshotAnalysis(previous.id).catch((err) => {
+        regenerateSnapshotAnalysis(previous.id, promptType).catch((err) => {
           console.error('Failed to regenerate previous snapshot analysis:', err)
           return null
         }),
-        regenerateSnapshotAnalysis(latest.id).catch((err) => {
+        regenerateSnapshotAnalysis(latest.id, promptType).catch((err) => {
           console.error('Failed to regenerate latest snapshot analysis:', err)
           return null
         }),
+        // Always the Master Prompt - Summarized Recommendations has no
+        // OI-migration concept, so the compact Difference card (fed by this
+        // call) wouldn't have anything to render from it either way.
         compareOptionChainSnapshots(previous, latest)
           .then((data) => ({ data }))
           .catch((err) => ({
@@ -272,6 +276,21 @@ function CompareSnapshots() {
                 {formatSnapshotLabel(s)}
               </option>
             ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-xs">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="cmp-prompt_type">
+            Prompt Style
+          </label>
+          <select
+            id="cmp-prompt_type"
+            value={promptType}
+            onChange={(e) => dispatch(setPromptType(e.target.value))}
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[200px] text-on-surface"
+          >
+            <option value="master_prompt">Master Prompt</option>
+            <option value="summarized_recommendations">Summarized Recommendations</option>
           </select>
         </div>
 

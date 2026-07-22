@@ -1013,15 +1013,19 @@ app.post('/option-chain-snapshots/:id/regenerate-analysis', async (req, res) => 
       return res.status(404).json({ error: 'Snapshot not found' })
     }
 
-    const promptContent = buildInstitutionalAnalysisPrompt(snapshot, null)
+    const resolvedPromptType = req.body.prompt_type === 'summarized_recommendations' ? 'summarized_recommendations' : 'master_prompt'
+    const promptContent =
+      resolvedPromptType === 'summarized_recommendations'
+        ? buildSummarizedRecommendationsPrompt(snapshot)
+        : buildInstitutionalAnalysisPrompt(snapshot, null)
     const { parsed_analysis, raw_text } = await analyzeWithAI(promptContent, {
       apiKey: AZURE_OPENAI_API_KEY,
       endpoint: AZURE_OPENAI_ENDPOINT,
       deployment: AZURE_OPENAI_DEPLOYMENT,
       apiVersion: AZURE_OPENAI_API_VERSION,
     })
-    await updateOptionChainSnapshotAnalysis(req.params.id, { parsed_analysis, raw_text })
-    res.json({ status: 'SUCCESS', snapshot: { ...snapshot, parsed_analysis, raw_text } })
+    await updateOptionChainSnapshotAnalysis(req.params.id, { parsed_analysis, raw_text, prompt_type: resolvedPromptType })
+    res.json({ status: 'SUCCESS', snapshot: { ...snapshot, parsed_analysis, raw_text, prompt_type: resolvedPromptType } })
   } catch (error) {
     console.error('Regenerate Analysis Error:', error.message)
     res.status(error.response?.status || 500).json({ error: error.message })

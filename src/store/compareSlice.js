@@ -4,6 +4,7 @@ const initialState = {
   selectedSymbol: '',
   snapshotAId: '',
   snapshotBId: '',
+  promptType: 'master_prompt',
   result: null,
 }
 
@@ -23,6 +24,9 @@ const compareSlice = createSlice({
     setSnapshotBId(state, action) {
       state.snapshotBId = action.payload
     },
+    setPromptType(state, action) {
+      state.promptType = action.payload
+    },
     setCompareResult(state, action) {
       state.result = action.payload
     },
@@ -32,5 +36,5 @@ const compareSlice = createSlice({
   },
 })
 
-export const { setSelectedSymbol, setSnapshotAId, setSnapshotBId, setCompareResult, resetCompare } = compareSlice.actions
+export const { setSelectedSymbol, setSnapshotAId, setSnapshotBId, setPromptType, setCompareResult, resetCompare } = compareSlice.actions
 export default compareSlice.reducer

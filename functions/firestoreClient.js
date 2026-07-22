@@ -91,6 +91,6 @@ export async function getOptionChainSnapshot(id) {
 // Overwrites an existing snapshot's AI analysis in place - used to upgrade a
 // legacy-schema snapshot to the current institutional report format on
 // demand from the Compare tab, permanently replacing whatever was there.
-export async function updateOptionChainSnapshotAnalysis(id, { parsed_analysis, raw_text }) {
-  await db.collection(SNAPSHOTS_COLLECTION).doc(id).update({ parsed_analysis, raw_text })
+export async function updateOptionChainSnapshotAnalysis(id, { parsed_analysis, raw_text, prompt_type }) {
+  await db.collection(SNAPSHOTS_COLLECTION).doc(id).update({ parsed_analysis, raw_text, prompt_type })
 }
