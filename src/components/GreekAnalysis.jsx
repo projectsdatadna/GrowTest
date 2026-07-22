@@ -149,6 +149,32 @@ function GreekAnalysis() {
       setError('')
     }
 
+    // Guards every path that can (re)send params.expiry_date - initial
+    // submit, manual refresh, the auto-refresh timer tick, and the
+    // mount-resume effect that continues a persisted session without ever
+    // going through form validation again. A persisted expiry_date from an
+    // earlier session can silently go stale (this is what caused the
+    // deployed site's "No strikes found" 400 - a since-expired weekly
+    // contract genuinely has no live strikes to return), so this is checked
+    // here rather than only once at submit time.
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+    if (params.expiry_date && new Date(params.expiry_date) < today) {
+      const message = `Expiry date ${params.expiry_date} has already passed - update it to a current or future expiry before analyzing.`
+      if (isAutoRefresh) {
+        setRefreshError(message)
+        setRefreshing(false)
+        if (intervalRef.current) {
+          clearInterval(intervalRef.current)
+          intervalRef.current = null
+        }
+      } else {
+        setError(message)
+        setLoading(false)
+      }
+      return
+    }
+
     try {
       // Read fresh from the store rather than the growToken selector value,
       // for the same reason priorAnalysis below is read fresh - this runs
