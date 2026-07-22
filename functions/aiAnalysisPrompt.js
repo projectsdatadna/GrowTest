@@ -78,6 +78,122 @@ Return valid JSON only, matching exactly this structure (fill in every field - u
 ${RESPONSE_SCHEMA}`
 }
 
+const SUMMARIZED_RECOMMENDATIONS_SCHEMA = `{
+  "key_elements": [
+    {
+      "title": "",
+      "observation": "",
+      "reason": ""
+    }
+  ],
+  "recommended_trades": [
+    {
+      "strategy": "",
+      "market_bias": "",
+      "reason": "",
+      "suggested_strikes": "",
+      "entry": "",
+      "profit_expectation": "",
+      "risk": "",
+      "confidence": 0
+    }
+  ]
+}`
+
+/**
+ * Builds the "Summarized Recommendations" prompt - a lighter-weight
+ * alternative to the institutional Master Prompt, focused on a concise key-
+ * elements readout plus concrete trade ideas. Only ever analyzes the current
+ * snapshot on its own - unlike buildInstitutionalAnalysisPrompt, there's no
+ * previous-snapshot/OI-migration concept here.
+ */
+export function buildSummarizedRecommendationsPrompt(current) {
+  const optionChainJson = JSON.stringify(summarizeStrikes(current.filtered_strikes), null, 2)
+
+  return `You are an institutional options strategist with expertise in NSE derivatives, option chain analysis, Greeks, volatility, and options trading strategies.
+
+Analyze the following option chain data.
+
+Underlying Price:
+${current.underlying_ltp}
+
+Expiry:
+${current.expiry_date}
+
+Option Chain:
+${optionChainJson}
+
+Provide a concise but insightful analysis with two sections:
+
+## 1. Key Elements
+
+Identify the most important market observations, including but not limited to:
+
+- Overall market sentiment (Bullish / Bearish / Neutral)
+- Strongest support levels and why
+- Strongest resistance levels and why
+- Open Interest concentration
+- Put-Call Ratio (if it can be inferred)
+- Institutional positioning
+- Significant Call/Put writing activity
+- Significant Call/Put buying activity
+- Gamma walls or important Greeks observations
+- IV observations
+- Premium behaviour
+- Expected trading range
+- Probability of breakout or breakdown
+- Important risks or conflicting signals
+
+For every observation, briefly explain the reasoning based on OI, Greeks, IV, premium, and volume.
+
+---
+
+## 2. Recommended Trades
+
+Recommend up to 5 option strategies that best suit the current market structure.
+
+Possible strategies include (choose only those appropriate):
+
+- Buy Call
+- Buy Put
+- Sell Call
+- Sell Put
+- Bull Call Spread
+- Bear Put Spread
+- Bull Put Spread
+- Bear Call Spread
+- Long Straddle
+- Long Strangle
+- Short Straddle
+- Short Strangle
+- Iron Condor
+- Iron Butterfly
+- Calendar Spread
+- Diagonal Spread
+- Covered Call
+- Protective Put
+- No Trade
+
+For each recommendation provide:
+
+- Strategy Name
+- Market Bias
+- Why this strategy fits the current option chain
+- Suggested Strike Selection (ATM / ITM / OTM or specific strikes if evident)
+- Entry rationale
+- Profit expectation (Low / Medium / High)
+- Risk level (Low / Medium / High)
+- Confidence Score (0-100)
+
+If market conditions are unclear or conflicting, explicitly recommend "No Trade" rather than forcing a strategy.
+
+Base every conclusion ONLY on the supplied option chain data. Do not invent information.
+
+Return valid JSON only.
+
+${SUMMARIZED_RECOMMENDATIONS_SCHEMA}`
+}
+
 /**
  * Calls Azure OpenAI chat completions with a prompt that must return a
  * single JSON object (enforced via response_format), and parses it directly -

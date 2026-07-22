@@ -10,7 +10,7 @@
 
 import { splitNarrativePoints } from './greekAnalysisUtils'
 
-function SectionCard({ title, borderClass = 'border-primary-container', children }) {
+export function SectionCard({ title, borderClass = 'border-primary-container', children }) {
   return (
     <div className={`p-base bg-white/5 rounded border-l-4 ${borderClass} flex flex-col gap-xs`}>
       <div className="text-lg font-extrabold uppercase text-center text-white tracking-wide mb-xs">{title}</div>
@@ -19,7 +19,7 @@ function SectionCard({ title, borderClass = 'border-primary-container', children
   )
 }
 
-function Field({ label, value }) {
+export function Field({ label, value }) {
   if (value === null || value === undefined || value === '') return null
   return (
     <div className="flex justify-between gap-md text-xs">
@@ -66,7 +66,7 @@ export function NarrativeText({ text, className = 'text-sm text-on-surface' }) {
   )
 }
 
-function sentimentColorClass(sentiment) {
+export function sentimentColorClass(sentiment) {
   const s = (sentiment || '').toLowerCase()
   if (s.includes('bull')) return 'text-bullish'
   if (s.includes('bear')) return 'text-bearish'

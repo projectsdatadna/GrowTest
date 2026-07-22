@@ -18,7 +18,12 @@ import {
   getOptionChainSnapshot,
   updateOptionChainSnapshotAnalysis,
 } from './firestoreClient.js'
-import { buildInstitutionalAnalysisPrompt, analyzeWithAI, isSameInstrument } from './aiAnalysisPrompt.js'
+import {
+  buildInstitutionalAnalysisPrompt,
+  buildSummarizedRecommendationsPrompt,
+  analyzeWithAI,
+  isSameInstrument,
+} from './aiAnalysisPrompt.js'
 
 const GROWW_API_KEY_SECRET = defineSecret('GROWW_API_KEY')
 const GROWW_API_SECRET_SECRET = defineSecret('GROWW_API_SECRET')
@@ -452,7 +457,7 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
  */
 app.post('/analyze-option-chain-range', async (req, res) => {
   try {
-    const { symbol, underlying_symbol, exchange, expiry_date, points_range, groww_token, previous_snapshot } = req.body
+    const { symbol, underlying_symbol, exchange, expiry_date, points_range, groww_token, previous_snapshot, prompt_type } = req.body
 
     if (!symbol || !underlying_symbol || !exchange || !expiry_date) {
       return res.status(400).json({
@@ -539,7 +544,10 @@ app.post('/analyze-option-chain-range', async (req, res) => {
       const previous =
         previous_snapshot && isSameInstrument(current, previous_snapshot) ? previous_snapshot : null
 
-      const promptContent = buildInstitutionalAnalysisPrompt(current, previous)
+      const promptContent =
+        prompt_type === 'summarized_recommendations'
+          ? buildSummarizedRecommendationsPrompt(current)
+          : buildInstitutionalAnalysisPrompt(current, previous)
 
       const result = await analyzeWithAI(promptContent, getAzureConfig())
       parsed_analysis = result.parsed_analysis
@@ -560,6 +568,7 @@ app.post('/analyze-option-chain-range', async (req, res) => {
       calculated_range: { min: minimum_calculated_value, max: maximum_calculated_value },
       filtered_strikes: sortedFilteredStrikes,
       filtered_strikes_count: Object.keys(sortedFilteredStrikes).length,
+      prompt_type: prompt_type === 'summarized_recommendations' ? 'summarized_recommendations' : 'master_prompt',
       parsed_analysis,
       raw_text,
     }

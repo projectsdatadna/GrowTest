@@ -58,13 +58,14 @@ function ServerClock() {
 }
 
 function buildParams(formData) {
-  const { exchange, underlying_symbol, expiry_date, points_range } = formData
+  const { exchange, underlying_symbol, expiry_date, points_range, prompt_type } = formData
   return {
     symbol: underlying_symbol,
     underlying_symbol,
     exchange,
     expiry_date,
     points_range: parseFloat(points_range),
+    prompt_type,
   }
 }
 
@@ -390,6 +391,22 @@ function GreekAnalysis() {
             onChange={handleInputChange}
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
           />
+        </div>
+
+        <div className="flex flex-col gap-xs">
+          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-prompt_type">
+            Prompt Style
+          </label>
+          <select
+            id="ga-prompt_type"
+            name="prompt_type"
+            value={formData.prompt_type}
+            onChange={handleInputChange}
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[200px] text-on-surface"
+          >
+            <option value="master_prompt">Master Prompt</option>
+            <option value="summarized_recommendations">Summarized Recommendations</option>
+          </select>
         </div>
 
         <div className="flex flex-col gap-xs flex-1 min-w-[220px]">

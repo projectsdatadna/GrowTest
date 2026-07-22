@@ -1,4 +1,5 @@
 import InstitutionalAnalysisReport from './InstitutionalAnalysisReport'
+import SummarizedRecommendationsReport from './SummarizedRecommendationsReport'
 
 /**
  * Renders one Greek Analysis snapshot (range + full per-strike Greeks table
@@ -115,7 +116,12 @@ function AnalysisSnapshotCard({ analysis, label, variant = 'latest', timestamp }
           </div>
         )}
 
-        {analysis.parsed_analysis && <InstitutionalAnalysisReport sections={analysis.parsed_analysis} />}
+        {analysis.parsed_analysis &&
+          (analysis.prompt_type === 'summarized_recommendations' ? (
+            <SummarizedRecommendationsReport sections={analysis.parsed_analysis} />
+          ) : (
+            <InstitutionalAnalysisReport sections={analysis.parsed_analysis} />
+          ))}
       </div>
     </div>
   )

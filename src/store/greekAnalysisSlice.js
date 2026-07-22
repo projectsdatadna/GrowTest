@@ -9,6 +9,7 @@ const initialState = {
     underlying_symbol: '',
     expiry_date: '',
     points_range: '500',
+    prompt_type: 'master_prompt',
   },
   // Sticky Groww access token, entered once from the UI - a credential, not
   // a per-search form param, so it's kept separate from formData and left
