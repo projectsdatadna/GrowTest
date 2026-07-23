@@ -103,12 +103,27 @@ const SUMMARIZED_RECOMMENDATIONS_SCHEMA = `{
 /**
  * Builds the "Summarized Recommendations" prompt - a lighter-weight
  * alternative to the institutional Master Prompt, focused on a concise key-
- * elements readout plus concrete trade ideas. Only ever analyzes the current
- * snapshot on its own - unlike buildInstitutionalAnalysisPrompt, there's no
- * previous-snapshot/OI-migration concept here.
+ * elements readout plus concrete trade ideas. `previous` is optional - when
+ * given, the prompt asks the model to explicitly account for what changed
+ * since that snapshot (same convention as buildInstitutionalAnalysisPrompt's
+ * OI Migration), so this can also power a diff-aware "Difference" card, not
+ * just a snapshot-in-time report. Omitting it reproduces today's behavior
+ * exactly.
  */
-export function buildSummarizedRecommendationsPrompt(current) {
+export function buildSummarizedRecommendationsPrompt(current, previous) {
   const optionChainJson = JSON.stringify(summarizeStrikes(current.filtered_strikes), null, 2)
+  const previousSection = previous
+    ? `\nPrevious Snapshot (for comparison - identify what has changed since this snapshot):\n${JSON.stringify(summarizeStrikes(previous.filtered_strikes), null, 2)}\n`
+    : ''
+  const changeElementBullet = previous
+    ? '\n- What has changed since the previous snapshot (OI shifts, IV shifts, premium moves, sentiment shifts) and what that implies'
+    : ''
+  const changeReasoningNote = previous
+    ? ' Where a previous snapshot is provided above, explicitly call out what has changed rather than describing the current snapshot in isolation.'
+    : ''
+  const changeTradeNote = previous
+    ? '\n\nSince a previous snapshot is provided, factor in what has changed since then when choosing and justifying each recommendation.'
+    : ''
 
   return `You are an institutional options strategist with expertise in NSE derivatives, option chain analysis, Greeks, volatility, and options trading strategies.
 
@@ -122,7 +137,7 @@ ${current.expiry_date}
 
 Option Chain:
 ${optionChainJson}
-
+${previousSection}
 Provide a concise but insightful analysis with two sections:
 
 ## 1. Key Elements
@@ -142,9 +157,9 @@ Identify the most important market observations, including but not limited to:
 - Premium behaviour
 - Expected trading range
 - Probability of breakout or breakdown
-- Important risks or conflicting signals
+- Important risks or conflicting signals${changeElementBullet}
 
-For every observation, briefly explain the reasoning based on OI, Greeks, IV, premium, and volume.
+For every observation, briefly explain the reasoning based on OI, Greeks, IV, premium, and volume.${changeReasoningNote}
 
 ---
 
@@ -183,7 +198,7 @@ For each recommendation provide:
 - Entry rationale
 - Profit expectation (Low / Medium / High)
 - Risk level (Low / Medium / High)
-- Confidence Score (0-100)
+- Confidence Score (0-100)${changeTradeNote}
 
 If market conditions are unclear or conflicting, explicitly recommend "No Trade" rather than forcing a strategy.
 

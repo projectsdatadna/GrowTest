@@ -493,7 +493,9 @@ function GreekAnalysis() {
               <ComparisonPanel
                 comparing={false}
                 comparisonError=""
+                promptType={analysis?.prompt_type}
                 oiMigration={analysis?.parsed_analysis?.oi_migration}
+                summarizedSections={analysis?.parsed_analysis}
                 greeksDelta={greeksDelta}
               />
 

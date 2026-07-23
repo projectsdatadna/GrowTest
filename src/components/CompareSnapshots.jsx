@@ -142,10 +142,10 @@ function CompareSnapshots() {
           console.error('Failed to regenerate latest snapshot analysis:', err)
           return null
         }),
-        // Always the Master Prompt - Summarized Recommendations has no
-        // OI-migration concept, so the compact Difference card (fed by this
-        // call) wouldn't have anything to render from it either way.
-        compareOptionChainSnapshots(previous, latest)
+        // Same prompt style as the snapshot regenerations above - respects
+        // the dropdown so the Difference card can show a diff-aware
+        // Summarized Recommendations comparison, not just OI Migration.
+        compareOptionChainSnapshots(previous, latest, promptType)
           .then((data) => ({ data }))
           .catch((err) => ({
             error: err.response?.data?.error || err.message || 'Comparison inference failed - other data below is still accurate.',
@@ -172,6 +172,7 @@ function CompareSnapshots() {
           probabilityGauge,
           priceTimeline,
           hasMeaningfulChange,
+          promptType,
         })
       )
     } catch (err) {
@@ -337,7 +338,9 @@ function CompareSnapshots() {
               <ComparisonPanel
                 comparing={false}
                 comparisonError={result.comparisonError || ''}
+                promptType={result.promptType}
                 oiMigration={result.comparison?.parsed_comparison?.oi_migration}
+                summarizedSections={result.comparison?.parsed_comparison}
                 greeksDelta={result.greeksDelta}
               />
 

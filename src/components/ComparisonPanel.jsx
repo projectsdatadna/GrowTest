@@ -1,22 +1,27 @@
 import { OiMigrationSection } from './InstitutionalAnalysisReport'
+import SummarizedRecommendationsReport from './SummarizedRecommendationsReport'
 
 /**
- * Renders the OI Change & Migration section (from the institutional AI
- * report) plus a per-Greek average-change table. Shared by GreekAnalysis.jsx
- * (auto-refresh "Difference" panel, fed the latest run's own oi_migration)
- * and CompareSnapshots.jsx (manual compare of any two saved snapshots, fed
- * the comparison call's oi_migration) - Snapshot A/B's own full institutional
- * reports are shown on their own AnalysisSnapshotCard, so this panel stays
- * compact on both tabs.
+ * Renders the diff between two snapshots - OI Change & Migration (Master
+ * Prompt) or a diff-aware Key Elements/Recommended Trades (Summarized
+ * Recommendations, via the same prompt builder extended to accept a
+ * previous snapshot) - plus a per-Greek average-change table either way.
+ * Shared by GreekAnalysis.jsx (auto-refresh "Difference" panel, fed the
+ * latest run's own parsed_analysis) and CompareSnapshots.jsx (manual compare
+ * of any two saved snapshots, fed the dedicated comparison call's result).
  */
 function ComparisonPanel({
   comparing,
   comparisonError,
+  promptType = 'master_prompt',
   oiMigration,
+  summarizedSections,
   greeksDelta,
   title = 'Difference',
   emptyMessage = 'Comparison appears once there are two snapshots to compare.',
 }) {
+  const isSummarized = promptType === 'summarized_recommendations'
+  const hasContent = isSummarized ? !!summarizedSections : !!oiMigration
   return (
     <div className="glass-panel rounded-xl overflow-hidden">
       <div className="p-md border-b border-terminal-border bg-white/5">
@@ -27,11 +32,15 @@ function ComparisonPanel({
           <div className="text-on-surface-variant text-sm text-center py-lg">Generating comparison inference...</div>
         ) : comparisonError ? (
           <div className="text-bearish text-sm">{comparisonError}</div>
-        ) : !oiMigration ? (
+        ) : !hasContent ? (
           <div className="text-on-surface-variant text-sm text-center py-lg">{emptyMessage}</div>
         ) : (
           <>
-            <OiMigrationSection data={oiMigration} />
+            {isSummarized ? (
+              <SummarizedRecommendationsReport sections={summarizedSections} />
+            ) : (
+              <OiMigrationSection data={oiMigration} />
+            )}
 
             {greeksDelta.length > 0 && (
               <table className="w-full text-xs mt-base">

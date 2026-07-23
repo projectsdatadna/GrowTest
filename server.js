@@ -734,7 +734,7 @@ app.post('/analyze-option-chain-range', async (req, res) => {
 
       const promptContent =
         prompt_type === 'summarized_recommendations'
-          ? buildSummarizedRecommendationsPrompt(current)
+          ? buildSummarizedRecommendationsPrompt(current, previous)
           : buildInstitutionalAnalysisPrompt(current, previous)
 
       const result = await analyzeWithAI(promptContent, {
@@ -938,7 +938,7 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
  */
 app.post('/compare-option-chain-snapshots', async (req, res) => {
   try {
-    const { previous, latest } = req.body
+    const { previous, latest, prompt_type } = req.body
 
     if (!previous || !latest) {
       return res.status(400).json({
@@ -948,7 +948,10 @@ app.post('/compare-option-chain-snapshots', async (req, res) => {
       })
     }
 
-    const promptContent = buildInstitutionalAnalysisPrompt(latest, previous)
+    const promptContent =
+      prompt_type === 'summarized_recommendations'
+        ? buildSummarizedRecommendationsPrompt(latest, previous)
+        : buildInstitutionalAnalysisPrompt(latest, previous)
 
     const result = await analyzeWithAI(promptContent, {
       apiKey: AZURE_OPENAI_API_KEY,

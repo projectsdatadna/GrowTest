@@ -70,9 +70,9 @@ export const analyzeOptionChainRange = async (data) => {
 }
 
 // Compare two Greek Analysis snapshots (e.g. latest vs ~15 min prior) for an AI trend inference
-export const compareOptionChainSnapshots = async (previous, latest) => {
+export const compareOptionChainSnapshots = async (previous, latest, promptType = 'master_prompt') => {
   try {
-    const response = await apiClient.post('/compare-option-chain-snapshots', { previous, latest })
+    const response = await apiClient.post('/compare-option-chain-snapshots', { previous, latest, prompt_type: promptType })
     return response.data
   } catch (error) {
     console.error('Error comparing option chain snapshots:', error)
