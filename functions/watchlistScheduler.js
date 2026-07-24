@@ -15,6 +15,7 @@ import {
   findWatchlistSnapshotNear,
   saveWatchlistAnalysis,
   getWatchlistAnalysisBySnapshotId,
+  getLatestWatchlistAnalysis,
   deleteAllDocsInCollection,
 } from './watchlistFirestoreClient.js'
 
@@ -47,6 +48,23 @@ export function minutesSinceMarketOpen(date = new Date()) {
 }
 
 const TIER_MINUTES = { '5m': 5, '15m': 15, '75m': 75 }
+
+// Ticks are scheduled "every 5 minutes" but real-world dispatch drifts
+// (observed ~6 minutes apart in production, since each tick's own AI calls
+// take 80-90+ seconds) - so whether a 15m/75m tier is due is decided by real
+// elapsed time since that tier's own last analysis, not by assuming `now`
+// lands on an exact multiple-of-15/75 boundary since market open (that
+// modulo check silently never fired once the schedule drifted off a clean
+// 5-minute grid, so those tiers never got any data at all). A small
+// tolerance lets a tick that's due, say, 30-60s early still count.
+const TIER_DUE_TOLERANCE_MINUTES = 1
+
+async function isTierDue(watchlist_id, tier, now) {
+  const latest = await getLatestWatchlistAnalysis(watchlist_id, tier)
+  if (!latest) return true
+  const elapsedSinceLastRun = (now.getTime() - new Date(latest.createdAt).getTime()) / 60000
+  return elapsedSinceLastRun >= TIER_MINUTES[tier] - TIER_DUE_TOLERANCE_MINUTES
+}
 
 /**
  * Runs one tier's comparison+analysis for a single watchlist entry: finds
@@ -102,8 +120,8 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
 /**
  * The 5-minute tick: fetches fresh data for every active watchlist entry
  * and always runs the 5-min tier, plus the 15-min/75-min tiers whenever
- * `now` lands on their respective boundary since market open. One Groww
- * fetch per entry serves all three tiers - no redundant fetching.
+ * they're due (see isTierDue) for that entry. One Groww fetch per entry
+ * serves all three tiers - no redundant fetching.
  */
 export async function runWatchlistTick({ groww_token, azureConfig, now = new Date() }) {
   if (!isWithinMarketHours(now)) {
@@ -131,8 +149,8 @@ export async function runWatchlistTick({ groww_token, azureConfig, now = new Dat
       const currentSnapshot = { underlying_ltp: chain.underlying_ltp, filtered_strikes: chain.filtered_strikes }
 
       const tiersToRun = ['5m']
-      if (elapsedMinutes >= 0 && elapsedMinutes % 15 === 0) tiersToRun.push('15m')
-      if (elapsedMinutes >= 0 && elapsedMinutes % 75 === 0) tiersToRun.push('75m')
+      if (await isTierDue(entry.id, '15m', now)) tiersToRun.push('15m')
+      if (await isTierDue(entry.id, '75m', now)) tiersToRun.push('75m')
 
       for (const tier of tiersToRun) {
         await analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, now, azureConfig })
