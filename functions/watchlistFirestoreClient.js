@@ -88,6 +88,10 @@ export async function findWatchlistSnapshotNear(watchlist_id, targetDate, tolera
 
 // One row per tier-tick per watchlist entry - both AI analyses side by side,
 // each already diff-aware when a previous snapshot was found for this tier.
+// Also carries the raw current/previous snapshots (for the client's
+// Current/Previous/Difference columns) and the prior tick's own AI reports
+// (for a real, non-fabricated Previous-column report) - see
+// getWatchlistAnalysisBySnapshotId below.
 export async function saveWatchlistAnalysis({
   watchlist_id,
   tier,
@@ -96,6 +100,10 @@ export async function saveWatchlistAnalysis({
   underlying_ltp,
   master_prompt_analysis,
   summarized_recommendations_analysis,
+  current_snapshot,
+  previous_snapshot,
+  previous_master_prompt_analysis,
+  previous_summarized_recommendations_analysis,
 }) {
   const docRef = await db.collection(WATCHLIST_ANALYSES_COLLECTION).add({
     watchlist_id,
@@ -105,6 +113,10 @@ export async function saveWatchlistAnalysis({
     underlying_ltp,
     master_prompt_analysis,
     summarized_recommendations_analysis,
+    current_snapshot: current_snapshot || null,
+    previous_snapshot: previous_snapshot || null,
+    previous_master_prompt_analysis: previous_master_prompt_analysis || null,
+    previous_summarized_recommendations_analysis: previous_summarized_recommendations_analysis || null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   })
   return docRef.id
@@ -116,6 +128,23 @@ export async function getLatestWatchlistAnalysis(watchlist_id, tier) {
     .where('watchlist_id', '==', watchlist_id)
     .where('tier', '==', tier)
     .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get()
+  return snapshot.empty ? null : serializeDoc(snapshot.docs[0])
+}
+
+// Finds the watchlistAnalyses doc that was current as of a given past
+// snapshot, for the same tier - i.e. "what did our own AI report look like
+// last tick" - so the Previous column can show a real, already-computed
+// report instead of none at all. Returns null for the first few ticks of the
+// day (or if that tier's analysis somehow failed at that tick).
+export async function getWatchlistAnalysisBySnapshotId(watchlist_id, tier, snapshot_id) {
+  if (!snapshot_id) return null
+  const snapshot = await db
+    .collection(WATCHLIST_ANALYSES_COLLECTION)
+    .where('watchlist_id', '==', watchlist_id)
+    .where('tier', '==', tier)
+    .where('current_snapshot_id', '==', snapshot_id)
     .limit(1)
     .get()
   return snapshot.empty ? null : serializeDoc(snapshot.docs[0])

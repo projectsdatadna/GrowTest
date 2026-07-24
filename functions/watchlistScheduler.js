@@ -14,6 +14,7 @@ import {
   saveWatchlistSnapshot,
   findWatchlistSnapshotNear,
   saveWatchlistAnalysis,
+  getWatchlistAnalysisBySnapshotId,
   deleteAllDocsInCollection,
 } from './watchlistFirestoreClient.js'
 
@@ -67,9 +68,10 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
     filtered_strikes: currentSnapshot.filtered_strikes,
   }
 
-  const [masterResult, summarizedResult] = await Promise.all([
+  const [masterResult, summarizedResult, previousAnalysisDoc] = await Promise.all([
     analyzeWithAI(buildInstitutionalAnalysisPrompt(current, previous), azureConfig),
     analyzeWithAI(buildSummarizedRecommendationsPrompt(current, previous), azureConfig),
+    previousDoc ? getWatchlistAnalysisBySnapshotId(entry.id, tier, previousDoc.id) : null,
   ])
 
   await saveWatchlistAnalysis({
@@ -80,6 +82,20 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
     underlying_ltp: currentSnapshot.underlying_ltp,
     master_prompt_analysis: masterResult.parsed_analysis,
     summarized_recommendations_analysis: summarizedResult.parsed_analysis,
+    current_snapshot: {
+      underlying_ltp: currentSnapshot.underlying_ltp,
+      filtered_strikes: currentSnapshot.filtered_strikes,
+      fetched_at: now.toISOString(),
+    },
+    previous_snapshot: previousDoc
+      ? {
+          underlying_ltp: previousDoc.underlying_ltp,
+          filtered_strikes: previousDoc.filtered_strikes,
+          fetched_at: previousDoc.createdAt,
+        }
+      : null,
+    previous_master_prompt_analysis: previousAnalysisDoc?.master_prompt_analysis || null,
+    previous_summarized_recommendations_analysis: previousAnalysisDoc?.summarized_recommendations_analysis || null,
   })
 }
 

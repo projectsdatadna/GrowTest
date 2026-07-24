@@ -4,6 +4,7 @@ const initialState = {
   entries: [],
   selectedSymbol: '',
   selectedTier: '5m',
+  selectedPromptType: 'master_prompt',
 }
 
 const watchlistSlice = createSlice({
@@ -25,8 +26,11 @@ const watchlistSlice = createSlice({
     setSelectedTier(state, action) {
       state.selectedTier = action.payload
     },
+    setSelectedPromptType(state, action) {
+      state.selectedPromptType = action.payload
+    },
   },
 })
 
-export const { setWatchlistEntries, setSelectedSymbol, setSelectedTier } = watchlistSlice.actions
+export const { setWatchlistEntries, setSelectedSymbol, setSelectedTier, setSelectedPromptType } = watchlistSlice.actions
 export default watchlistSlice.reducer

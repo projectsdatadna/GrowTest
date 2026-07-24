@@ -180,6 +180,35 @@ export function computeGreeksDelta(previous, latest) {
   })
 }
 
+/**
+ * Adapts a raw Watchlist snapshot ({ underlying_ltp, filtered_strikes,
+ * fetched_at }) + its tracked entry + a chosen prompt's parsed analysis into
+ * the shape AnalysisSnapshotCard/computeOiChanges/computeGreeksDelta/
+ * computeMarketPulse already expect (the same shape /analyze-option-chain-range
+ * returns for Greek Analysis) - so the Watchlist tab can reuse every one of
+ * those components/helpers unchanged. Returns null when there's no snapshot
+ * yet (e.g. no previous tick has run today).
+ */
+export function buildSnapshotCardAnalysis(snapshot, entry, promptType, parsedAnalysis) {
+  if (!snapshot || !entry) return null
+
+  const range = parseFloat(entry.points_range)
+  const ltp = snapshot.underlying_ltp
+
+  return {
+    underlying_symbol: entry.underlying_symbol,
+    exchange: entry.exchange,
+    expiry_date: entry.expiry_date,
+    underlying_ltp: ltp,
+    points_range: range,
+    calculated_range: { min: (ltp - range).toFixed(2), max: (ltp + range).toFixed(2) },
+    filtered_strikes: snapshot.filtered_strikes,
+    filtered_strikes_count: Object.keys(snapshot.filtered_strikes || {}).length,
+    prompt_type: promptType,
+    parsed_analysis: parsedAnalysis || null,
+  }
+}
+
 /** Triggers a browser download of the current 3-zone data as JSON. */
 export function exportSnapshotsAsJson(latest, previous, comparison) {
   const payload = { exported_at: new Date().toISOString(), latest, previous, comparison }
