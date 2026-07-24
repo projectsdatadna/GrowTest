@@ -93,7 +93,7 @@ values) plus a **one-time CI auth setup**:
      roles/iam.serviceAccountUser roles/cloudbuild.builds.editor \
      roles/artifactregistry.admin roles/storage.admin \
      roles/secretmanager.admin roles/serviceusage.serviceUsageAdmin \
-     roles/firebasehosting.admin; do
+     roles/firebasehosting.admin roles/cloudscheduler.admin; do
      gcloud projects add-iam-policy-binding devgraders \
        --member="serviceAccount:$SA" --role="$ROLE" --condition=None
    done
@@ -106,7 +106,13 @@ values) plus a **one-time CI auth setup**:
    deploy auto-enables any required API — e.g. `eventarc.googleapis.com`,
    `run.googleapis.com` — that isn't already on, and without this role that
    step fails with a permissions error instead; `firebasehosting.admin` is
-   for the separate frontend Hosting deploy, see "Frontend" below.)
+   for the separate frontend Hosting deploy, see "Frontend" below;
+   `cloudscheduler.admin` is needed the moment any function uses
+   `onSchedule` — e.g. `watchlistTick`/`watchlistCleanup` — since `firebase
+   deploy` provisions/updates that function's backing Cloud Scheduler job
+   directly; without it, the function itself deploys fine but the
+   scheduler-job step fails with `403: lacks IAM permission
+   cloudscheduler.jobs.update`.)
 2. Add the contents of `key.json` as a GitHub Actions secret named
    `FIREBASE_SERVICE_ACCOUNT_DEVGRADERS` on this repo (Settings → Secrets and
    variables → Actions → New repository secret, or `gh secret set
