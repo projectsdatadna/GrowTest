@@ -1,25 +1,12 @@
-import { useRef, useState, useEffect, useMemo } from 'react'
+import { useRef, useState, useEffect } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import Select from 'react-select'
-import { analyzeOptionChainRange, getUnderlyingSymbols } from '../services/api'
+import { analyzeOptionChainRange, getUnderlyingSymbols, addWatchlistEntry, getWatchlistEntries, removeWatchlistEntry } from '../services/api'
 import { store } from '../store'
 import { setFormData, setGrowToken, applyAnalysisResult, resetAll } from '../store/greekAnalysisSlice'
-import AnalysisSnapshotCard from './AnalysisSnapshotCard'
-import ComparisonPanel from './ComparisonPanel'
-import { NarrativeText } from './InstitutionalAnalysisReport'
-import NoChangeBanner from './NoChangeBanner'
-import MarketPulsePanel from './MarketPulsePanel'
-import ProbabilityGauge from './ProbabilityGauge'
-import TimelineChart from './TimelineChart'
-import OiBuildupPanel from './OiBuildupPanel'
-import {
-  computeProbabilityGauge,
-  computeOiChanges,
-  computeGreeksDelta,
-  exportSnapshotsAsJson,
-  getMarketSummary,
-} from './greekAnalysisUtils'
-import { computeMarketPulse, isSameInstrument } from './marketPulseEngine'
+import { setWatchlistEntries } from '../store/watchlistSlice'
+import { exportSnapshotsAsJson } from './greekAnalysisUtils'
+import { isSameInstrument } from './marketPulseEngine'
 
 const underlyingSymbolSelectClassNames = {
   control: () =>
@@ -74,10 +61,8 @@ function GreekAnalysis() {
   const formData = useSelector((state) => state.greekAnalysis.formData)
   const growToken = useSelector((state) => state.greekAnalysis.growToken)
   const analysis = useSelector((state) => state.greekAnalysis.analysis)
-  const lastUpdated = useSelector((state) => state.greekAnalysis.lastUpdated)
   const previousAnalysis = useSelector((state) => state.greekAnalysis.previousAnalysis)
-  const previousUpdated = useSelector((state) => state.greekAnalysis.previousUpdated)
-  const ltpHistory = useSelector((state) => state.greekAnalysis.ltpHistory)
+  const watchlistEntries = useSelector((state) => state.watchlist.entries)
 
   const [loading, setLoading] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -86,8 +71,50 @@ function GreekAnalysis() {
 
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
 
+  const [addingToWatchlist, setAddingToWatchlist] = useState(false)
+  const [watchlistMessage, setWatchlistMessage] = useState('')
+
   const intervalRef = useRef(null)
   const paramsRef = useRef(null)
+
+  const refreshWatchlistEntries = () => {
+    getWatchlistEntries()
+      .then(({ entries }) => dispatch(setWatchlistEntries(entries || [])))
+      .catch((err) => console.error('Failed to load watchlist entries:', err))
+  }
+
+  useEffect(() => {
+    refreshWatchlistEntries()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const handleAddToWatchlist = async () => {
+    setWatchlistMessage('')
+    const { exchange, underlying_symbol, expiry_date, points_range } = formData
+    if (!exchange || !underlying_symbol || !expiry_date || !points_range) {
+      setWatchlistMessage('Fill in Exchange, Underlying Symbol, Points Range and Expiry Date before adding to the watchlist.')
+      return
+    }
+    setAddingToWatchlist(true)
+    try {
+      await addWatchlistEntry({ underlying_symbol, exchange, expiry_date, points_range: parseFloat(points_range) })
+      setWatchlistMessage(`${underlying_symbol} added to the watchlist.`)
+      refreshWatchlistEntries()
+    } catch (err) {
+      setWatchlistMessage(err.response?.data?.error || err.message || 'Failed to add to watchlist')
+    } finally {
+      setAddingToWatchlist(false)
+    }
+  }
+
+  const handleRemoveWatchlistEntry = async (id) => {
+    try {
+      await removeWatchlistEntry(id)
+      refreshWatchlistEntries()
+    } catch (err) {
+      setWatchlistMessage(err.response?.data?.error || err.message || 'Failed to remove watchlist entry')
+    }
+  }
 
   useEffect(() => {
     getUnderlyingSymbols()
@@ -280,25 +307,6 @@ function GreekAnalysis() {
     dispatch(resetAll())
   }
 
-  const marketSummary = getMarketSummary(analysis?.parsed_analysis)
-  const probabilityGauge = marketSummary ? computeProbabilityGauge(marketSummary) : null
-  const oiChanges = previousAnalysis && analysis ? computeOiChanges(previousAnalysis, analysis) : null
-  const greeksDelta = previousAnalysis && analysis ? computeGreeksDelta(previousAnalysis, analysis) : []
-  const marketPulse = useMemo(() => (analysis ? computeMarketPulse(analysis, previousAnalysis) : null), [analysis, previousAnalysis])
-
-  // Distinguishes a real, correctly-computed zero (the two snapshots' saved
-  // OI/Greeks are genuinely identical) from a broken result, which otherwise
-  // render identically as an all-zero/empty set of cards.
-  const hasMeaningfulChange =
-    !previousAnalysis || !analysis
-      ? true
-      : greeksDelta.some((g) => g.direction !== 'flat') || (oiChanges?.keyStrikeChanges || []).some((r) => r.oiChange !== 0)
-
-  const insightTrend = analysis?.parsed_analysis?.oi_migration?.market_shift || marketSummary?.sentiment
-  const insightConfidence = marketSummary?.confidence
-  const insightAction =
-    marketSummary?.narrative || analysis?.parsed_analysis?.strategy_recommendations?.[0]?.strategy || analysis?.parsed_analysis?.strategy
-
   return (
     <div className="flex flex-col gap-lg">
       <section className="flex justify-between items-end flex-wrap gap-md">
@@ -337,6 +345,16 @@ function GreekAnalysis() {
           >
             <span className="material-symbols-outlined">download</span>
             Export
+          </button>
+          <button
+            type="button"
+            disabled={addingToWatchlist || !formData.underlying_symbol || !formData.exchange || !formData.expiry_date || !formData.points_range}
+            onClick={handleAddToWatchlist}
+            title="Track this symbol on the Watchlist tab - fetched and analyzed automatically every 5 minutes"
+            className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span className="material-symbols-outlined">visibility</span>
+            {addingToWatchlist ? 'Adding...' : 'Add to Watchlist'}
           </button>
           <button
             type="button"
@@ -460,137 +478,37 @@ function GreekAnalysis() {
 
       {error && <div className="text-bearish text-sm px-base">{error}</div>}
       {refreshError && <div className="text-tertiary text-sm px-base">{refreshError}</div>}
+      {watchlistMessage && <div className="text-sm px-base text-on-surface-variant">{watchlistMessage}</div>}
 
-      {analysis && (
-        <>
-          <section className="grid grid-cols-1 md:grid-cols-3 gap-md items-start">
-            <AnalysisSnapshotCard
-              analysis={analysis}
-              label={`Current ${AUTO_REFRESH_INTERVAL_MINUTES} Minutes`}
-              variant="latest"
-              timestamp={lastUpdated ? new Date(lastUpdated) : null}
-            />
-
-            {previousAnalysis ? (
-              <AnalysisSnapshotCard
-                analysis={previousAnalysis}
-                label={`Previous ${AUTO_REFRESH_INTERVAL_MINUTES} Minutes`}
-                variant="previous"
-                timestamp={previousUpdated ? new Date(previousUpdated) : null}
-              />
-            ) : (
-              <div className="glass-panel rounded-xl p-md flex items-center justify-center text-on-surface-variant text-sm text-center min-h-[200px]">
-                Waiting for the next auto-refresh cycle to have a prior snapshot to show.
-              </div>
-            )}
-
-            {/* Every compact/derived card stacked in the 3rd column, filling the
-                height next to the two full institutional reports instead of
-                leaving empty space below a lone Difference panel. */}
-            <div className="flex flex-col gap-md">
-              {previousAnalysis && analysis && !hasMeaningfulChange && <NoChangeBanner />}
-
-              <ComparisonPanel
-                comparing={false}
-                comparisonError=""
-                promptType={analysis?.prompt_type}
-                oiMigration={analysis?.parsed_analysis?.oi_migration}
-                summarizedSections={analysis?.parsed_analysis}
-                greeksDelta={greeksDelta}
-              />
-
-              <OiBuildupPanel
-                title="Key Strike Changes"
-                rows={oiChanges?.keyStrikeChanges || []}
-                barColorClass="bg-primary"
-                formatLabel={(r) => `${r.strike} ${r.type}`}
-              />
-              <OiBuildupPanel
-                title="Top OI Buildup Calls"
-                rows={oiChanges?.topCallBuildup || []}
-                barColorClass="bg-bullish"
-                formatLabel={(r) => `${r.strike} CE`}
-              />
-              <OiBuildupPanel
-                title="Top OI Buildup Puts"
-                rows={oiChanges?.topPutBuildup || []}
-                barColorClass="bg-bearish"
-                formatLabel={(r) => `${r.strike} PE`}
-              />
-
-              <MarketPulsePanel
-                parsedAnalysis={marketPulse}
-                meta={marketPulse ? { pcr: marketPulse.pcr, maxPainStrike: marketPulse.maxPainStrike } : null}
-              />
-
-              <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
-                <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
-                <div
-                  className={`text-4xl font-bold leading-none mb-base ${
-                    marketSummary?.sentiment?.toLowerCase() === 'bullish'
-                      ? 'text-bullish'
-                      : marketSummary?.sentiment?.toLowerCase() === 'bearish'
-                      ? 'text-bearish'
-                      : 'text-tertiary'
-                  }`}
+      <section className="glass-panel p-md rounded-xl flex flex-col gap-sm">
+        <h3 className="text-sm font-bold text-white uppercase tracking-wider">Watchlist</h3>
+        {watchlistEntries.length === 0 ? (
+          <p className="text-on-surface-variant text-sm">
+            No symbols tracked yet. Fill in the form above and click "Add to Watchlist" to auto-analyze it every 5 minutes on the Watchlist tab.
+          </p>
+        ) : (
+          <ul className="flex flex-col gap-xs">
+            {watchlistEntries.map((entry) => (
+              <li
+                key={entry.id}
+                className="flex items-center justify-between gap-md px-base py-sm bg-surface-container-low border border-terminal-border rounded-lg text-sm"
+              >
+                <span className="text-on-surface">
+                  {entry.underlying_symbol} · {entry.exchange} · Expiry {entry.expiry_date} · ±{entry.points_range} pts
+                </span>
+                <button
+                  type="button"
+                  onClick={() => handleRemoveWatchlistEntry(entry.id)}
+                  className="flex items-center gap-xs px-sm py-1 border border-bearish/40 text-bearish rounded hover:bg-bearish/10 transition-all text-xs"
                 >
-                  {(marketSummary?.sentiment || 'N/A').toUpperCase()}
-                </div>
-                <div className="mt-md w-full px-xl">
-                  <div className="h-1 w-full bg-surface-container-high rounded-full">
-                    <div
-                      className="h-full bg-bullish rounded-full"
-                      style={{ width: `${marketSummary?.confidence || 0}%` }}
-                    />
-                  </div>
-                  <div className="text-xs text-on-surface-variant mt-xs">
-                    {marketSummary?.confidence ?? 'N/A'}% confidence
-                  </div>
-                </div>
-              </div>
-
-              <TimelineChart history={ltpHistory.map((point) => ({ ...point, time: new Date(point.time) }))} />
-
-              <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
-                <div className="flex items-center gap-base mb-md">
-                  <span className="material-symbols-outlined text-primary">psychology</span>
-                  <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
-                </div>
-                <div className="flex flex-col gap-sm text-sm">
-                  {insightTrend && (
-                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                      <span className="text-on-surface-variant">Trend</span>
-                      <span className="font-bold text-on-surface">{insightTrend}</span>
-                    </div>
-                  )}
-                  {insightConfidence != null && (
-                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                      <span className="text-on-surface-variant">Confidence</span>
-                      <span className="text-on-surface">{insightConfidence}%</span>
-                    </div>
-                  )}
-                  {marketSummary?.support_level && marketSummary?.resistance_level && (
-                    <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                      <span className="text-on-surface-variant">S/R Zones</span>
-                      <span className="text-on-surface font-mono">
-                        {marketSummary.support_level} / {marketSummary.resistance_level}
-                      </span>
-                    </div>
-                  )}
-                  {insightAction && (
-                    <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
-                      <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
-                      <NarrativeText text={insightAction} className="text-on-surface italic text-sm" />
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {probabilityGauge && <ProbabilityGauge bullishPct={probabilityGauge.bullishPct} bearishPct={probabilityGauge.bearishPct} />}
-            </div>
-          </section>
-        </>
-      )}
+                  <span className="material-symbols-outlined text-sm">delete</span>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </div>
   )
 }

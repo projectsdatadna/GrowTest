@@ -117,6 +117,49 @@ export const regenerateSnapshotAnalysis = async (id, promptType = 'master_prompt
   }
 }
 
+// Watchlist - server-driven tracking (see functions/watchlistScheduler.js).
+// The client only ever manages the tracked-symbol list and reads back
+// whatever the scheduler already computed - it never triggers analysis.
+export const addWatchlistEntry = async ({ underlying_symbol, exchange, expiry_date, points_range }) => {
+  try {
+    const response = await apiClient.post('/watchlist', { underlying_symbol, exchange, expiry_date, points_range })
+    return response.data
+  } catch (error) {
+    console.error('Error adding watchlist entry:', error)
+    throw error
+  }
+}
+
+export const getWatchlistEntries = async () => {
+  try {
+    const response = await apiClient.get('/watchlist')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching watchlist entries:', error)
+    throw error
+  }
+}
+
+export const removeWatchlistEntry = async (id) => {
+  try {
+    const response = await apiClient.delete(`/watchlist/${id}`)
+    return response.data
+  } catch (error) {
+    console.error('Error removing watchlist entry:', error)
+    throw error
+  }
+}
+
+export const getLatestWatchlistAnalysis = async (watchlistId, tier) => {
+  try {
+    const response = await apiClient.get(`/watchlist/${watchlistId}/analysis/${tier}`)
+    return response.data
+  } catch (error) {
+    console.error('Error fetching watchlist analysis:', error)
+    throw error
+  }
+}
+
 // Get AI inference
 export const getAIInference = async (data) => {
   try {

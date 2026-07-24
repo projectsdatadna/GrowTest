@@ -29,6 +29,7 @@ function ServerTimeClock() {
 const NAV_ITEMS = [
   { key: 'greek-analysis', label: 'Greek Analysis', icon: 'analytics', functional: true },
   { key: 'compare', label: 'Compare', icon: 'compare_arrows', functional: true },
+  { key: 'watchlist', label: 'Watchlist', icon: 'visibility', functional: true },
   { key: 'volatility', label: 'Volatility', icon: 'show_chart', functional: false },
   { key: 'strategy-builder', label: 'Strategy Builder', icon: 'construction', functional: false },
   { key: 'portfolio', label: 'Portfolio', icon: 'account_balance_wallet', functional: false },

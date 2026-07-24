@@ -10,7 +10,9 @@ import cors from 'cors'
 import axios from 'axios'
 import crypto from 'crypto'
 import { onRequest } from 'firebase-functions/v2/https'
+import { onSchedule } from 'firebase-functions/v2/scheduler'
 import { defineSecret } from 'firebase-functions/params'
+import { runWatchlistTick, runWatchlistCleanup } from './watchlistScheduler.js'
 import {
   getUnderlyingSymbols,
   saveOptionChainSnapshot,
@@ -24,6 +26,13 @@ import {
   analyzeWithAI,
   isSameInstrument,
 } from './aiAnalysisPrompt.js'
+import { fetchFilteredOptionChain } from './growwOptionChain.js'
+import {
+  createWatchlistEntry,
+  listActiveWatchlistEntries,
+  deactivateWatchlistEntry,
+  getLatestWatchlistAnalysis,
+} from './watchlistFirestoreClient.js'
 
 const GROWW_API_KEY_SECRET = defineSecret('GROWW_API_KEY')
 const GROWW_API_SECRET_SECRET = defineSecret('GROWW_API_SECRET')
@@ -469,66 +478,15 @@ app.post('/analyze-option-chain-range', async (req, res) => {
 
     const accessToken = groww_token || (await getGrowwAccessToken())
 
-    const range = parseFloat(points_range)
-    const pointsRange = !isNaN(range) && range > 0 ? range : 500
-
-    const headers = {
-      'Authorization': `Bearer ${accessToken}`,
-      'X-API-VERSION': GROWW_API_VERSION,
-      'Accept': 'application/json',
-    }
-
-    let optionChainData
+    let chain
     try {
-      const url = `${GROWW_API_BASE_URL}/option-chain/exchange/${exchange}/underlying/${underlying_symbol}`
-      const params = { expiry_date }
-      const response = await axios.get(url, { headers, params, timeout: 30000 })
-
-      if (response.status !== 200) {
-        return res.status(response.status).json({ error: 'Failed to fetch option chain data', status_code: response.status })
-      }
-
-      optionChainData = response.data.payload
+      chain = await fetchFilteredOptionChain({ exchange, underlying_symbol, expiry_date, points_range, groww_token: accessToken })
     } catch (error) {
-      console.error(`Option chain API error: ${error.message}`)
-      return res.status(error.response?.status || 500).json({
-        error: 'Failed to fetch option chain data',
-        message: error.message,
-        groww_error: error.response?.data || null,
-        status_code: error.response?.status || 500,
-      })
+      console.error('Option chain fetch error:', error.message)
+      return res.status(error.details?.status_code || 400).json(error.details || { error: error.message })
     }
 
-    const underlying_ltp = optionChainData.underlying_ltp
-    if (!underlying_ltp || !optionChainData.strikes) {
-      return res.status(400).json({ error: 'Invalid option chain response - missing underlying_ltp or strikes' })
-    }
-
-    const minimum_calculated_value = (underlying_ltp - pointsRange).toFixed(2)
-    const maximum_calculated_value = (underlying_ltp + pointsRange).toFixed(2)
-
-    const filteredStrikes = {}
-    Object.entries(optionChainData.strikes).forEach(([strikePrice, strikeData]) => {
-      const strike = parseFloat(strikePrice)
-      if (strike >= parseFloat(minimum_calculated_value) && strike <= parseFloat(maximum_calculated_value)) {
-        filteredStrikes[strikePrice] = strikeData
-      }
-    })
-
-    const sortedFilteredStrikes = {}
-    Object.keys(filteredStrikes)
-      .map(parseFloat)
-      .sort((a, b) => a - b)
-      .forEach((strike) => {
-        sortedFilteredStrikes[strike.toString()] = filteredStrikes[strike.toString()]
-      })
-
-    if (Object.keys(sortedFilteredStrikes).length === 0) {
-      return res.status(400).json({
-        error: 'No strikes found within the calculated range',
-        calculated_range: { min: minimum_calculated_value, max: maximum_calculated_value },
-      })
-    }
+    const { underlying_ltp, points_range: pointsRange, calculated_range, filtered_strikes: sortedFilteredStrikes, filtered_strikes_count } = chain
 
     let parsed_analysis
     let raw_text
@@ -565,9 +523,9 @@ app.post('/analyze-option-chain-range', async (req, res) => {
       expiry_date,
       exchange,
       points_range: pointsRange,
-      calculated_range: { min: minimum_calculated_value, max: maximum_calculated_value },
+      calculated_range,
       filtered_strikes: sortedFilteredStrikes,
-      filtered_strikes_count: Object.keys(sortedFilteredStrikes).length,
+      filtered_strikes_count,
       prompt_type: prompt_type === 'summarized_recommendations' ? 'summarized_recommendations' : 'master_prompt',
       parsed_analysis,
       raw_text,
@@ -745,6 +703,68 @@ app.post('/option-chain-snapshots/:id/regenerate-analysis', async (req, res) => 
 })
 
 /**
+ * Watchlist CRUD - the tracked-symbol config list. Fetching/analyzing is
+ * done entirely by the watchlistTick scheduled function; these routes just
+ * manage the list and read back whatever the scheduler has already computed.
+ */
+app.post('/watchlist', async (req, res) => {
+  try {
+    const { underlying_symbol, exchange, expiry_date, points_range } = req.body
+    if (!underlying_symbol || !exchange || !expiry_date || !points_range) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['underlying_symbol', 'exchange', 'expiry_date', 'points_range'],
+        received: Object.keys(req.body),
+      })
+    }
+    const id = await createWatchlistEntry({ underlying_symbol, exchange, expiry_date, points_range })
+    res.json({ status: 'SUCCESS', id })
+  } catch (error) {
+    console.error('Error creating watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/watchlist', async (req, res) => {
+  try {
+    const entries = await listActiveWatchlistEntries()
+    res.json({ status: 'SUCCESS', entries })
+  } catch (error) {
+    console.error('Error listing watchlist entries:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.delete('/watchlist/:id', async (req, res) => {
+  try {
+    await deactivateWatchlistEntry(req.params.id)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error removing watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Latest computed analysis for one watchlist entry's tier (5m/15m/75m) -
+ * the Watchlist tab polls this on that tier's own cadence; it never
+ * triggers analysis itself, only reads what watchlistTick already saved.
+ */
+app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
+  try {
+    const { id, tier } = req.params
+    if (!['5m', '15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 5m, 15m, 75m' })
+    }
+    const analysis = await getLatestWatchlistAnalysis(id, tier)
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    console.error('Error fetching watchlist analysis:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
  * 404 handler for unmatched API routes
  */
 app.use((_, res) => {
@@ -765,4 +785,46 @@ export const api = onRequest(
     memory: '256MiB',
   },
   app
+)
+
+/**
+ * Watchlist tracking - runs every 5 minutes, unattended, independent of any
+ * browser being open. Guards itself to 9:15-15:30 IST on trading weekdays
+ * (see isWithinMarketHours) rather than trying to encode that window in the
+ * cron expression itself, so it's simplest to just schedule "every 5
+ * minutes" all day and let the function skip non-market-hours ticks.
+ */
+export const watchlistTick = onSchedule(
+  {
+    schedule: 'every 5 minutes',
+    timeZone: 'Asia/Kolkata',
+    timeoutSeconds: 540,
+    memory: '512MiB',
+    secrets: [
+      GROWW_API_KEY_SECRET,
+      GROWW_API_SECRET_SECRET,
+      AZURE_OPENAI_API_KEY_SECRET,
+      AZURE_OPENAI_ENDPOINT_SECRET,
+      AZURE_OPENAI_DEPLOYMENT_SECRET,
+      AZURE_OPENAI_API_VERSION_SECRET,
+    ],
+  },
+  async () => {
+    const groww_token = await getGrowwAccessToken()
+    const result = await runWatchlistTick({ groww_token, azureConfig: getAzureConfig() })
+    console.log('watchlistTick result:', JSON.stringify(result))
+  }
+)
+
+/**
+ * Daily cleanup - wipes the day's fetched snapshots/analyses (not the
+ * watchlist config itself) shortly after close, so tracking starts fresh
+ * the next trading day.
+ */
+export const watchlistCleanup = onSchedule(
+  { schedule: '35 15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 300 },
+  async () => {
+    const result = await runWatchlistCleanup()
+    console.log('watchlistCleanup result:', JSON.stringify(result))
+  }
 )

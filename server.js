@@ -23,6 +23,13 @@ import {
   analyzeWithAI,
   isSameInstrument,
 } from './functions/aiAnalysisPrompt.js'
+import { fetchFilteredOptionChain } from './functions/growwOptionChain.js'
+import {
+  createWatchlistEntry,
+  listActiveWatchlistEntries,
+  deactivateWatchlistEntry,
+  getLatestWatchlistAnalysis,
+} from './functions/watchlistFirestoreClient.js'
 
 dotenv.config()
 
@@ -629,93 +636,19 @@ app.post('/analyze-option-chain-range', async (req, res) => {
 
     const accessToken = groww_token || (await getGrowwAccessToken())
 
-    const range = parseFloat(points_range)
-    const pointsRange = !isNaN(range) && range > 0 ? range : 500
+    console.log(`Analyzing option chain range for ${underlying_symbol}...`)
 
-    console.log(`Analyzing option chain range (+/-${pointsRange}) for ${underlying_symbol}...`)
-
-    // Step 1: Fetch option chain data
-    const headers = {
-      'Authorization': `Bearer ${accessToken}`,
-      'X-API-VERSION': GROWW_API_VERSION,
-      'Accept': 'application/json',
-    }
-
-    let optionChainData
+    let chain
     try {
-      const url = `${GROWW_API_BASE_URL}/option-chain/exchange/${exchange}/underlying/${underlying_symbol}`
-      const params = { expiry_date }
-
-      console.log(`Fetching option chain from Groww API...`)
-      const response = await axios.get(url, { headers, params, timeout: 30000 })
-
-      console.log(response,'response')
-
-      if (response.status !== 200) {
-        return res.status(response.status).json({
-          error: 'Failed to fetch option chain data',
-          status_code: response.status,
-        })
-      }
-
-      optionChainData = response.data.payload
-      console.log(`Option chain data received`)
+      chain = await fetchFilteredOptionChain({ exchange, underlying_symbol, expiry_date, points_range, groww_token: accessToken })
     } catch (error) {
-      console.log(error,'error')
-      console.error(`Option chain API error: ${error.message}`)
-      return res.status(error.response?.status || 500).json({
-        error: 'Failed to fetch option chain data',
-        message: error.message,
-        groww_error: error.response?.data || null,
-        status_code: error.response?.status || 500,
-      })
+      console.error('Option chain fetch error:', error.message)
+      return res.status(error.details?.status_code || 400).json(error.details || { error: error.message })
     }
 
-    // Step 2: Extract underlying_ltp and validate
-    const underlying_ltp = optionChainData.underlying_ltp
-    if (!underlying_ltp || !optionChainData.strikes) {
-      return res.status(400).json({
-        error: 'Invalid option chain response - missing underlying_ltp or strikes',
-      })
-    }
+    const { underlying_ltp, points_range: pointsRange, calculated_range, filtered_strikes: sortedFilteredStrikes, filtered_strikes_count } = chain
 
-    console.log(`Underlying LTP: ${underlying_ltp}`)
-
-    // Step 3: Calculate +/- points range
-    const minimum_calculated_value = (underlying_ltp - pointsRange).toFixed(2)
-    const maximum_calculated_value = (underlying_ltp + pointsRange).toFixed(2)
-
-    console.log(`Calculated Range - Min: ${minimum_calculated_value}, Max: ${maximum_calculated_value}`)
-
-    // Step 4: Filter strikes by calculated range
-    const filteredStrikes = {}
-    Object.entries(optionChainData.strikes).forEach(([strikePrice, strikeData]) => {
-      const strike = parseFloat(strikePrice)
-      if (strike >= parseFloat(minimum_calculated_value) && strike <= parseFloat(maximum_calculated_value)) {
-        filteredStrikes[strikePrice] = strikeData
-      }
-    })
-
-    // Sort strikes by price
-    const sortedFilteredStrikes = {}
-    Object.keys(filteredStrikes)
-      .map(parseFloat)
-      .sort((a, b) => a - b)
-      .forEach(strike => {
-        sortedFilteredStrikes[strike.toString()] = filteredStrikes[strike.toString()]
-      })
-
-    if (Object.keys(sortedFilteredStrikes).length === 0) {
-      return res.status(400).json({
-        error: 'No strikes found within the calculated range',
-        calculated_range: {
-          min: minimum_calculated_value,
-          max: maximum_calculated_value,
-        },
-      })
-    }
-
-    console.log(`Filtered ${Object.keys(sortedFilteredStrikes).length} strikes within range`)
+    console.log(`Filtered ${filtered_strikes_count} strikes within range`)
 
     // Step 5: Call AI inference with full Greeks for all filtered strikes
     let parsed_analysis
@@ -762,12 +695,9 @@ app.post('/analyze-option-chain-range', async (req, res) => {
       expiry_date,
       exchange,
       points_range: pointsRange,
-      calculated_range: {
-        min: minimum_calculated_value,
-        max: maximum_calculated_value,
-      },
+      calculated_range,
       filtered_strikes: sortedFilteredStrikes,
-      filtered_strikes_count: Object.keys(sortedFilteredStrikes).length,
+      filtered_strikes_count,
       prompt_type: prompt_type === 'summarized_recommendations' ? 'summarized_recommendations' : 'master_prompt',
       parsed_analysis,
       raw_text,
@@ -1032,6 +962,69 @@ app.post('/option-chain-snapshots/:id/regenerate-analysis', async (req, res) => 
   } catch (error) {
     console.error('Regenerate Analysis Error:', error.message)
     res.status(error.response?.status || 500).json({ error: error.message })
+  }
+})
+
+/**
+ * Watchlist CRUD - the tracked-symbol config list. Fetching/analyzing is
+ * done entirely by the watchlistTick scheduled function (deployed function
+ * only - no scheduler in local dev); these routes just manage the list and
+ * read back whatever the scheduler has already computed.
+ */
+app.post('/watchlist', async (req, res) => {
+  try {
+    const { underlying_symbol, exchange, expiry_date, points_range } = req.body
+    if (!underlying_symbol || !exchange || !expiry_date || !points_range) {
+      return res.status(400).json({
+        error: 'Missing required fields',
+        required: ['underlying_symbol', 'exchange', 'expiry_date', 'points_range'],
+        received: Object.keys(req.body),
+      })
+    }
+    const id = await createWatchlistEntry({ underlying_symbol, exchange, expiry_date, points_range })
+    res.json({ status: 'SUCCESS', id })
+  } catch (error) {
+    console.error('Error creating watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/watchlist', async (req, res) => {
+  try {
+    const entries = await listActiveWatchlistEntries()
+    res.json({ status: 'SUCCESS', entries })
+  } catch (error) {
+    console.error('Error listing watchlist entries:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.delete('/watchlist/:id', async (req, res) => {
+  try {
+    await deactivateWatchlistEntry(req.params.id)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error removing watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Latest computed analysis for one watchlist entry's tier (5m/15m/75m) -
+ * the Watchlist tab polls this on that tier's own cadence; it never
+ * triggers analysis itself, only reads what watchlistTick already saved.
+ */
+app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
+  try {
+    const { id, tier } = req.params
+    if (!['5m', '15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 5m, 15m, 75m' })
+    }
+    const analysis = await getLatestWatchlistAnalysis(id, tier)
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    console.error('Error fetching watchlist analysis:', error.message)
+    res.status(500).json({ error: error.message })
   }
 })
 

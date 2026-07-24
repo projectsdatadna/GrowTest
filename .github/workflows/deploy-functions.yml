@@ -34,7 +34,7 @@ jobs:
         with:
           credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DEVGRADERS }}
 
-      - name: Deploy to Firebase Cloud Functions (scoped to :api only)
+      - name: Deploy to Firebase Cloud Functions (scoped to this app's functions only)
         # IMPORTANT: devgraders is a shared project used by other apps.
         # Never widen this to a bare `--only functions` — see FIREBASE_DEPLOY.md.
-        run: npx firebase-tools deploy --only functions:api --project devgraders --non-interactive
+        run: npx firebase-tools deploy --only functions:api,functions:watchlistTick,functions:watchlistCleanup --project devgraders --non-interactive

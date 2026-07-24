@@ -7,6 +7,31 @@
         { "fieldPath": "underlying_symbol", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "watchlist",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "active", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "watchlistSnapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "watchlist_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "watchlistAnalyses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "watchlist_id", "order": "ASCENDING" },
+        { "fieldPath": "tier", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
