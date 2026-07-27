@@ -77,7 +77,7 @@ async function isTierDue(watchlist_id, tier, now) {
 async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, now, azureConfig }) {
   const tierMinutes = TIER_MINUTES[tier]
   const targetTime = new Date(now.getTime() - tierMinutes * 60 * 1000)
-  const previousDoc = await findWatchlistSnapshotNear(entry.id, targetTime)
+  const previousDoc = await findWatchlistSnapshotNear(entry.id, targetTime, currentSnapshotId)
   const previous = previousDoc ? { filtered_strikes: previousDoc.filtered_strikes } : null
 
   const current = {

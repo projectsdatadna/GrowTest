@@ -83,26 +83,24 @@ export async function saveWatchlistSnapshot({ watchlist_id, underlying_ltp, filt
 }
 
 // Finds the watchlistSnapshots row closest to `targetDate` for this
-// watchlist entry, within +/- toleranceMinutes (half the 5-minute tick
-// interval by default, to unambiguously match "N minutes ago" without
-// picking up an adjacent tick). Returns null if nothing falls in range -
-// the caller then proceeds without a `previous` snapshot, exactly like a
+// watchlist entry - no tolerance window: real tick spacing drifts (observed
+// anywhere from ~6 to ~8+ minutes apart in production, worsening as more
+// symbols/AI calls load up each tick), so rejecting anything further than a
+// fixed distance from `targetDate` meant the "previous" snapshot was almost
+// never found once the schedule drifted off a clean N-minute grid - the
+// closest available snapshot IS the best approximation of "N minutes ago"
+// regardless of how far the real cadence has drifted. `excludeSnapshotId`
+// filters out the snapshot this same tick just saved, so the very first tick
+// of the day - with no real previous snapshot yet - can't match itself.
+// Returns null if there's nothing else for this entry yet, same as a
 // first-ever run degrades gracefully today.
-export async function findWatchlistSnapshotNear(watchlist_id, targetDate, toleranceMinutes = 2.5) {
-  const toleranceMs = toleranceMinutes * 60 * 1000
-  const rangeStart = new Date(targetDate.getTime() - toleranceMs)
-  const rangeEnd = new Date(targetDate.getTime() + toleranceMs)
-
-  const snapshot = await db
-    .collection(WATCHLIST_SNAPSHOTS_COLLECTION)
-    .where('watchlist_id', '==', watchlist_id)
-    .where('createdAt', '>=', rangeStart)
-    .where('createdAt', '<=', rangeEnd)
-    .get()
-
+export async function findWatchlistSnapshotNear(watchlist_id, targetDate, excludeSnapshotId = null) {
+  const snapshot = await db.collection(WATCHLIST_SNAPSHOTS_COLLECTION).where('watchlist_id', '==', watchlist_id).get()
   if (snapshot.empty) return null
 
-  const candidates = snapshot.docs.map(serializeDoc)
+  const candidates = snapshot.docs.map(serializeDoc).filter((doc) => doc.id !== excludeSnapshotId)
+  if (candidates.length === 0) return null
+
   candidates.sort((a, b) => Math.abs(new Date(a.createdAt) - targetDate) - Math.abs(new Date(b.createdAt) - targetDate))
   return candidates[0]
 }
