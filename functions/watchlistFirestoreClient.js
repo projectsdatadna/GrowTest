@@ -109,8 +109,9 @@ export async function findWatchlistSnapshotNear(watchlist_id, targetDate, exclud
 // each already diff-aware when a previous snapshot was found for this tier.
 // Also carries the raw current/previous snapshots (for the client's
 // Current/Previous/Difference columns) and the prior tick's own AI reports
-// (for a real, non-fabricated Previous-column report) - see
-// getWatchlistAnalysisBySnapshotId below.
+// (for a real, non-fabricated Previous-column report - see analyzeTier in
+// watchlistScheduler.js, which reads getLatestWatchlistAnalysis for this tier
+// before writing the new doc below).
 export async function saveWatchlistAnalysis({
   watchlist_id,
   tier,
@@ -147,23 +148,6 @@ export async function getLatestWatchlistAnalysis(watchlist_id, tier) {
     .where('watchlist_id', '==', watchlist_id)
     .where('tier', '==', tier)
     .orderBy('createdAt', 'desc')
-    .limit(1)
-    .get()
-  return snapshot.empty ? null : serializeDoc(snapshot.docs[0])
-}
-
-// Finds the watchlistAnalyses doc that was current as of a given past
-// snapshot, for the same tier - i.e. "what did our own AI report look like
-// last tick" - so the Previous column can show a real, already-computed
-// report instead of none at all. Returns null for the first few ticks of the
-// day (or if that tier's analysis somehow failed at that tick).
-export async function getWatchlistAnalysisBySnapshotId(watchlist_id, tier, snapshot_id) {
-  if (!snapshot_id) return null
-  const snapshot = await db
-    .collection(WATCHLIST_ANALYSES_COLLECTION)
-    .where('watchlist_id', '==', watchlist_id)
-    .where('tier', '==', tier)
-    .where('current_snapshot_id', '==', snapshot_id)
     .limit(1)
     .get()
   return snapshot.empty ? null : serializeDoc(snapshot.docs[0])

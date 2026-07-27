@@ -14,7 +14,6 @@ import {
   saveWatchlistSnapshot,
   findWatchlistSnapshotNear,
   saveWatchlistAnalysis,
-  getWatchlistAnalysisBySnapshotId,
   getLatestWatchlistAnalysis,
   saveWatchlistFetchError,
   clearWatchlistFetchError,
@@ -88,10 +87,20 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
     filtered_strikes: currentSnapshot.filtered_strikes,
   }
 
+  // The previous tier report is simply whatever this tier's own last saved
+  // analysis was - independent of which raw snapshot `previousDoc` above
+  // happens to be. Coupling the two (finding the analysis doc whose own
+  // current_snapshot_id matched previousDoc.id) broke intermittently: 15m/75m
+  // only run occasionally, so their own historical current_snapshot_ids are
+  // sparse and frequently don't include whichever raw snapshot is closest in
+  // time on a given tick - and even 5m could miss if the prior tick's own
+  // analysis had failed while its raw snapshot still saved. Read here, before
+  // this tick's own saveWatchlistAnalysis call below, so it naturally returns
+  // whatever preceded this new one.
   const [masterResult, summarizedResult, previousAnalysisDoc] = await Promise.all([
     analyzeWithAI(buildInstitutionalAnalysisPrompt(current, previous), azureConfig),
     analyzeWithAI(buildSummarizedRecommendationsPrompt(current, previous), azureConfig),
-    previousDoc ? getWatchlistAnalysisBySnapshotId(entry.id, tier, previousDoc.id) : null,
+    getLatestWatchlistAnalysis(entry.id, tier),
   ])
 
   await saveWatchlistAnalysis({
