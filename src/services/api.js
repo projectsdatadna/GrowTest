@@ -9,6 +9,19 @@ const apiClient = axios.create({
   },
 })
 
+// Persist the Groww access token pasted in from the Greek Analysis tab -
+// every Groww-dependent route (including the unattended watchlistTick
+// scheduler) reads this same stored value server-side.
+export const saveGrowwAccessToken = async (access_token) => {
+  try {
+    const response = await apiClient.post('/groww-access-token', { access_token })
+    return response.data
+  } catch (error) {
+    console.error('Error saving Groww access token:', error)
+    throw error
+  }
+}
+
 // Get the canonical underlying-symbol list for the searchable dropdown
 export const getUnderlyingSymbols = async () => {
   try {

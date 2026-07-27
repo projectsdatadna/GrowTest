@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 
 /**
  * Dark "terminal" app shell (sidebar + top header) from the Stitch mockup.
- * Only "Greek Analysis" is a real, functional nav item - everything else
- * (AI Analysis is hidden here rather than removed - the component/route
- * still exists, just not linked from the nav; Volatility, Strategy Builder,
- * Portfolio, Settings, Support, the search bar, Watchlist/Alerts,
- * notifications, avatar) is decorative or unlinked.
+ * Greek Analysis, Compare, and Watchlist are the real, functional nav items -
+ * everything else (AI Analysis is hidden here rather than removed - the
+ * component/route still exists, just not linked from the nav; the search
+ * bar, header Watchlist/Alerts spans, notifications, avatar) is decorative
+ * or unlinked.
  */
 function ServerTimeClock() {
   const [now, setNow] = useState(new Date())
@@ -30,9 +30,6 @@ const NAV_ITEMS = [
   { key: 'greek-analysis', label: 'Greek Analysis', icon: 'analytics', functional: true },
   { key: 'compare', label: 'Compare', icon: 'compare_arrows', functional: true },
   { key: 'watchlist', label: 'Watchlist', icon: 'visibility', functional: true },
-  { key: 'volatility', label: 'Volatility', icon: 'show_chart', functional: false },
-  { key: 'strategy-builder', label: 'Strategy Builder', icon: 'construction', functional: false },
-  { key: 'portfolio', label: 'Portfolio', icon: 'account_balance_wallet', functional: false },
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {
@@ -66,17 +63,6 @@ function AppShell({ activeTab, onTabChange, children }) {
             )
           })}
         </nav>
-
-        <div className="mt-auto flex flex-col gap-xs pt-md border-t border-outline-variant">
-          <div className="flex items-center gap-md px-md py-sm text-on-surface-variant opacity-50 cursor-default rounded-lg" title="Not available yet">
-            <span className="material-symbols-outlined">settings</span>
-            <span className="text-sm font-medium">Settings</span>
-          </div>
-          <div className="flex items-center gap-md px-md py-sm text-on-surface-variant opacity-50 cursor-default rounded-lg" title="Not available yet">
-            <span className="material-symbols-outlined">help</span>
-            <span className="text-sm font-medium">Support</span>
-          </div>
-        </div>
       </aside>
 
       <header className="sticky top-0 right-0 z-40 w-[calc(100%-250px)] ml-[250px] bg-surface/60 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-12 px-xl">

@@ -94,3 +94,24 @@ export async function getOptionChainSnapshot(id) {
 export async function updateOptionChainSnapshotAnalysis(id, { parsed_analysis, raw_text, prompt_type }) {
   await db.collection(SNAPSHOTS_COLLECTION).doc(id).update({ parsed_analysis, raw_text, prompt_type })
 }
+
+const APP_CONFIG_COLLECTION = 'appConfig'
+const GROWW_TOKEN_DOC = 'growwAccessToken'
+
+// The Groww access token is now supplied by pasting it into the UI (Greek
+// Analysis tab) rather than exchanged automatically from GROWW_API_KEY/
+// GROWW_API_SECRET (that exchange started being rejected by Groww with a 403
+// on every attempt from 2026-07-25 onward). Every Groww-dependent route,
+// including the unattended watchlistTick scheduler, reads this one stored
+// value instead.
+export async function getStoredGrowwAccessToken() {
+  const doc = await db.collection(APP_CONFIG_COLLECTION).doc(GROWW_TOKEN_DOC).get()
+  return doc.exists ? doc.data().access_token || null : null
+}
+
+export async function saveGrowwAccessToken(access_token) {
+  await db.collection(APP_CONFIG_COLLECTION).doc(GROWW_TOKEN_DOC).set({
+    access_token,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+  })
+}

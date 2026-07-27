@@ -7,7 +7,6 @@ import express from 'express'
 import cors from 'cors'
 import dotenv from 'dotenv'
 import axios from 'axios'
-import crypto from 'crypto'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import {
@@ -16,6 +15,8 @@ import {
   listOptionChainSnapshots,
   getOptionChainSnapshot,
   updateOptionChainSnapshotAnalysis,
+  getStoredGrowwAccessToken,
+  saveGrowwAccessToken,
 } from './functions/firestoreClient.js'
 import {
   buildInstitutionalAnalysisPrompt,
@@ -46,9 +47,6 @@ app.use(express.static(path.join(__dirname, 'dist')))
 // Groww API Configuration
 const GROWW_API_BASE_URL = 'https://api.groww.in/v1'
 const GROWW_API_VERSION = '1.0'
-const GROWW_TOKEN_URL = 'https://api.groww.in/v1/token/api/access'
-const GROWW_API_KEY = process.env.GROWW_API_KEY
-const GROWW_API_SECRET = process.env.GROWW_API_SECRET
 
 // Azure OpenAI Configuration
 const AZURE_OPENAI_API_KEY = process.env.AZURE_OPENAI_API_KEY
@@ -56,45 +54,22 @@ const AZURE_OPENAI_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT // e.g. https://
 const AZURE_OPENAI_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT // the deployment name you chose, not the base model name
 const AZURE_OPENAI_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2024-10-21'
 
-// In-memory cache for the exchanged Groww access token (valid until ~6 AM IST daily)
-let cachedToken = null
-
 /**
- * Exchange GROWW_API_KEY/GROWW_API_SECRET for a real Groww access token,
- * caching it until it's close to expiry. Throws with Groww's actual error
- * body attached (as `growwError`) so callers can surface the real reason.
+ * Returns the Groww access token pasted in via the UI (Greek Analysis tab)
+ * and persisted with POST /groww-access-token. Previously this exchanged
+ * GROWW_API_KEY/GROWW_API_SECRET for a token automatically, but that
+ * exchange started being rejected by Groww with a 403 on every attempt from
+ * 2026-07-25 onward - every Groww-dependent route, including the unattended
+ * watchlistTick scheduler, now reads this one stored value instead.
  */
 async function getGrowwAccessToken() {
-  if (cachedToken && new Date(cachedToken.expiry).getTime() - Date.now() > 60000) {
-    return cachedToken.token
+  const token = await getStoredGrowwAccessToken()
+  if (!token) {
+    const err = new Error('No Groww access token has been saved yet - paste one in from the Greek Analysis tab.')
+    err.statusCode = 401
+    throw err
   }
-
-  const timestamp = Math.floor(Date.now() / 1000).toString()
-  const checksum = crypto.createHash('sha256').update(GROWW_API_SECRET + timestamp).digest('hex')
-
-  try {
-    const response = await axios.post(
-      GROWW_TOKEN_URL,
-      { key_type: 'approval', checksum, timestamp },
-      {
-        headers: {
-          'Authorization': `Bearer ${GROWW_API_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 15000,
-      }
-    )
-
-    cachedToken = { token: response.data.token, expiry: response.data.expiry }
-    console.log(`Generated fresh Groww access token, valid until ${cachedToken.expiry}`)
-    return cachedToken.token
-  } catch (error) {
-    console.error('Failed to generate Groww access token:', error.message)
-    const wrapped = new Error(`Failed to generate Groww access token: ${error.message}`)
-    wrapped.growwError = error.response?.data || null
-    wrapped.statusCode = error.response?.status || 500
-    throw wrapped
-  }
+  return token
 }
 
 /**
@@ -102,6 +77,25 @@ async function getGrowwAccessToken() {
  */
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', message: 'Groww API Server is running' })
+})
+
+/**
+ * Save the Groww access token pasted in from the Greek Analysis tab - every
+ * Groww-dependent route (including the unattended watchlistTick scheduler)
+ * reads this same stored value via getGrowwAccessToken() above.
+ */
+app.post('/groww-access-token', async (req, res) => {
+  try {
+    const { access_token } = req.body
+    if (!access_token) {
+      return res.status(400).json({ error: 'Missing access_token' })
+    }
+    await saveGrowwAccessToken(access_token)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error saving Groww access token:', error.message)
+    res.status(500).json({ error: error.message })
+  }
 })
 
 /**

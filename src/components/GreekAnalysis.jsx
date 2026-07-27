@@ -1,12 +1,9 @@
-import { useRef, useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import Select from 'react-select'
-import { analyzeOptionChainRange, getUnderlyingSymbols, addWatchlistEntry, getWatchlistEntries, removeWatchlistEntry } from '../services/api'
-import { store } from '../store'
-import { setFormData, setGrowToken, applyAnalysisResult, resetAll } from '../store/greekAnalysisSlice'
+import { getUnderlyingSymbols, addWatchlistEntry, getWatchlistEntries, removeWatchlistEntry, saveGrowwAccessToken } from '../services/api'
+import { setFormData, setGrowToken, resetAll } from '../store/greekAnalysisSlice'
 import { setWatchlistEntries } from '../store/watchlistSlice'
-import { exportSnapshotsAsJson } from './greekAnalysisUtils'
-import { isSameInstrument } from './marketPulseEngine'
 
 const underlyingSymbolSelectClassNames = {
   control: () =>
@@ -27,9 +24,6 @@ const underlyingSymbolSelectClassNames = {
   clearIndicator: () => 'text-on-surface-variant',
 }
 
-const AUTO_REFRESH_INTERVAL_MS = 5 * 60 * 1000
-const AUTO_REFRESH_INTERVAL_MINUTES = AUTO_REFRESH_INTERVAL_MS / 60000
-
 function ServerClock() {
   const [now, setNow] = useState(new Date())
   useEffect(() => {
@@ -44,38 +38,20 @@ function ServerClock() {
   )
 }
 
-function buildParams(formData) {
-  const { exchange, underlying_symbol, expiry_date, points_range, prompt_type } = formData
-  return {
-    symbol: underlying_symbol,
-    underlying_symbol,
-    exchange,
-    expiry_date,
-    points_range: parseFloat(points_range),
-    prompt_type,
-  }
-}
-
 function GreekAnalysis() {
   const dispatch = useDispatch()
   const formData = useSelector((state) => state.greekAnalysis.formData)
   const growToken = useSelector((state) => state.greekAnalysis.growToken)
   const analysis = useSelector((state) => state.greekAnalysis.analysis)
-  const previousAnalysis = useSelector((state) => state.greekAnalysis.previousAnalysis)
   const watchlistEntries = useSelector((state) => state.watchlist.entries)
-
-  const [loading, setLoading] = useState(false)
-  const [refreshing, setRefreshing] = useState(false)
-  const [error, setError] = useState('')
-  const [refreshError, setRefreshError] = useState('')
 
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
 
   const [addingToWatchlist, setAddingToWatchlist] = useState(false)
   const [watchlistMessage, setWatchlistMessage] = useState('')
 
-  const intervalRef = useRef(null)
-  const paramsRef = useRef(null)
+  const [savingGrowToken, setSavingGrowToken] = useState(false)
+  const [growTokenMessage, setGrowTokenMessage] = useState('')
 
   const refreshWatchlistEntries = () => {
     getWatchlistEntries()
@@ -86,6 +62,12 @@ function GreekAnalysis() {
   useEffect(() => {
     refreshWatchlistEntries()
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    getUnderlyingSymbols()
+      .then(({ symbols }) => setUnderlyingSymbolOptions((symbols || []).map((symbol) => ({ value: symbol, label: symbol }))))
+      .catch((err) => console.error('Failed to load underlying symbols:', err))
   }, [])
 
   const handleAddToWatchlist = async () => {
@@ -116,194 +98,34 @@ function GreekAnalysis() {
     }
   }
 
-  useEffect(() => {
-    getUnderlyingSymbols()
-      .then(({ symbols }) => setUnderlyingSymbolOptions((symbols || []).map((symbol) => ({ value: symbol, label: symbol }))))
-      .catch((err) => console.error('Failed to load underlying symbols:', err))
-  }, [])
-
-  // Resume the auto-refresh cycle after a remount (tab switch) or a full
-  // page reload if we already have a persisted analysis + form params to
-  // work from - otherwise the data shown would silently go stale forever.
-  // This only reschedules the next tick; it doesn't re-fetch immediately,
-  // since the persisted `analysis` is already there to show right away.
-  useEffect(() => {
-    if (analysis && formData.underlying_symbol && !intervalRef.current) {
-      paramsRef.current = buildParams(formData)
-      scheduleAutoRefresh()
-    }
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
   const handleInputChange = (e) => {
     const { name, value } = e.target
     dispatch(setFormData({ [name]: value }))
   }
 
-  const validateForm = () => {
-    const { exchange, underlying_symbol, expiry_date, points_range } = formData
-
-    if (!exchange || !underlying_symbol || !expiry_date || points_range === '') {
-      setError('All fields are required')
-      return false
-    }
-
-    const range = parseFloat(points_range)
-    if (isNaN(range) || range <= 0) {
-      setError('Points range must be a positive number')
-      return false
-    }
-
+  // Persists the Groww access token server-side - every Groww-dependent
+  // route (including the unattended Watchlist scheduler) reads this same
+  // stored value, so this is the only place a token needs to be supplied.
+  const handleSaveGrowToken = async () => {
     if (!growToken) {
-      setError('Groww access token is required - enter it above to run analysis')
-      return false
-    }
-
-    return true
-  }
-
-  const runAnalysis = async (params, { isAutoRefresh = false } = {}) => {
-    if (isAutoRefresh) {
-      setRefreshing(true)
-      setRefreshError('')
-    } else {
-      setLoading(true)
-      setError('')
-    }
-
-    // Guards every path that can (re)send params.expiry_date - initial
-    // submit, manual refresh, the auto-refresh timer tick, and the
-    // mount-resume effect that continues a persisted session without ever
-    // going through form validation again. A persisted expiry_date from an
-    // earlier session can silently go stale (this is what caused the
-    // deployed site's "No strikes found" 400 - a since-expired weekly
-    // contract genuinely has no live strikes to return), so this is checked
-    // here rather than only once at submit time.
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    if (params.expiry_date && new Date(params.expiry_date) < today) {
-      const message = `Expiry date ${params.expiry_date} has already passed - update it to a current or future expiry before analyzing.`
-      if (isAutoRefresh) {
-        setRefreshError(message)
-        setRefreshing(false)
-        if (intervalRef.current) {
-          clearInterval(intervalRef.current)
-          intervalRef.current = null
-        }
-      } else {
-        setError(message)
-        setLoading(false)
-      }
+      setGrowTokenMessage('Enter a Groww access token before saving.')
       return
     }
-
+    setSavingGrowToken(true)
+    setGrowTokenMessage('')
     try {
-      // Read fresh from the store rather than the growToken selector value,
-      // for the same reason priorAnalysis below is read fresh - this runs
-      // from a setInterval callback scheduled earlier, whose closure would
-      // otherwise send a stale token if the user updates it mid-session.
-      const currentGrowToken = store.getState().greekAnalysis.growToken
-
-      // Read the freshest committed state directly from the store rather
-      // than a value captured in this closure, which is what makes this
-      // safe to call from a setInterval callback that outlives any single
-      // render. Only forwarded when it's the same instrument as the new
-      // params - the backend independently re-validates this regardless.
-      const priorAnalysis = store.getState().greekAnalysis.analysis
-      const previous_snapshot =
-        priorAnalysis && isSameInstrument(params, priorAnalysis)
-          ? {
-              underlying_symbol: priorAnalysis.underlying_symbol,
-              exchange: priorAnalysis.exchange,
-              expiry_date: priorAnalysis.expiry_date,
-              underlying_ltp: priorAnalysis.underlying_ltp,
-              points_range: priorAnalysis.points_range,
-              filtered_strikes: priorAnalysis.filtered_strikes,
-            }
-          : undefined
-
-      const data = await analyzeOptionChainRange({ ...params, groww_token: currentGrowToken, previous_snapshot })
-      const now = new Date().toISOString()
-
-      dispatch(applyAnalysisResult({ data, now }))
+      await saveGrowwAccessToken(growToken)
+      setGrowTokenMessage('Saved - this token will be used for every Groww API call, including the Watchlist scheduler.')
     } catch (err) {
-      const message = err.response?.data?.error || err.message || 'An error occurred during analysis'
-      if (isAutoRefresh) {
-        setRefreshError(`Auto-refresh failed: ${message}. Retrying next cycle.`)
-      } else {
-        setError(message)
-      }
+      setGrowTokenMessage(err.response?.data?.error || err.message || 'Failed to save Groww access token')
     } finally {
-      if (isAutoRefresh) {
-        setRefreshing(false)
-      } else {
-        setLoading(false)
-      }
+      setSavingGrowToken(false)
     }
   }
 
-  // Clears any existing timer and (re)schedules the next auto-refresh tick
-  // from now. Shared by the initial submit, the mount-resume effect, and
-  // the manual retrigger button, so every path keeps the cadence in sync.
-  const scheduleAutoRefresh = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-    }
-    intervalRef.current = setInterval(() => {
-      if (paramsRef.current) {
-        runAnalysis(paramsRef.current, { isAutoRefresh: true })
-      }
-    }, AUTO_REFRESH_INTERVAL_MS)
-  }
-
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    setError('')
-
-    if (!validateForm()) {
-      return
-    }
-
-    const params = buildParams(formData)
-    paramsRef.current = params
-
-    await runAnalysis(params)
-    scheduleAutoRefresh()
-  }
-
-  // Manual "refresh now" - lets you force a new snapshot (and, once a
-  // previous one exists, a fresh comparison) without waiting out the full
-  // auto-refresh interval, e.g. to compare two points less than
-  // AUTO_REFRESH_INTERVAL_MINUTES apart. Reuses the same isAutoRefresh path
-  // as the timer tick (previous/current rotation + comparison trigger are
-  // identical either way) and resets the cycle to count down from now.
-  const handleManualRefresh = async () => {
-    if (!paramsRef.current || loading || refreshing) {
-      return
-    }
-    if (!growToken) {
-      setRefreshError('Groww access token is required - enter it above to run analysis')
-      return
-    }
-    await runAnalysis(paramsRef.current, { isAutoRefresh: true })
-    scheduleAutoRefresh()
-  }
-
-  // Wipes the form back to defaults and drops every persisted snapshot -
-  // stops the auto-refresh cycle too, since there's nothing left to refresh.
+  // Wipes the form back to defaults and drops any persisted analysis from an
+  // earlier version of this page.
   const handleClear = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-      intervalRef.current = null
-    }
-    paramsRef.current = null
-    setError('')
-    setRefreshError('')
     dispatch(resetAll())
   }
 
@@ -311,41 +133,11 @@ function GreekAnalysis() {
     <div className="flex flex-col gap-lg">
       <section className="flex justify-between items-end flex-wrap gap-md">
         <div className="flex flex-col gap-xs">
-          <div className="flex items-center gap-md">
-            <h2 className="text-2xl font-bold text-white">Greek Analysis</h2>
-            {analysis && (
-              <span className="flex items-center gap-xs px-base py-0.5 bg-bullish/10 text-bullish text-[11px] font-bold rounded uppercase tracking-wider">
-                <span className="w-2 h-2 bg-bullish rounded-full pulse-live" />
-                LIVE
-              </span>
-            )}
-          </div>
-          <p className="text-on-surface-variant text-sm">
-            Auto-refreshing every {AUTO_REFRESH_INTERVAL_MINUTES} minutes
-            {refreshing ? ' · refreshing now...' : ''}
-          </p>
+          <h2 className="text-2xl font-bold text-white">Greek Analysis</h2>
+          <p className="text-on-surface-variant text-sm">Configure a symbol and add it to the Watchlist for automatic tracking.</p>
         </div>
         <div className="flex items-center gap-md">
           <ServerClock />
-          <button
-            type="button"
-            disabled={!analysis || loading || refreshing}
-            onClick={handleManualRefresh}
-            title={`Force a new snapshot now instead of waiting for the next ${AUTO_REFRESH_INTERVAL_MINUTES}-minute cycle`}
-            className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <span className="material-symbols-outlined">refresh</span>
-            {refreshing ? 'Refreshing...' : 'Refresh Now'}
-          </button>
-          <button
-            type="button"
-            disabled={!analysis}
-            onClick={() => exportSnapshotsAsJson(analysis, previousAnalysis, null)}
-            className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            <span className="material-symbols-outlined">download</span>
-            Export
-          </button>
           <button
             type="button"
             disabled={addingToWatchlist || !formData.underlying_symbol || !formData.exchange || !formData.expiry_date || !formData.points_range}
@@ -369,10 +161,7 @@ function GreekAnalysis() {
         </div>
       </section>
 
-      <form
-        onSubmit={handleSubmit}
-        className="glass-panel p-md rounded-xl flex items-end gap-lg flex-wrap"
-      >
+      <div className="glass-panel p-md rounded-xl flex items-end gap-lg flex-wrap">
         <div className="flex flex-col gap-xs">
           <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-exchange">
             Exchange
@@ -437,47 +226,33 @@ function GreekAnalysis() {
           />
         </div>
 
-        <div className="flex flex-col gap-xs">
-          <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-prompt_type">
-            Prompt Style
-          </label>
-          <select
-            id="ga-prompt_type"
-            name="prompt_type"
-            value={formData.prompt_type}
-            onChange={handleInputChange}
-            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base min-w-[200px] text-on-surface"
-          >
-            <option value="master_prompt">Master Prompt</option>
-            <option value="summarized_recommendations">Summarized Recommendations</option>
-          </select>
-        </div>
-
         <div className="flex flex-col gap-xs flex-1 min-w-[220px]">
           <label className="text-[11px] uppercase text-on-surface-variant" htmlFor="ga-groww_token">
             Groww Access Token
           </label>
-          <input
-            id="ga-groww_token"
-            type="password"
-            value={growToken}
-            onChange={(e) => dispatch(setGrowToken(e.target.value))}
-            placeholder="Paste your Groww access token"
-            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
-          />
+          <div className="flex gap-xs">
+            <input
+              id="ga-groww_token"
+              type="password"
+              value={growToken}
+              onChange={(e) => dispatch(setGrowToken(e.target.value))}
+              placeholder="Paste your Groww access token"
+              className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface flex-1"
+            />
+            <button
+              type="button"
+              disabled={savingGrowToken || !growToken}
+              onClick={handleSaveGrowToken}
+              title="Save this token server-side so every Groww API call, including the Watchlist scheduler, uses it"
+              className="px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {savingGrowToken ? 'Saving...' : 'Save'}
+            </button>
+          </div>
         </div>
+      </div>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="bg-primary-container text-on-primary-container text-sm px-xl py-lg rounded-lg shadow-lg shadow-primary-container/20 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-        >
-          {loading ? 'Analyzing...' : 'Start Greek Analysis'}
-        </button>
-      </form>
-
-      {error && <div className="text-bearish text-sm px-base">{error}</div>}
-      {refreshError && <div className="text-tertiary text-sm px-base">{refreshError}</div>}
+      {growTokenMessage && <div className="text-sm px-base text-on-surface-variant">{growTokenMessage}</div>}
       {watchlistMessage && <div className="text-sm px-base text-on-surface-variant">{watchlistMessage}</div>}
 
       <section className="glass-panel p-md rounded-xl flex flex-col gap-sm">
