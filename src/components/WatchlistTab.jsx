@@ -45,6 +45,7 @@ function WatchlistTab() {
   const [analysis, setAnalysis] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [growwError, setGrowwError] = useState(null)
   const [ltpHistory, setLtpHistory] = useState([])
 
   useEffect(() => {
@@ -89,9 +90,10 @@ function WatchlistTab() {
       setLoading(true)
       setError('')
       getLatestWatchlistAnalysis(selectedEntryId, selectedTier)
-        .then(({ analysis: latest }) => {
+        .then(({ analysis: latest, groww_error }) => {
           if (cancelled) return
           setAnalysis(latest)
+          setGrowwError(groww_error || null)
 
           const ltp = latest?.current_snapshot?.underlying_ltp
           const fetchedAt = latest?.current_snapshot?.fetched_at
@@ -104,7 +106,10 @@ function WatchlistTab() {
           }
         })
         .catch((err) => {
-          if (!cancelled) setError(err.response?.data?.error || err.message || 'Failed to load analysis')
+          if (!cancelled) {
+            setError(err.response?.data?.error || err.message || 'Failed to load analysis')
+            setGrowwError(null)
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false)
@@ -247,6 +252,21 @@ function WatchlistTab() {
               {selectedEntry.underlying_symbol} · {selectedEntry.exchange} · Expiry {selectedEntry.expiry_date} · ±{selectedEntry.points_range} pts
               {analysis?.underlying_ltp != null && <> · LTP {analysis.underlying_ltp}</>}
               {analysis?.createdAt && <> · Last analyzed {new Date(analysis.createdAt).toLocaleTimeString()}</>}
+            </div>
+          )}
+
+          {growwError && (
+            <div className="glass-panel rounded-xl p-md border-l-4 border-bearish flex flex-col gap-xs text-sm">
+              <div className="text-bearish font-bold uppercase text-xs">Groww API Error</div>
+              <div className="text-on-surface">{growwError.message || growwError.error}</div>
+              {growwError.groww_error && (
+                <pre className="text-[11px] text-on-surface-variant overflow-auto max-h-32 custom-scrollbar">
+                  {JSON.stringify(growwError.groww_error, null, 2)}
+                </pre>
+              )}
+              {growwError.occurred_at && (
+                <div className="text-[11px] text-on-surface-variant">as of {new Date(growwError.occurred_at).toLocaleTimeString()}</div>
+              )}
             </div>
           )}
 

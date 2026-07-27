@@ -11,7 +11,7 @@ import axios from 'axios'
 import { onRequest } from 'firebase-functions/v2/https'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
 import { defineSecret } from 'firebase-functions/params'
-import { runWatchlistTick, runWatchlistCleanup } from './watchlistScheduler.js'
+import { runWatchlistTick, runWatchlistCleanup, recordGrowwAuthFailure, isWithinMarketHours } from './watchlistScheduler.js'
 import {
   getUnderlyingSymbols,
   saveOptionChainSnapshot,
@@ -33,6 +33,7 @@ import {
   listActiveWatchlistEntries,
   deactivateWatchlistEntry,
   getLatestWatchlistAnalysis,
+  getWatchlistEntry,
 } from './watchlistFirestoreClient.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
@@ -748,8 +749,14 @@ app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
     if (!['5m', '15m', '75m'].includes(tier)) {
       return res.status(400).json({ error: 'tier must be one of 5m, 15m, 75m' })
     }
-    const analysis = await getLatestWatchlistAnalysis(id, tier)
-    res.json({ status: 'SUCCESS', analysis })
+    const [analysis, entry] = await Promise.all([getLatestWatchlistAnalysis(id, tier), getWatchlistEntry(id)])
+    const response = { status: 'SUCCESS', analysis }
+    // Only present when the last fetch attempt for this entry actually
+    // failed - the real Groww error (or "no token saved"), not fabricated.
+    if (entry?.last_fetch_error) {
+      response.groww_error = entry.last_fetch_error
+    }
+    res.json(response)
   } catch (error) {
     console.error('Error fetching watchlist analysis:', error.message)
     res.status(500).json({ error: error.message })
@@ -798,7 +805,22 @@ export const watchlistTick = onSchedule(
     ],
   },
   async () => {
-    const groww_token = await getGrowwAccessToken()
+    // Gated here too (not just inside runWatchlistTick) so a missing/invalid
+    // token doesn't get recorded as a fresh failure against every entry once
+    // per 5-minute tick around the clock outside market hours.
+    if (!isWithinMarketHours()) {
+      return
+    }
+
+    let groww_token
+    try {
+      groww_token = await getGrowwAccessToken()
+    } catch (error) {
+      console.error('watchlistTick: failed to obtain Groww access token:', error.message)
+      await recordGrowwAuthFailure(error)
+      return
+    }
+
     const result = await runWatchlistTick({ groww_token, azureConfig: getAzureConfig() })
     console.log('watchlistTick result:', JSON.stringify(result))
   }

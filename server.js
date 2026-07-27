@@ -30,6 +30,7 @@ import {
   listActiveWatchlistEntries,
   deactivateWatchlistEntry,
   getLatestWatchlistAnalysis,
+  getWatchlistEntry,
 } from './functions/watchlistFirestoreClient.js'
 
 dotenv.config()
@@ -1014,8 +1015,14 @@ app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
     if (!['5m', '15m', '75m'].includes(tier)) {
       return res.status(400).json({ error: 'tier must be one of 5m, 15m, 75m' })
     }
-    const analysis = await getLatestWatchlistAnalysis(id, tier)
-    res.json({ status: 'SUCCESS', analysis })
+    const [analysis, entry] = await Promise.all([getLatestWatchlistAnalysis(id, tier), getWatchlistEntry(id)])
+    const response = { status: 'SUCCESS', analysis }
+    // Only present when the last fetch attempt for this entry actually
+    // failed - the real Groww error (or "no token saved"), not fabricated.
+    if (entry?.last_fetch_error) {
+      response.groww_error = entry.last_fetch_error
+    }
+    res.json(response)
   } catch (error) {
     console.error('Error fetching watchlist analysis:', error.message)
     res.status(500).json({ error: error.message })

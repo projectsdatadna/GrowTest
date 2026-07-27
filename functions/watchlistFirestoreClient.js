@@ -49,6 +49,27 @@ export async function deactivateWatchlistEntry(id) {
   await db.collection(WATCHLIST_COLLECTION).doc(id).update({ active: false })
 }
 
+export async function getWatchlistEntry(id) {
+  const doc = await db.collection(WATCHLIST_COLLECTION).doc(id).get()
+  return doc.exists ? serializeDoc(doc) : null
+}
+
+// Records the real Groww API error (or "no token saved" error) from the last
+// failed fetch attempt for this entry, so GET /watchlist/:id/analysis/:tier
+// can surface it to the client instead of just silently returning stale/null
+// analysis. `error_details` is a plain JSON-serializable object - callers
+// embed their own `occurred_at` ISO string in it, since Firestore Timestamps
+// don't round-trip cleanly through a single nested field like this.
+export async function saveWatchlistFetchError(id, error_details) {
+  await db.collection(WATCHLIST_COLLECTION).doc(id).update({ last_fetch_error: error_details })
+}
+
+// Clears a previously-recorded fetch error once a fetch succeeds again, so
+// the analysis response goes back to not including one.
+export async function clearWatchlistFetchError(id) {
+  await db.collection(WATCHLIST_COLLECTION).doc(id).update({ last_fetch_error: null })
+}
+
 // One row per 5-minute rolling fetch - the raw data source all three tiers
 // read from by time-lookup via findWatchlistSnapshotNear.
 export async function saveWatchlistSnapshot({ watchlist_id, underlying_ltp, filtered_strikes }) {

@@ -16,6 +16,8 @@ import {
   saveWatchlistAnalysis,
   getWatchlistAnalysisBySnapshotId,
   getLatestWatchlistAnalysis,
+  saveWatchlistFetchError,
+  clearWatchlistFetchError,
   deleteAllDocsInCollection,
 } from './watchlistFirestoreClient.js'
 
@@ -134,13 +136,24 @@ export async function runWatchlistTick({ groww_token, azureConfig, now = new Dat
 
   for (const entry of entries) {
     try {
-      const chain = await fetchFilteredOptionChain({
-        exchange: entry.exchange,
-        underlying_symbol: entry.underlying_symbol,
-        expiry_date: entry.expiry_date,
-        points_range: entry.points_range,
-        groww_token,
-      })
+      let chain
+      try {
+        chain = await fetchFilteredOptionChain({
+          exchange: entry.exchange,
+          underlying_symbol: entry.underlying_symbol,
+          expiry_date: entry.expiry_date,
+          points_range: entry.points_range,
+          groww_token,
+        })
+      } catch (error) {
+        // Persist the real Groww error (error.details, when present, carries
+        // Groww's own raw response body) so GET /watchlist/:id/analysis/:tier
+        // can surface it instead of silently returning stale/null analysis.
+        await saveWatchlistFetchError(entry.id, { ...(error.details || { error: error.message }), occurred_at: now.toISOString() })
+        throw error
+      }
+      await clearWatchlistFetchError(entry.id)
+
       const currentSnapshotId = await saveWatchlistSnapshot({
         watchlist_id: entry.id,
         underlying_ltp: chain.underlying_ltp,
@@ -164,6 +177,17 @@ export async function runWatchlistTick({ groww_token, azureConfig, now = new Dat
   }
 
   return { skipped: false, elapsedMinutes, results }
+}
+
+/**
+ * Stamps every active entry with a "no Groww access token available" error -
+ * used when getGrowwAccessToken() itself fails, before runWatchlistTick ever
+ * gets to process a single entry (so nothing would otherwise record why).
+ */
+export async function recordGrowwAuthFailure(error, now = new Date()) {
+  const entries = await listActiveWatchlistEntries()
+  const details = { error: 'No Groww access token available', message: error.message, occurred_at: now.toISOString() }
+  await Promise.all(entries.map((entry) => saveWatchlistFetchError(entry.id, details)))
 }
 
 /** Wipes the day's fetched snapshots and analyses - the watchlist config itself is untouched. */
