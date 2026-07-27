@@ -4,9 +4,8 @@ import { useEffect, useState } from 'react'
  * Dark "terminal" app shell (sidebar + top header) from the Stitch mockup.
  * Greek Analysis, Compare, and Watchlist are the real, functional nav items -
  * everything else (AI Analysis is hidden here rather than removed - the
- * component/route still exists, just not linked from the nav; the search
- * bar, header Watchlist/Alerts spans, notifications, avatar) is decorative
- * or unlinked.
+ * component/route still exists, just not linked from the nav; header
+ * notifications, avatar) is decorative or unlinked.
  */
 function ServerTimeClock() {
   const [now, setNow] = useState(new Date())
@@ -65,27 +64,7 @@ function AppShell({ activeTab, onTabChange, children }) {
         </nav>
       </aside>
 
-      <header className="sticky top-0 right-0 z-40 w-[calc(100%-250px)] ml-[250px] bg-surface/60 backdrop-blur-md border-b border-outline-variant flex justify-between items-center h-12 px-xl">
-        <div className="flex items-center gap-xl">
-          <div className="flex items-center gap-sm bg-surface-container-high px-md py-1 rounded-full border border-outline-variant opacity-60" title="Not available yet">
-            <span className="material-symbols-outlined text-on-surface-variant text-[18px]">search</span>
-            <input
-              className="bg-transparent border-none focus:ring-0 text-sm text-on-surface w-48 p-0 cursor-default"
-              placeholder="Search Markets..."
-              type="text"
-              disabled
-            />
-          </div>
-          <nav className="flex gap-lg">
-            <span className="text-sm text-primary font-bold border-b-2 border-primary pb-1">Market Data</span>
-            <span className="text-sm text-on-surface-variant opacity-50 cursor-default" title="Not available yet">
-              Watchlist
-            </span>
-            <span className="text-sm text-on-surface-variant opacity-50 cursor-default" title="Not available yet">
-              Alerts
-            </span>
-          </nav>
-        </div>
+      <header className="sticky top-0 right-0 z-40 w-[calc(100%-250px)] ml-[250px] bg-surface/60 backdrop-blur-md border-b border-outline-variant flex justify-end items-center h-12 px-xl">
         <div className="flex items-center gap-md">
           <span className="material-symbols-outlined text-on-surface-variant opacity-50 cursor-default" title="Not available yet">
             notifications
