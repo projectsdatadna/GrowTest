@@ -83,18 +83,28 @@ export async function saveWatchlistSnapshot({ watchlist_id, underlying_ltp, filt
 }
 
 // Finds the watchlistSnapshots row closest to `targetDate` for this
-// watchlist entry - no tolerance window: real tick spacing drifts (observed
-// anywhere from ~6 to ~8+ minutes apart in production, worsening as more
-// symbols/AI calls load up each tick), so rejecting anything further than a
-// fixed distance from `targetDate` meant the "previous" snapshot was almost
-// never found once the schedule drifted off a clean N-minute grid - the
-// closest available snapshot IS the best approximation of "N minutes ago"
-// regardless of how far the real cadence has drifted. `excludeSnapshotId`
+// watchlist entry - no FIXED tolerance window: real tick spacing drifts
+// (observed anywhere from ~6 to ~8+ minutes apart in production, worsening as
+// more symbols/AI calls load up each tick), so rejecting anything further
+// than a fixed distance from `targetDate` meant the "previous" snapshot was
+// almost never found once the schedule drifted off a clean N-minute grid -
+// the closest available snapshot IS the best approximation of "N minutes
+// ago" regardless of how far the real cadence has drifted. `excludeSnapshotId`
 // filters out the snapshot this same tick just saved, so the very first tick
 // of the day - with no real previous snapshot yet - can't match itself.
 // Returns null if there's nothing else for this entry yet, same as a
 // first-ever run degrades gracefully today.
-export async function findWatchlistSnapshotNear(watchlist_id, targetDate, excludeSnapshotId = null) {
+//
+// `maxDistanceMs`, if given, rejects a match that's further from `targetDate`
+// than that (returning null instead) - added after 5m/15m/75m were observed
+// all resolving to the literal same snapshot doc when an entry's history was
+// thin (right after the daily wipe, or a newly-added symbol): with no
+// ceiling at all, "closest available" degrades to "whatever exists" rather
+// than a genuine approximation of "N minutes ago". Callers pass a
+// tier-relative bound (e.g. a multiple of that tier's own window) rather than
+// a fixed number of minutes, so this doesn't reintroduce the fixed-tolerance
+// bug above - it still tolerates real-world drift, just not an unbounded one.
+export async function findWatchlistSnapshotNear(watchlist_id, targetDate, excludeSnapshotId = null, maxDistanceMs = null) {
   const snapshot = await db.collection(WATCHLIST_SNAPSHOTS_COLLECTION).where('watchlist_id', '==', watchlist_id).get()
   if (snapshot.empty) return null
 
@@ -102,7 +112,11 @@ export async function findWatchlistSnapshotNear(watchlist_id, targetDate, exclud
   if (candidates.length === 0) return null
 
   candidates.sort((a, b) => Math.abs(new Date(a.createdAt) - targetDate) - Math.abs(new Date(b.createdAt) - targetDate))
-  return candidates[0]
+  const closest = candidates[0]
+  if (maxDistanceMs != null && Math.abs(new Date(closest.createdAt) - targetDate) > maxDistanceMs) {
+    return null
+  }
+  return closest
 }
 
 // One row per tier-tick per watchlist entry - both AI analyses side by side,

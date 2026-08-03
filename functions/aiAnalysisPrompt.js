@@ -234,7 +234,12 @@ export async function analyzeWithAI(promptContent, azureConfig, { maxTokens = 40
         'api-key': apiKey,
         'content-type': 'application/json',
       },
-      timeout: 60000,
+      // Watchlist's own analyzeTier calls (functions/watchlistScheduler.js)
+      // are documented as taking 80-90+ seconds in production - a 60s
+      // timeout here fired on otherwise-successful calls often enough to be
+      // the direct cause of sporadic missing tier analyses. Kept comfortably
+      // above that observed latency rather than removed outright.
+      timeout: 100000,
     }
   )
 

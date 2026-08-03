@@ -48,7 +48,47 @@ export function minutesSinceMarketOpen(date = new Date()) {
   return hour * 60 + minute - MARKET_OPEN_MINUTES
 }
 
+// How many watchlist entries to process at once inside one tick. Entries used
+// to be processed strictly one at a time; with a Groww fetch plus two ~80-90s
+// AI calls per due tier, that scales linearly with entry count and, past
+// roughly a handful of entries, a single tick's real wall-clock duration
+// blows past both the 5-minute schedule and the 540s function timeout. A
+// later-queued entry then gets processed many real minutes after earlier
+// ones despite every entry sharing the same nominal tick `now` - which is
+// exactly what produced 5m/15m/75m all resolving to the same "previous"
+// snapshot for entries near the end of an 11-entry watchlist. Kept
+// conservative (not "run everything at once") to avoid bursting past
+// Groww/Azure OpenAI's own concurrent-request limits - raise it if the
+// watchlist grows enough that ticks are still running long with this.
+const ENTRY_CONCURRENCY = 4
+
+// Runs `mapper` over `items` with at most `limit` in flight at once,
+// preserving each result's original index (unlike Promise.all over batches,
+// a finished slot immediately picks up the next item rather than waiting for
+// its whole batch to finish).
+async function mapWithConcurrency(items, limit, mapper) {
+  const results = new Array(items.length)
+  let nextIndex = 0
+
+  async function worker() {
+    while (true) {
+      const index = nextIndex++
+      if (index >= items.length) return
+      results[index] = await mapper(items[index], index)
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return results
+}
+
 const TIER_MINUTES = { '5m': 5, '15m': 15, '75m': 75 }
+
+// A matched "previous" snapshot further than this multiple of the tier's own
+// window from its target time is rejected (findWatchlistSnapshotNear returns
+// null instead) rather than accepted as-is - see the comment on that function
+// for why this doesn't reintroduce the fixed-tolerance bug it replaced.
+const PREVIOUS_SNAPSHOT_MAX_DISTANCE_MULTIPLIER = 2
 
 // Ticks are scheduled "every 5 minutes" but real-world dispatch drifts
 // (observed ~6 minutes apart in production, since each tick's own AI calls
@@ -76,7 +116,8 @@ async function isTierDue(watchlist_id, tier, now) {
 async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, now, azureConfig }) {
   const tierMinutes = TIER_MINUTES[tier]
   const targetTime = new Date(now.getTime() - tierMinutes * 60 * 1000)
-  const previousDoc = await findWatchlistSnapshotNear(entry.id, targetTime, currentSnapshotId)
+  const maxPreviousDistanceMs = tierMinutes * PREVIOUS_SNAPSHOT_MAX_DISTANCE_MULTIPLIER * 60 * 1000
+  const previousDoc = await findWatchlistSnapshotNear(entry.id, targetTime, currentSnapshotId, maxPreviousDistanceMs)
   const previous = previousDoc ? { filtered_strikes: previousDoc.filtered_strikes } : null
 
   const current = {
@@ -129,10 +170,85 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
 }
 
 /**
+ * Runs one entry's full tick: Groww fetch, then its due tiers. Called through
+ * mapWithConcurrency below, so several entries are in flight at once - each
+ * still gets its own `now`, captured right here rather than reusing the
+ * tick-wide one, since with concurrency 4 an entry near the end of a longer
+ * watchlist can still start its turn a couple of minutes after the tick
+ * began. Without its own real timestamp, that entry's targetTime/isTierDue
+ * math and its current_snapshot.fetched_at would silently drift out of sync
+ * with when its data was actually fetched - the direct cause of "previous"
+ * snapshots showing up dated after their own tier's "current" snapshot.
+ */
+async function processEntry(entry, { groww_token, azureConfig }) {
+  const now = new Date()
+  try {
+    let chain
+    try {
+      chain = await fetchFilteredOptionChain({
+        exchange: entry.exchange,
+        underlying_symbol: entry.underlying_symbol,
+        expiry_date: entry.expiry_date,
+        points_range: entry.points_range,
+        groww_token,
+      })
+    } catch (error) {
+      // Persist the real Groww error (error.details, when present, carries
+      // Groww's own raw response body) so GET /watchlist/:id/analysis/:tier
+      // can surface it instead of silently returning stale/null analysis.
+      await saveWatchlistFetchError(entry.id, { ...(error.details || { error: error.message }), occurred_at: now.toISOString() })
+      throw error
+    }
+    await clearWatchlistFetchError(entry.id)
+
+    const currentSnapshotId = await saveWatchlistSnapshot({
+      watchlist_id: entry.id,
+      underlying_ltp: chain.underlying_ltp,
+      filtered_strikes: chain.filtered_strikes,
+    })
+    const currentSnapshot = { underlying_ltp: chain.underlying_ltp, filtered_strikes: chain.filtered_strikes }
+
+    const tiersToRun = ['5m']
+    if (await isTierDue(entry.id, '15m', now)) tiersToRun.push('15m')
+    if (await isTierDue(entry.id, '75m', now)) tiersToRun.push('75m')
+
+    // Independent per tier (each only needs currentSnapshot, already fetched
+    // above) - allSettled so one tier timing out doesn't take its siblings
+    // down with it. Previously a sequential for-loop meant a single slow/
+    // failed tier silently skipped every tier after it for that entry, for
+    // that whole tick - the direct cause of sporadic analysis:null.
+    const tierOutcomes = await Promise.allSettled(
+      tiersToRun.map((tier) => analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, now, azureConfig }))
+    )
+    const failedTiers = []
+    tierOutcomes.forEach((outcome, i) => {
+      if (outcome.status === 'rejected') {
+        const tier = tiersToRun[i]
+        console.error(`Watchlist tick: ${tier} analysis failed for ${entry.underlying_symbol} (${entry.id}):`, outcome.reason?.message)
+        failedTiers.push(tier)
+      }
+    })
+
+    return {
+      watchlist_id: entry.id,
+      underlying_symbol: entry.underlying_symbol,
+      tiers: tiersToRun,
+      status: failedTiers.length ? 'partial' : 'ok',
+      ...(failedTiers.length ? { failedTiers } : {}),
+    }
+  } catch (error) {
+    console.error(`Watchlist tick failed for ${entry.underlying_symbol} (${entry.id}):`, error.message)
+    return { watchlist_id: entry.id, underlying_symbol: entry.underlying_symbol, status: 'error', error: error.message }
+  }
+}
+
+/**
  * The 5-minute tick: fetches fresh data for every active watchlist entry
  * and always runs the 5-min tier, plus the 15-min/75-min tiers whenever
  * they're due (see isTierDue) for that entry. One Groww fetch per entry
- * serves all three tiers - no redundant fetching.
+ * serves all three tiers - no redundant fetching. Entries are processed with
+ * bounded concurrency (see ENTRY_CONCURRENCY) rather than one at a time, so
+ * total tick duration doesn't scale linearly with watchlist size.
  */
 export async function runWatchlistTick({ groww_token, azureConfig, now = new Date() }) {
   if (!isWithinMarketHours(now)) {
@@ -141,49 +257,8 @@ export async function runWatchlistTick({ groww_token, azureConfig, now = new Dat
 
   const elapsedMinutes = minutesSinceMarketOpen(now)
   const entries = await listActiveWatchlistEntries()
-  const results = []
 
-  for (const entry of entries) {
-    try {
-      let chain
-      try {
-        chain = await fetchFilteredOptionChain({
-          exchange: entry.exchange,
-          underlying_symbol: entry.underlying_symbol,
-          expiry_date: entry.expiry_date,
-          points_range: entry.points_range,
-          groww_token,
-        })
-      } catch (error) {
-        // Persist the real Groww error (error.details, when present, carries
-        // Groww's own raw response body) so GET /watchlist/:id/analysis/:tier
-        // can surface it instead of silently returning stale/null analysis.
-        await saveWatchlistFetchError(entry.id, { ...(error.details || { error: error.message }), occurred_at: now.toISOString() })
-        throw error
-      }
-      await clearWatchlistFetchError(entry.id)
-
-      const currentSnapshotId = await saveWatchlistSnapshot({
-        watchlist_id: entry.id,
-        underlying_ltp: chain.underlying_ltp,
-        filtered_strikes: chain.filtered_strikes,
-      })
-      const currentSnapshot = { underlying_ltp: chain.underlying_ltp, filtered_strikes: chain.filtered_strikes }
-
-      const tiersToRun = ['5m']
-      if (await isTierDue(entry.id, '15m', now)) tiersToRun.push('15m')
-      if (await isTierDue(entry.id, '75m', now)) tiersToRun.push('75m')
-
-      for (const tier of tiersToRun) {
-        await analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, now, azureConfig })
-      }
-
-      results.push({ watchlist_id: entry.id, underlying_symbol: entry.underlying_symbol, tiers: tiersToRun, status: 'ok' })
-    } catch (error) {
-      console.error(`Watchlist tick failed for ${entry.underlying_symbol} (${entry.id}):`, error.message)
-      results.push({ watchlist_id: entry.id, underlying_symbol: entry.underlying_symbol, status: 'error', error: error.message })
-    }
-  }
+  const results = await mapWithConcurrency(entries, ENTRY_CONCURRENCY, (entry) => processEntry(entry, { groww_token, azureConfig }))
 
   return { skipped: false, elapsedMinutes, results }
 }
