@@ -1,6 +1,6 @@
 name: Deploy Firebase Functions
 
-# Auto-deploys the API (functions/index.js) to the shared `devgraders`
+# Auto-deploys the API (functions/index.js) to the shared `dev-cogniglob`
 # Firebase project whenever functions/** changes land on main.
 # See FIREBASE_DEPLOY.md for the one-time secrets + CI-auth setup this
 # workflow depends on.
@@ -32,9 +32,12 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DEVGRADERS }}
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DEV_COGNIGLOB }}
 
       - name: Deploy to Firebase Cloud Functions (scoped to this app's functions only)
-        # IMPORTANT: devgraders is a shared project used by other apps.
+        # IMPORTANT: dev-cogniglob is a shared project used by other apps.
         # Never widen this to a bare `--only functions` — see FIREBASE_DEPLOY.md.
-        run: npx firebase-tools deploy --only functions:api,functions:watchlistTick,functions:watchlistCleanup --project devgraders --non-interactive
+        # The HTTP function is `growtestApi`, NOT `api` — dev-cogniglob already
+        # has its own unrelated `api` function; naming ours the same caused a
+        # real incident on the previous shared project (devgraders).
+        run: npx firebase-tools deploy --only functions:growtestApi,functions:watchlistTick,functions:watchlistCleanup --project dev-cogniglob --non-interactive

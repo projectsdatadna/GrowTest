@@ -770,7 +770,15 @@ app.use((_, res) => {
   res.status(404).json({ error: 'Endpoint not found' })
 })
 
-export const api = onRequest(
+/**
+ * Named `growtestApi`, not `api`: dev-cogniglob is a shared project (it
+ * already hosts its own unrelated `api` function and default Hosting site
+ * for the Cogniglob site) - keep this name unique so a future deploy can
+ * never collide with or overwrite what's already there. See
+ * FIREBASE_DEPLOY.md for the incident this same collision caused on the
+ * previous project (devgraders).
+ */
+export const growtestApi = onRequest(
   {
     secrets: [
       AZURE_OPENAI_API_KEY_SECRET,

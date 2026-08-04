@@ -1,5 +1,6 @@
 {
   "firestore": {
+    "database": "groww-dashboard",
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
@@ -7,7 +8,7 @@
     "source": "functions"
   },
   "hosting": {
-    "target": "growtest-ui",
+    "target": "groww-dashboard-ui",
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [

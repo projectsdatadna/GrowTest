@@ -1,9 +1,10 @@
 name: Deploy Frontend (Firebase Hosting)
 
-# Auto-deploys the built React UI to the dedicated `growtest` Firebase
-# Hosting site (target: growtest-ui) whenever frontend source changes land
-# on main. Uses the same devgraders project as the API, but a separate
-# Hosting site so this never touches other apps' Hosting content there.
+# Auto-deploys the built React UI to the dedicated `groww-dashboard` Firebase
+# Hosting site (target: groww-dashboard-ui) whenever frontend source changes
+# land on main. Uses the same dev-cogniglob project as the API, but a
+# separate Hosting site so this never touches other apps' Hosting content
+# there (dev-cogniglob's own default site already serves an unrelated app).
 
 on:
   push:
@@ -40,10 +41,11 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
-          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DEVGRADERS }}
+          credentials_json: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_DEV_COGNIGLOB }}
 
-      - name: Deploy to Firebase Hosting (growtest-ui target only)
-        # IMPORTANT: devgraders is a shared project. This deploys to the
-        # dedicated `growtest` site only, via the growtest-ui target in
-        # .firebaserc - never the project's shared default Hosting site.
-        run: npx firebase-tools deploy --only hosting:growtest-ui --project devgraders --non-interactive
+      - name: Deploy to Firebase Hosting (groww-dashboard-ui target only)
+        # IMPORTANT: dev-cogniglob is a shared project. This deploys to the
+        # dedicated `groww-dashboard` site only, via the groww-dashboard-ui
+        # target in .firebaserc - never the project's shared default Hosting
+        # site (which serves an unrelated app).
+        run: npx firebase-tools deploy --only hosting:groww-dashboard-ui --project dev-cogniglob --non-interactive

@@ -8,7 +8,8 @@
     "preview": "vite preview",
     "server": "node server.js",
     "server:dev": "nodemon server.js",
-    "start": "npm run build && node server.js"
+    "start": "npm run build && node server.js",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@reduxjs/toolkit": "^2.12.0",

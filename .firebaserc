@@ -1,12 +1,12 @@
 {
   "projects": {
-    "default": "devgraders"
+    "default": "dev-cogniglob"
   },
   "targets": {
-    "devgraders": {
+    "dev-cogniglob": {
       "hosting": {
-        "growtest-ui": [
-          "growtest"
+        "groww-dashboard-ui": [
+          "groww-dashboard"
         ]
       }
     }

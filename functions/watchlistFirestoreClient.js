@@ -8,12 +8,20 @@
  */
 
 import admin from 'firebase-admin'
+import { getFirestore } from 'firebase-admin/firestore'
+
+const PROJECT_ID = 'dev-cogniglob'
+
+// Same dedicated Native-mode database as firestoreClient.js (see its comment)
+// - dev-cogniglob's default database is Datastore mode and belongs to an
+// unrelated app on this shared project.
+const DATABASE_ID = 'groww-dashboard'
 
 if (admin.apps.length === 0) {
-  admin.initializeApp({ projectId: 'devgraders' })
+  admin.initializeApp({ projectId: PROJECT_ID })
 }
 
-const db = admin.firestore()
+const db = getFirestore(admin.app(), DATABASE_ID)
 
 const WATCHLIST_COLLECTION = 'watchlist'
 const WATCHLIST_SNAPSHOTS_COLLECTION = 'watchlistSnapshots'

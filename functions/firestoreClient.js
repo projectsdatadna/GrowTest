@@ -7,12 +7,24 @@
  */
 
 import admin from 'firebase-admin'
+import { getFirestore } from 'firebase-admin/firestore'
+
+const PROJECT_ID = 'dev-cogniglob'
+
+// dev-cogniglob's default Firestore database predates this app and is in
+// Datastore mode (it backs an unrelated site on this shared project) - not
+// compatible with the Native-mode query patterns (composite indexes,
+// .where()/.orderBy() chains) this app relies on. `groww-dashboard` is a
+// separate, dedicated Native-mode database created for this app alone via
+// `firebase firestore:databases:create groww-dashboard --location us-central1`
+// - never point this at admin.firestore()'s implicit "(default)" database.
+const DATABASE_ID = 'groww-dashboard'
 
 if (admin.apps.length === 0) {
-  admin.initializeApp({ projectId: 'devgraders' })
+  admin.initializeApp({ projectId: PROJECT_ID })
 }
 
-const db = admin.firestore()
+const db = getFirestore(admin.app(), DATABASE_ID)
 
 const UNDERLYING_SYMBOLS_COLLECTION = 'referenceData'
 const UNDERLYING_SYMBOLS_DOC = 'underlyingSymbols'
