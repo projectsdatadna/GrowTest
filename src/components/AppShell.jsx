@@ -29,6 +29,7 @@ const NAV_ITEMS = [
   { key: 'greek-analysis', label: 'Greek Analysis', icon: 'analytics', functional: true },
   { key: 'compare', label: 'Compare', icon: 'compare_arrows', functional: true },
   { key: 'watchlist', label: 'Watchlist', icon: 'visibility', functional: true },
+  { key: 'chart', label: 'Chart', icon: 'candlestick_chart', functional: true },
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {

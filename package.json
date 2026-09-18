@@ -18,11 +18,14 @@
     "csv-parse": "^5.5.0",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
+    "plotly.js-finance-dist-min": "^4.1.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-plotly.js": "^2.6.0",
     "react-redux": "^9.3.0",
     "react-select": "^5.8.0",
-    "redux-persist": "^6.0.0"
+    "redux-persist": "^6.0.0",
+    "technicalindicators": "^3.1.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.2.0",

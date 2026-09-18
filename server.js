@@ -32,6 +32,8 @@ import {
   getLatestWatchlistAnalysis,
   getWatchlistEntry,
 } from './functions/watchlistFirestoreClient.js'
+import { ensureCandlesFresh, parseIstDateTime } from './functions/growwHistoricalData.js'
+import { ensureIndicatorFresh } from './functions/technicalIndicators.js'
 
 dotenv.config()
 
@@ -1025,6 +1027,101 @@ app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
     res.json(response)
   } catch (error) {
     console.error('Error fetching watchlist analysis:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Historical Chart feature - fetches candles from Groww on demand (storing
+ * them in Firestore), and computes+stores indicator series from them. See
+ * functions/growwHistoricalData.js/functions/technicalIndicators.js for the
+ * actual logic; these two routes are thin wrappers, same shape as every
+ * other route here.
+ */
+app.get('/historical-data', async (req, res) => {
+  try {
+    const accessToken = await getGrowwAccessToken()
+    const symbol = req.query.symbol
+    const exchange = req.query.exchange || 'NSE'
+    const interval = req.query.interval || '1day'
+
+    if (!symbol) {
+      return res.status(400).json({ error: 'Missing symbol parameter' })
+    }
+    if (!req.query.start_time || !req.query.end_time) {
+      return res.status(400).json({ error: 'Missing start_time or end_time parameter' })
+    }
+
+    let rangeStart, rangeEnd
+    try {
+      rangeStart = parseIstDateTime(req.query.start_time)
+      rangeEnd = parseIstDateTime(req.query.end_time)
+    } catch (error) {
+      return res.status(400).json({ error: error.message })
+    }
+
+    let result
+    try {
+      result = await ensureCandlesFresh({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token: accessToken })
+    } catch (error) {
+      console.error('Historical data fetch error:', error.message)
+      return res.status(error.details?.status_code || 400).json(error.details || { error: error.message })
+    }
+
+    res.json({ status: 'SUCCESS', symbol, exchange, interval, candles: result.candles })
+  } catch (error) {
+    console.error('Error:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/historical-data/indicators', async (req, res) => {
+  try {
+    const accessToken = await getGrowwAccessToken()
+    const symbol = req.query.symbol
+    const exchange = req.query.exchange || 'NSE'
+    const interval = req.query.interval || '1day'
+    const specs = (req.query.indicators || '').split(',').map((s) => s.trim()).filter(Boolean)
+
+    if (!symbol) {
+      return res.status(400).json({ error: 'Missing symbol parameter' })
+    }
+    if (!req.query.start_time || !req.query.end_time) {
+      return res.status(400).json({ error: 'Missing start_time or end_time parameter' })
+    }
+    if (specs.length === 0) {
+      return res.status(400).json({ error: 'Missing indicators parameter, e.g. SMA:20,RSI:14' })
+    }
+
+    let rangeStart, rangeEnd
+    try {
+      rangeStart = parseIstDateTime(req.query.start_time)
+      rangeEnd = parseIstDateTime(req.query.end_time)
+    } catch (error) {
+      return res.status(400).json({ error: error.message })
+    }
+
+    let candles
+    try {
+      ;({ candles } = await ensureCandlesFresh({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token: accessToken }))
+    } catch (error) {
+      console.error('Historical data fetch error:', error.message)
+      return res.status(error.details?.status_code || 400).json(error.details || { error: error.message })
+    }
+
+    const series = {}
+    for (const spec of specs) {
+      try {
+        series[spec] = await ensureIndicatorFresh({ symbol, exchange, interval, spec, candles })
+      } catch (error) {
+        console.error(`Indicator computation error for "${spec}":`, error.message)
+        return res.status(400).json({ error: error.message })
+      }
+    }
+
+    res.json({ status: 'SUCCESS', symbol, exchange, interval, series })
+  } catch (error) {
+    console.error('Error:', error.message)
     res.status(500).json({ error: error.message })
   }
 })

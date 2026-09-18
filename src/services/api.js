@@ -184,18 +184,39 @@ export const getAIInference = async (data) => {
   }
 }
 
-// Get historical data
-export const getHistoricalData = async (symbol, params = {}) => {
+// datetime-local inputs give 'YYYY-MM-DDTHH:mm' - Groww's own API (and this
+// app's backend, which parses it as IST wall-clock time) wants
+// 'YYYY-MM-DD HH:MM:SS'.
+const toGrowwDateTimeParam = (datetimeLocalValue) => `${datetimeLocalValue.replace('T', ' ')}:00`
+
+// Historical Chart - fetches (and, server-side, stores) OHLC candles for a
+// symbol/exchange/interval/date-range on demand, matching Groww's own
+// start_time/end_time contract directly (no invented "count" parameter).
+// Backed by GET /historical-data, which checks Firestore first and only
+// calls Groww for what's missing/stale.
+export const getHistoricalCandles = async (symbol, { exchange = 'NSE', interval = '1day', startTime, endTime }) => {
   try {
-    const response = await apiClient.get('/historical', {
-      params: {
-        symbol,
-        ...params,
-      },
+    const response = await apiClient.get('/historical-data', {
+      params: { symbol, exchange, interval, start_time: toGrowwDateTimeParam(startTime), end_time: toGrowwDateTimeParam(endTime) },
     })
     return response.data
   } catch (error) {
-    console.error('Error fetching historical data:', error)
+    console.error('Error fetching historical candles:', error)
+    throw error
+  }
+}
+
+// Fetches (and stores) one or more indicator series computed from the same
+// stored candles. `indicators` is a comma-separated spec string, e.g.
+// "SMA:20,EMA:50,BB:20:2,RSI:14,MACD:12:26:9".
+export const getIndicatorSeries = async (symbol, { exchange = 'NSE', interval = '1day', startTime, endTime, indicators }) => {
+  try {
+    const response = await apiClient.get('/historical-data/indicators', {
+      params: { symbol, exchange, interval, start_time: toGrowwDateTimeParam(startTime), end_time: toGrowwDateTimeParam(endTime), indicators },
+    })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching indicator series:', error)
     throw error
   }
 }

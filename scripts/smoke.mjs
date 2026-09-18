@@ -57,6 +57,9 @@ const ROUTES = [
   { method: 'GET', path: '/option-expiries?symbol=NIFTY' },
   { method: 'GET', path: '/option-chain?underlying_symbol=NIFTY' },
   { method: 'GET', path: '/historical?symbol=NIFTY&interval=1day&count=5' },
+  { method: 'GET', path: '/historical-data?symbol=NIFTY&exchange=NSE&interval=1day&start_time=2026-08-01%2009:15:00&end_time=2026-09-17%2015:30:00' },
+  { method: 'GET', path: '/historical-data/indicators?symbol=NIFTY&exchange=NSE&interval=1day&start_time=2026-08-01%2009:15:00&end_time=2026-09-17%2015:30:00&indicators=SMA:20,RSI:14' },
+  { method: 'GET', path: '/historical-data', note: 'missing symbol -> 400' },
 
   { method: 'GET', path: '/option-chain-snapshots' },
   { method: 'GET', path: `/option-chain-snapshots/${BOGUS_ID}`, ownNotFound: 'Snapshot not found' },

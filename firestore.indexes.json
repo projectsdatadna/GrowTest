@@ -32,6 +32,50 @@
         { "fieldPath": "tier", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "historicalCandles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "symbol", "order": "ASCENDING" },
+        { "fieldPath": "exchange", "order": "ASCENDING" },
+        { "fieldPath": "interval", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "historicalCandles",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "symbol", "order": "ASCENDING" },
+        { "fieldPath": "exchange", "order": "ASCENDING" },
+        { "fieldPath": "interval", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "technicalIndicators",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "symbol", "order": "ASCENDING" },
+        { "fieldPath": "exchange", "order": "ASCENDING" },
+        { "fieldPath": "interval", "order": "ASCENDING" },
+        { "fieldPath": "indicator", "order": "ASCENDING" },
+        { "fieldPath": "params_key", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "technicalIndicators",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "symbol", "order": "ASCENDING" },
+        { "fieldPath": "exchange", "order": "ASCENDING" },
+        { "fieldPath": "interval", "order": "ASCENDING" },
+        { "fieldPath": "indicator", "order": "ASCENDING" },
+        { "fieldPath": "params_key", "order": "ASCENDING" },
+        { "fieldPath": "timestamp", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
