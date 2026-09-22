@@ -920,7 +920,21 @@ app.post('/historical-data/ai-insight', async (req, res) => {
     }
 
     const promptContent = buildHistoricalInsightPrompt({ symbol, exchange, interval, candles, indicatorSeries })
-    const result = await analyzeWithAI(promptContent, getAzureConfig())
+    let result
+    try {
+      result = await analyzeWithAI(promptContent, getAzureConfig())
+    } catch (error) {
+      // Previously uncaught here, so a raw axios error (e.g. a 404
+      // DeploymentNotFound from a misconfigured AZURE_OPENAI_DEPLOYMENT)
+      // fell through to the generic catch below and came back as an opaque
+      // 500 with axios's own "Request failed with status code 404" instead
+      // of Azure's actual, much more useful error message. 502 (not 500) -
+      // this route's own logic is fine, it's the upstream AI dependency
+      // that failed.
+      const azureMessage = error.response?.data?.error?.message || error.message
+      console.error('AI insight generation error:', azureMessage)
+      return res.status(502).json({ error: `AI insight failed: ${azureMessage}` })
+    }
 
     res.json({ status: 'SUCCESS', symbol, exchange, interval, ...result })
   } catch (error) {
