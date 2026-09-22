@@ -25,6 +25,7 @@ function buildInitialState() {
       tsi: { enabled: false, longPeriod: 25, shortPeriod: 13, signalPeriod: 13 },
       stochRsi: { enabled: false, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 },
       adx: { enabled: false, period: 14 },
+      rsiDivergence: { enabled: false, rsiPeriod: 14, lookback: 5 },
     },
   }
 }

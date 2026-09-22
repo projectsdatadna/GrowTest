@@ -44,6 +44,9 @@ export function parseIndicatorSpec(spec) {
     case 'ADX':
       if (nums.length !== 1) throw new Error(`ADX expects one param (period), got "${spec}"`)
       return { indicator, params: { period: nums[0] }, paramsKey }
+    case 'RSIDIV':
+      if (nums.length !== 2) throw new Error(`RSIDIV expects two params (rsiPeriod:lookback), got "${spec}"`)
+      return { indicator, params: { rsiPeriod: nums[0], lookback: nums[1] }, paramsKey }
     default:
       throw new Error(`Unsupported indicator: ${indicator}`)
   }
@@ -131,6 +134,8 @@ function computeIndicator(indicator, params, candles) {
         value: { adx: point.value.adx, pdi: point.value.pdi, mdi: point.value.mdi },
       }))
     }
+    case 'RSIDIV':
+      return computeRsiDivergence(candles, { rsiPeriod: params.rsiPeriod, lookback: params.lookback })
     default:
       throw new Error(`Unsupported indicator: ${indicator}`)
   }
@@ -173,13 +178,28 @@ function computeTSI(candles, { longPeriod, shortPeriod, signalPeriod }) {
   }))
 }
 
+// Fractal swing-point detection shared by computeSupportResistance and
+// computeRsiDivergence below - bar i is a swing high if its high is the max
+// among the `lookback` bars on either side (swing low is the symmetric case
+// on lows). Returns raw, unclustered swing points with their candle index
+// (needed by computeRsiDivergence to look up the RSI value at that same
+// bar) alongside timestamp/price.
+function findSwingPoints(candles, lookback) {
+  const highs = []
+  const lows = []
+  for (let i = lookback; i < candles.length - lookback; i++) {
+    const window = candles.slice(i - lookback, i + lookback + 1)
+    if (window.every((c) => candles[i].high >= c.high)) highs.push({ index: i, price: candles[i].high, timestamp: candles[i].timestamp })
+    if (window.every((c) => candles[i].low <= c.low)) lows.push({ index: i, price: candles[i].low, timestamp: candles[i].timestamp })
+  }
+  return { highs, lows }
+}
+
 // Scripted (non-AI) Support/Resistance via swing-point clustering:
-// 1. Fractal swing detection - bar i is a swing high if its high is the max
-//    among the `lookback` bars on either side (swing low is the symmetric
-//    case on lows). Unlike every other indicator here, the output isn't a
-//    per-candle-aligned series - swing points are scattered wherever they
-//    occurred, not a fixed-offset suffix of `candles` - so this bypasses
-//    alignToTimestamps entirely.
+// 1. Fractal swing detection (findSwingPoints above). Unlike every other
+//    indicator here, the output isn't a per-candle-aligned series - swing
+//    points are scattered wherever they occurred, not a fixed-offset suffix
+//    of `candles` - so this bypasses alignToTimestamps entirely.
 // 2. Cluster nearby levels - sort swing prices, greedily merge any price
 //    within mergeTolerancePct% of the running cluster's average into that
 //    cluster, tracking touch count and most recent timestamp.
@@ -189,12 +209,8 @@ function computeTSI(candles, { longPeriod, shortPeriod, signalPeriod }) {
 function computeSupportResistance(candles, { lookback = 5, mergeTolerancePct = 0.5, maxLevels = 6 } = {}) {
   if (candles.length < lookback * 2 + 1) return []
 
-  const swings = []
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const window = candles.slice(i - lookback, i + lookback + 1)
-    if (window.every((c) => candles[i].high >= c.high)) swings.push({ price: candles[i].high, timestamp: candles[i].timestamp })
-    if (window.every((c) => candles[i].low <= c.low)) swings.push({ price: candles[i].low, timestamp: candles[i].timestamp })
-  }
+  const { highs, lows } = findSwingPoints(candles, lookback)
+  const swings = [...highs, ...lows]
   if (swings.length === 0) return []
 
   const sorted = [...swings].sort((a, b) => a.price - b.price)
@@ -222,6 +238,82 @@ function computeSupportResistance(candles, { lookback = 5, mergeTolerancePct = 0
   const support = ranked.filter((r) => r.value.type === 'support').slice(0, maxLevels)
   const resistance = ranked.filter((r) => r.value.type === 'resistance').slice(0, maxLevels)
   return [...support, ...resistance].sort((a, b) => a.timestamp - b.timestamp)
+}
+
+// RSI Divergence (regular bullish/bearish only - not the "hidden"
+// continuation variant): compares PRICE swing points (findSwingPoints
+// above, shared with Support/Resistance) against the RSI value at those
+// same bars, only across CONSECUTIVE swings of the same type (not every
+// pair - same complexity level computeSupportResistance already uses, and
+// how most real-world implementations scope this):
+// - Bearish (negative): a later swing HIGH with a higher price than the
+//   previous swing high, but a LOWER RSI - price making a higher high
+//   while momentum weakens, a classic early reversal-down signal.
+// - Bullish (positive): a later swing LOW with a lower price than the
+//   previous swing low, but a HIGHER RSI - price making a lower low while
+//   momentum firms up, a classic early reversal-up signal.
+// Depends on RSI as an input (unlike every other indicator here, which
+// only needs `candles`) - computed internally via the same RSI.calculate
+// call the plain 'RSI' case above already makes, rather than changing
+// ensureIndicatorFresh's signature to accept a second indicator's output.
+function computeRsiDivergence(candles, { rsiPeriod, lookback }) {
+  const closes = candles.map((c) => c.close)
+  const rsiValues = RSI.calculate({ period: rsiPeriod, values: closes })
+  const rsiOffset = candles.length - rsiValues.length
+
+  const rsiAtIndex = (candleIndex) => {
+    const rsiIndex = candleIndex - rsiOffset
+    return rsiIndex >= 0 && rsiIndex < rsiValues.length ? rsiValues[rsiIndex] : null
+  }
+
+  const { highs, lows } = findSwingPoints(candles, lookback)
+  const events = []
+
+  for (let i = 1; i < highs.length; i++) {
+    const prev = highs[i - 1]
+    const curr = highs[i]
+    const prevRsi = rsiAtIndex(prev.index)
+    const currRsi = rsiAtIndex(curr.index)
+    if (prevRsi == null || currRsi == null) continue
+    if (curr.price > prev.price && currRsi < prevRsi) {
+      events.push({
+        timestamp: curr.timestamp,
+        value: {
+          type: 'bearish',
+          startTimestamp: prev.timestamp,
+          startPrice: prev.price,
+          startRsi: prevRsi,
+          endTimestamp: curr.timestamp,
+          endPrice: curr.price,
+          endRsi: currRsi,
+        },
+      })
+    }
+  }
+
+  for (let i = 1; i < lows.length; i++) {
+    const prev = lows[i - 1]
+    const curr = lows[i]
+    const prevRsi = rsiAtIndex(prev.index)
+    const currRsi = rsiAtIndex(curr.index)
+    if (prevRsi == null || currRsi == null) continue
+    if (curr.price < prev.price && currRsi > prevRsi) {
+      events.push({
+        timestamp: curr.timestamp,
+        value: {
+          type: 'bullish',
+          startTimestamp: prev.timestamp,
+          startPrice: prev.price,
+          startRsi: prevRsi,
+          endTimestamp: curr.timestamp,
+          endPrice: curr.price,
+          endRsi: currRsi,
+        },
+      })
+    }
+  }
+
+  return events.sort((a, b) => a.timestamp - b.timestamp)
 }
 
 /**

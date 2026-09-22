@@ -187,7 +187,7 @@ values) plus a **one-time CI auth setup**:
      roles/artifactregistry.admin roles/storage.admin \
      roles/secretmanager.admin roles/serviceusage.serviceUsageAdmin \
      roles/firebasehosting.admin roles/cloudscheduler.admin \
-     roles/datastore.owner; do
+     roles/datastore.owner roles/cloudtasks.admin; do
      gcloud projects add-iam-policy-binding dev-cogniglob \
        --member="serviceAccount:$SA" --role="$ROLE" --condition=None
    done
@@ -208,7 +208,15 @@ values) plus a **one-time CI auth setup**:
    permission cloudscheduler.jobs.update`; `datastore.owner` covers the
    dedicated `groww-dashboard` Firestore database, since Firestore's IAM
    surface is still under the `datastore.*` permission namespace regardless
-   of Native vs Datastore mode.)
+   of Native vs Datastore mode; `cloudtasks.admin` is needed the moment any
+   function uses `onTaskDispatched` (`firebase-functions/v2/tasks`) — e.g.
+   `historicalWatchlistFetchTask` — for the same reason as
+   `cloudscheduler.admin` above: deploy provisions/updates that function's
+   backing Cloud Tasks queue directly, without it the queue step fails with
+   `403: lacks IAM permission cloudtasks.queues.get` (confirmed live - this
+   role was missing when `historicalWatchlistFetchTask` was first added,
+   and every OTHER function in the same deploy still succeeded - only the
+   one needing a Cloud Tasks queue failed).
 2. Add the contents of `key.json` as a GitHub Actions secret named
    `FIREBASE_SERVICE_ACCOUNT_DEV_COGNIGLOB` on this repo (Settings → Secrets
    and variables → Actions → New repository secret, or `gh secret set

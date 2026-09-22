@@ -1,12 +1,12 @@
 /**
  * OHLC price chart (Plotly's `ohlc` trace type, per
- * plotly.com/javascript/ohlc-charts/). SMA/EMA/Bollinger Bands and
- * Support/Resistance levels overlay directly on the price panel (same price
- * units); RSI, MACD, TSI, Stoch RSI, and ADX each get their own stacked row
- * below (oscillators, not price-unit values, so they can't overlay). All
- * rows share Plotly's single default x-axis, so drag-to-zoom/pan stays in
- * sync across every visible row for free (no manual chart-sync code needed,
- * unlike a multi-instance charting library).
+ * plotly.com/javascript/ohlc-charts/). SMA/EMA/Bollinger Bands,
+ * Support/Resistance levels, and RSI Divergence lines overlay directly on
+ * the price panel (same price units); RSI, MACD, TSI, Stoch RSI, and ADX
+ * each get their own stacked row below (oscillators, not price-unit values,
+ * so they can't overlay). All rows share Plotly's single default x-axis, so
+ * drag-to-zoom/pan stays in sync across every visible row for free (no
+ * manual chart-sync code needed, unlike a multi-instance charting library).
  */
 import { useMemo } from 'react'
 import createPlotlyComponent from 'react-plotly.js/factory'
@@ -155,6 +155,64 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig 
       traces.push({ type: 'scatter', mode: 'lines', name: 'BB Upper', x, y: points.map((p) => p.value?.upper), line: { color: COLOR_BB_BAND, width: 1 }, xaxis: 'x', yaxis: 'y' })
       traces.push({ type: 'scatter', mode: 'lines', name: 'BB Lower', x, y: points.map((p) => p.value?.lower), line: { color: COLOR_BB_BAND, width: 1 }, fill: 'tonexty', fillcolor: 'rgba(143,111,255,0.12)', xaxis: 'x', yaxis: 'y' })
       traces.push({ type: 'scatter', mode: 'lines', name: 'BB Middle', x, y: points.map((p) => p.value?.middle), line: { color: COLOR_BB_MIDDLE, width: 1, dash: 'dash' }, xaxis: 'x', yaxis: 'y' })
+    }
+
+    if (indicatorConfig.rsiDivergence.enabled) {
+      const { rsiPeriod, lookback } = indicatorConfig.rsiDivergence
+      const events = indicatorSeries[`RSIDIV:${rsiPeriod}:${lookback}`] || []
+      // Only draws the matching line on the RSI oscillator panel when that
+      // row is ALSO currently active - divergence computes its own RSI
+      // internally (functions/technicalIndicators.js) so it doesn't need
+      // the RSI row to be enabled, but the second line is only meaningful
+      // (and only has a panel to draw on) when RSI is visible too.
+      const rsiYAxis = showRsi ? yAxisKeyFor('rsi') : null
+      let shownBullishLegend = false
+      let shownBearishLegend = false
+
+      for (const event of events) {
+        const { type, startTimestamp, startPrice, endTimestamp, endPrice, startRsi, endRsi } = event.value
+        const isBullish = type === 'bullish'
+        const color = isBullish ? COLOR_SUPPORT : COLOR_RESISTANCE
+        const showLegend = isBullish ? !shownBullishLegend : !shownBearishLegend
+        if (isBullish) shownBullishLegend = true
+        else shownBearishLegend = true
+
+        // A plain 2-point line+marker trace (not a paper-referenced shape
+        // like Support/Resistance uses) - this needs real data-coordinate
+        // endpoints with visible markers, which a trace gives for free.
+        // legendgroup ties the price-panel and RSI-panel copies of the same
+        // event together so toggling the one visible legend entry hides
+        // both at once.
+        traces.push({
+          type: 'scatter',
+          mode: 'lines+markers',
+          name: isBullish ? 'Bullish Divergence' : 'Bearish Divergence',
+          x: [toPlotlyDate(startTimestamp), toPlotlyDate(endTimestamp)],
+          y: [startPrice, endPrice],
+          line: { color, width: 2 },
+          marker: { color, size: 6 },
+          showlegend: showLegend,
+          legendgroup: type,
+          xaxis: 'x',
+          yaxis: 'y',
+        })
+
+        if (rsiYAxis) {
+          traces.push({
+            type: 'scatter',
+            mode: 'lines+markers',
+            name: isBullish ? 'Bullish Divergence' : 'Bearish Divergence',
+            x: [toPlotlyDate(startTimestamp), toPlotlyDate(endTimestamp)],
+            y: [startRsi, endRsi],
+            line: { color, width: 2 },
+            marker: { color, size: 6 },
+            showlegend: false,
+            legendgroup: type,
+            xaxis: 'x',
+            yaxis: rsiYAxis,
+          })
+        }
+      }
     }
 
     const layoutAxes = {

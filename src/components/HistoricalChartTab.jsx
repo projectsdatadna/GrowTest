@@ -138,6 +138,7 @@ const INDICATOR_ROWS = [
     ],
   },
   { key: 'adx', label: 'ADX', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'rsiDivergence', label: 'RSI Divergence', fields: [{ name: 'rsiPeriod', label: 'RSI' }, { name: 'lookback', label: 'Lookback' }] },
 ]
 
 function buildIndicatorSpecs(indicatorConfig) {
@@ -154,6 +155,7 @@ function buildIndicatorSpecs(indicatorConfig) {
     specs.push(`STOCHRSI:${rsiPeriod}:${stochasticPeriod}:${kPeriod}:${dPeriod}`)
   }
   if (indicatorConfig.adx.enabled) specs.push(`ADX:${indicatorConfig.adx.period}`)
+  if (indicatorConfig.rsiDivergence.enabled) specs.push(`RSIDIV:${indicatorConfig.rsiDivergence.rsiPeriod}:${indicatorConfig.rsiDivergence.lookback}`)
   return specs
 }
 
@@ -259,6 +261,56 @@ function AiInsightCard({ insight }) {
             ))}
           </ul>
         </div>
+      )}
+    </div>
+  )
+}
+
+function formatDivergenceDate(timestampSeconds) {
+  return new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }).format(
+    new Date(timestampSeconds * 1000)
+  )
+}
+
+// One row per detected event - drives both the price-panel lines
+// (HistoricalCandlestickChart.jsx) and this card, both reading the exact
+// same indicatorSeries['RSIDIV:...'] array so they never disagree.
+function DivergenceCard({ events }) {
+  const bullishCount = events.filter((e) => e.value.type === 'bullish').length
+  const bearishCount = events.length - bullishCount
+
+  return (
+    <div className="glass-panel p-md rounded-xl flex flex-col gap-sm">
+      <div className="flex items-center justify-between flex-wrap gap-sm">
+        <h4 className="text-xs font-medium text-on-surface-variant uppercase">RSI Divergence</h4>
+        <div className="flex items-center gap-xs text-xs">
+          <span className="px-sm py-[2px] rounded-full bg-bullish/15 text-bullish font-medium">{bullishCount} Bullish</span>
+          <span className="px-sm py-[2px] rounded-full bg-bearish/15 text-bearish font-medium">{bearishCount} Bearish</span>
+        </div>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-sm text-on-surface-variant">No divergence detected over the loaded range.</p>
+      ) : (
+        <ul className="flex flex-col gap-xs">
+          {[...events].reverse().map((event, i) => {
+            const { type, startTimestamp, startPrice, startRsi, endTimestamp, endPrice, endRsi } = event.value
+            const isBullish = type === 'bullish'
+            return (
+              <li key={i} className="flex items-center justify-between gap-sm text-sm border-t border-terminal-border pt-xs first:border-t-0 first:pt-0">
+                <span className={`font-medium capitalize ${isBullish ? 'text-bullish' : 'text-bearish'}`}>{type}</span>
+                <span className="text-on-surface-variant text-xs">
+                  {formatDivergenceDate(startTimestamp)} → {formatDivergenceDate(endTimestamp)}
+                </span>
+                <span className="text-on-surface text-xs">
+                  Price {startPrice.toFixed(2)} → {endPrice.toFixed(2)}
+                </span>
+                <span className="text-on-surface text-xs">
+                  RSI {startRsi.toFixed(1)} → {endRsi.toFixed(1)}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
       )}
     </div>
   )
@@ -506,7 +558,16 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
             id={`hc-start-${instanceKey}`}
             type="datetime-local"
             value={startTime}
-            onChange={(e) => dispatch(actions.setStartTime(e.target.value))}
+            // A datetime-local input's own .value reads as '' any time the
+            // combined date+time isn't complete yet - not just on explicit
+            // clear, but constantly during normal in-place editing (typing a
+            // new segment, using the picker mid-selection). Forwarding that
+            // transient '' to Redux made startTime empty for an instant,
+            // which immediately re-triggered the mount/interval-change
+            // effect above and stomped BOTH fields with a fresh computed
+            // default - so editing the date looked like it silently reset
+            // instead of taking. Only forward a complete value.
+            onChange={(e) => e.target.value && dispatch(actions.setStartTime(e.target.value))}
             disabled={loading}
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface disabled:opacity-50"
           />
@@ -520,7 +581,9 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
             id={`hc-end-${instanceKey}`}
             type="datetime-local"
             value={endTime}
-            onChange={(e) => dispatch(actions.setEndTime(e.target.value))}
+            // See the matching comment on the Start field above - same
+            // transient-empty-value hazard, same fix.
+            onChange={(e) => e.target.value && dispatch(actions.setEndTime(e.target.value))}
             disabled={loading}
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface disabled:opacity-50"
           />
@@ -598,6 +661,12 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
 
       {aiError && <div className="glass-panel p-md rounded-xl text-sm text-error">{aiError}</div>}
       {aiInsight && <AiInsightCard insight={aiInsight} />}
+
+      {indicatorConfig.rsiDivergence.enabled && (
+        <DivergenceCard
+          events={indicatorSeries[`RSIDIV:${indicatorConfig.rsiDivergence.rsiPeriod}:${indicatorConfig.rsiDivergence.lookback}`] || []}
+        />
+      )}
 
       {!selectedSymbol && (
         <div className="glass-panel p-xl rounded-xl text-center text-on-surface-variant text-sm">Search for a symbol above to load its chart.</div>
