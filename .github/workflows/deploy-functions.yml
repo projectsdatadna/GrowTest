@@ -40,4 +40,4 @@ jobs:
         # The HTTP function is `growtestApi`, NOT `api` — dev-cogniglob already
         # has its own unrelated `api` function; naming ours the same caused a
         # real incident on the previous shared project (devgraders).
-        run: npx firebase-tools deploy --only functions:growtestApi,functions:watchlistTick,functions:watchlistCleanup --project dev-cogniglob --non-interactive
+        run: npx firebase-tools deploy --only functions:growtestApi,functions:watchlistTick,functions:watchlistCleanup,functions:historicalWatchlistDispatch,functions:historicalWatchlistFetchTask,functions:instrumentMasterSync --project dev-cogniglob --non-interactive

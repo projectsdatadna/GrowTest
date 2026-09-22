@@ -34,6 +34,18 @@ import {
 } from './functions/watchlistFirestoreClient.js'
 import { ensureCandlesFresh, parseIstDateTime } from './functions/growwHistoricalData.js'
 import { ensureIndicatorFresh } from './functions/technicalIndicators.js'
+import { buildHistoricalInsightPrompt } from './functions/historicalAiInsight.js'
+import {
+  createHistoricalWatchlistEntry,
+  listActiveHistoricalWatchlistEntries,
+  getHistoricalWatchlistEntry,
+  deactivateHistoricalWatchlistEntry,
+  listHistoricalWatchlistNotifications,
+  markHistoricalWatchlistNotificationRead,
+  markAllHistoricalWatchlistNotificationsRead,
+} from './functions/historicalWatchlistFirestoreClient.js'
+import { processDueEntry } from './functions/historicalWatchlistScheduler.js'
+import { syncInstrumentMaster, searchInstruments } from './functions/instrumentMasterSync.js'
 
 dotenv.config()
 
@@ -1122,6 +1134,192 @@ app.get('/historical-data/indicators', async (req, res) => {
     res.json({ status: 'SUCCESS', symbol, exchange, interval, series })
   } catch (error) {
     console.error('Error:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * On-demand AI insight over the historical candles/indicators for a range -
+ * reads the same Firestore-cached data the two routes above already
+ * populate rather than trusting client-supplied series (a client could send
+ * anything), builds a prompt, and calls Azure OpenAI directly - see
+ * functions/historicalAiInsight.js for the prompt itself and
+ * aiAnalysisPrompt.js's analyzeWithAI for the shared HTTP call. No
+ * persistence - this is ephemeral, on-demand only (never triggered by the
+ * historical-watchlist automation, by design - see functions/index.js's
+ * historicalWatchlistFetchTask comment for why).
+ */
+app.post('/historical-data/ai-insight', async (req, res) => {
+  try {
+    const accessToken = await getGrowwAccessToken()
+    const { symbol, exchange = 'NSE', interval = '1day', start_time, end_time, indicators } = req.body
+
+    if (!symbol) return res.status(400).json({ error: 'Missing symbol parameter' })
+    if (!start_time || !end_time) return res.status(400).json({ error: 'Missing start_time or end_time parameter' })
+
+    let rangeStart, rangeEnd
+    try {
+      rangeStart = parseIstDateTime(start_time)
+      rangeEnd = parseIstDateTime(end_time)
+    } catch (error) {
+      return res.status(400).json({ error: error.message })
+    }
+
+    let candles
+    try {
+      ;({ candles } = await ensureCandlesFresh({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token: accessToken }))
+    } catch (error) {
+      console.error('Historical data fetch error:', error.message)
+      return res.status(error.details?.status_code || 400).json(error.details || { error: error.message })
+    }
+    if (candles.length === 0) return res.status(400).json({ error: 'No candle data available for this range yet' })
+
+    const specs = (indicators || '').split(',').map((s) => s.trim()).filter(Boolean)
+    const indicatorSeries = {}
+    for (const spec of specs) {
+      try {
+        indicatorSeries[spec] = await ensureIndicatorFresh({ symbol, exchange, interval, spec, candles })
+      } catch (error) {
+        console.error(`Indicator computation error for "${spec}":`, error.message)
+      }
+    }
+
+    if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_ENDPOINT || !AZURE_OPENAI_DEPLOYMENT) {
+      return res.status(500).json({ error: 'Azure OpenAI is not configured' })
+    }
+    const promptContent = buildHistoricalInsightPrompt({ symbol, exchange, interval, candles, indicatorSeries })
+    const result = await analyzeWithAI(promptContent, {
+      apiKey: AZURE_OPENAI_API_KEY,
+      endpoint: AZURE_OPENAI_ENDPOINT,
+      deployment: AZURE_OPENAI_DEPLOYMENT,
+      apiVersion: AZURE_OPENAI_API_VERSION,
+    })
+
+    res.json({ status: 'SUCCESS', symbol, exchange, interval, ...result })
+  } catch (error) {
+    console.error('Error:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Search NSE/BSE cash-equity instruments by symbol OR company name - backs
+ * the Chart tab's symbol picker. Separate from GET /underlying-symbols
+ * above (a small curated F&O list shared by Greek Analysis/Compare too).
+ * See functions/instrumentMasterSync.js.
+ */
+app.get('/instrument-search', async (req, res) => {
+  try {
+    const results = await searchInstruments(req.query.q, 50)
+    res.json({ status: 'SUCCESS', results })
+  } catch (error) {
+    console.error('Error searching instruments:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Local-only: runs the daily instrumentMasterSync job on demand rather than
+// waiting for its 6am IST schedule (deployed-only, same as every other
+// onSchedule function in this app) - lets /instrument-search be populated
+// and tested locally.
+app.post('/instrument-master-sync', async (req, res) => {
+  try {
+    const result = await syncInstrumentMaster()
+    res.json({ status: 'SUCCESS', ...result })
+  } catch (error) {
+    console.error('Error syncing instrument master:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Historical Watchlist - tracks (symbol, exchange, interval) combinations
+ * for automated background refresh. The deployed Cloud Tasks pipeline
+ * (historicalWatchlistDispatch/historicalWatchlistFetchTask in
+ * functions/index.js) has no local equivalent - Cloud Tasks queues aren't
+ * emulated locally, same precedent as watchlistTick having no local
+ * scheduler. The manual trigger-fetch route below calls the exact same
+ * processDueEntry logic directly, bypassing the queue, so the fetch/notify
+ * behavior is still testable without deploying.
+ */
+app.post('/historical-watchlist', async (req, res) => {
+  try {
+    const { symbol, exchange, interval, indicatorSpecs } = req.body
+    if (!symbol || !exchange || !interval) {
+      return res.status(400).json({ error: 'Missing required fields', required: ['symbol', 'exchange', 'interval'] })
+    }
+    const id = await createHistoricalWatchlistEntry({ symbol, exchange, interval, indicatorSpecs })
+    res.json({ status: 'SUCCESS', id })
+  } catch (error) {
+    console.error('Error creating historical watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/historical-watchlist', async (req, res) => {
+  try {
+    const entries = await listActiveHistoricalWatchlistEntries()
+    res.json({ status: 'SUCCESS', entries })
+  } catch (error) {
+    console.error('Error listing historical watchlist entries:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.delete('/historical-watchlist/:id', async (req, res) => {
+  try {
+    await deactivateHistoricalWatchlistEntry(req.params.id)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error removing historical watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/historical-watchlist/notifications', async (req, res) => {
+  try {
+    const unreadOnly = req.query.unreadOnly === 'true'
+    const notifications = await listHistoricalWatchlistNotifications({ unreadOnly })
+    res.json({ status: 'SUCCESS', notifications })
+  } catch (error) {
+    console.error('Error listing historical watchlist notifications:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.post('/historical-watchlist/notifications/:id/read', async (req, res) => {
+  try {
+    await markHistoricalWatchlistNotificationRead(req.params.id)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error marking historical watchlist notification read:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.post('/historical-watchlist/notifications/mark-all-read', async (req, res) => {
+  try {
+    const count = await markAllHistoricalWatchlistNotificationsRead()
+    res.json({ status: 'SUCCESS', count })
+  } catch (error) {
+    console.error('Error marking all historical watchlist notifications read:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+// Local-only: directly runs processDueEntry for one entry, bypassing Cloud
+// Tasks (not emulated locally) - lets the fetch/notify logic be exercised
+// without deploying.
+app.post('/historical-watchlist/:id/trigger-fetch', async (req, res) => {
+  try {
+    const entry = await getHistoricalWatchlistEntry(req.params.id)
+    if (!entry) return res.status(404).json({ error: 'Historical watchlist entry not found' })
+
+    const accessToken = await getGrowwAccessToken()
+    await processDueEntry(entry, { groww_token: accessToken })
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error triggering historical watchlist fetch:', error.message)
     res.status(500).json({ error: error.message })
   }
 })

@@ -10,6 +10,8 @@ import cors from 'cors'
 import axios from 'axios'
 import { onRequest } from 'firebase-functions/v2/https'
 import { onSchedule } from 'firebase-functions/v2/scheduler'
+import { onTaskDispatched } from 'firebase-functions/v2/tasks'
+import { getFunctions } from 'firebase-admin/functions'
 import { defineSecret } from 'firebase-functions/params'
 import { runWatchlistTick, runWatchlistCleanup, recordGrowwAuthFailure, isWithinMarketHours } from './watchlistScheduler.js'
 import {
@@ -37,6 +39,18 @@ import {
 } from './watchlistFirestoreClient.js'
 import { ensureCandlesFresh, parseIstDateTime } from './growwHistoricalData.js'
 import { ensureIndicatorFresh } from './technicalIndicators.js'
+import { buildHistoricalInsightPrompt } from './historicalAiInsight.js'
+import {
+  createHistoricalWatchlistEntry,
+  listActiveHistoricalWatchlistEntries,
+  getHistoricalWatchlistEntry,
+  deactivateHistoricalWatchlistEntry,
+  listHistoricalWatchlistNotifications,
+  markHistoricalWatchlistNotificationRead,
+  markAllHistoricalWatchlistNotificationsRead,
+} from './historicalWatchlistFirestoreClient.js'
+import { isEntryDue, processDueEntry } from './historicalWatchlistScheduler.js'
+import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
 const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
@@ -860,6 +874,153 @@ app.get('/historical-data/indicators', async (req, res) => {
 })
 
 /**
+ * On-demand AI insight over the historical candles/indicators for a range -
+ * reads the same Firestore-cached data the two routes above already
+ * populate rather than trusting client-supplied series, builds a prompt via
+ * historicalAiInsight.js, calls Azure OpenAI via the shared analyzeWithAI.
+ * No persistence - ephemeral, on-demand only, never triggered by the
+ * historical-watchlist automation below (see historicalWatchlistFetchTask).
+ * Lives on this same growtestApi function, which already has all 4
+ * AZURE_OPENAI_* secrets bound and a 120s timeout - no function-config
+ * changes needed for this route.
+ */
+app.post('/historical-data/ai-insight', async (req, res) => {
+  try {
+    const accessToken = await getGrowwAccessToken()
+    const { symbol, exchange = 'NSE', interval = '1day', start_time, end_time, indicators } = req.body
+
+    if (!symbol) return res.status(400).json({ error: 'Missing symbol parameter' })
+    if (!start_time || !end_time) return res.status(400).json({ error: 'Missing start_time or end_time parameter' })
+
+    let rangeStart, rangeEnd
+    try {
+      rangeStart = parseIstDateTime(start_time)
+      rangeEnd = parseIstDateTime(end_time)
+    } catch (error) {
+      return res.status(400).json({ error: error.message })
+    }
+
+    let candles
+    try {
+      ;({ candles } = await ensureCandlesFresh({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token: accessToken }))
+    } catch (error) {
+      console.error('Historical data fetch error:', error.message)
+      return res.status(error.details?.status_code || 400).json(error.details || { error: error.message })
+    }
+    if (candles.length === 0) return res.status(400).json({ error: 'No candle data available for this range yet' })
+
+    const specs = (indicators || '').split(',').map((s) => s.trim()).filter(Boolean)
+    const indicatorSeries = {}
+    for (const spec of specs) {
+      try {
+        indicatorSeries[spec] = await ensureIndicatorFresh({ symbol, exchange, interval, spec, candles })
+      } catch (error) {
+        console.error(`Indicator computation error for "${spec}":`, error.message)
+      }
+    }
+
+    const promptContent = buildHistoricalInsightPrompt({ symbol, exchange, interval, candles, indicatorSeries })
+    const result = await analyzeWithAI(promptContent, getAzureConfig())
+
+    res.json({ status: 'SUCCESS', symbol, exchange, interval, ...result })
+  } catch (error) {
+    console.error('Error:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Search NSE/BSE cash-equity instruments by symbol OR company name - backs
+ * the Chart tab's symbol picker (react-select's AsyncSelect). Separate from
+ * GET /underlying-symbols above (that one stays a small curated F&O list
+ * used by Greek Analysis/Compare too - changing it risks breaking those).
+ * See instrumentMasterSync.js for where this data comes from and how it's
+ * kept fresh (daily sync from Groww's public instrument CSV).
+ */
+app.get('/instrument-search', async (req, res) => {
+  try {
+    const results = await searchInstruments(req.query.q, 50)
+    res.json({ status: 'SUCCESS', results })
+  } catch (error) {
+    console.error('Error searching instruments:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
+ * Historical Watchlist - tracks (symbol, exchange, interval) combinations
+ * for automated background refresh (see historicalWatchlistDispatch/
+ * historicalWatchlistFetchTask below) and surfaces "new data" notifications
+ * via the routes after it. Separate from the option-chain `/watchlist`
+ * above - different data domain, different collections
+ * (historicalWatchlistFirestoreClient.js).
+ */
+app.post('/historical-watchlist', async (req, res) => {
+  try {
+    const { symbol, exchange, interval, indicatorSpecs } = req.body
+    if (!symbol || !exchange || !interval) {
+      return res.status(400).json({ error: 'Missing required fields', required: ['symbol', 'exchange', 'interval'] })
+    }
+    const id = await createHistoricalWatchlistEntry({ symbol, exchange, interval, indicatorSpecs })
+    res.json({ status: 'SUCCESS', id })
+  } catch (error) {
+    console.error('Error creating historical watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/historical-watchlist', async (req, res) => {
+  try {
+    const entries = await listActiveHistoricalWatchlistEntries()
+    res.json({ status: 'SUCCESS', entries })
+  } catch (error) {
+    console.error('Error listing historical watchlist entries:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.delete('/historical-watchlist/:id', async (req, res) => {
+  try {
+    await deactivateHistoricalWatchlistEntry(req.params.id)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error removing historical watchlist entry:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.get('/historical-watchlist/notifications', async (req, res) => {
+  try {
+    const unreadOnly = req.query.unreadOnly === 'true'
+    const notifications = await listHistoricalWatchlistNotifications({ unreadOnly })
+    res.json({ status: 'SUCCESS', notifications })
+  } catch (error) {
+    console.error('Error listing historical watchlist notifications:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.post('/historical-watchlist/notifications/:id/read', async (req, res) => {
+  try {
+    await markHistoricalWatchlistNotificationRead(req.params.id)
+    res.json({ status: 'SUCCESS' })
+  } catch (error) {
+    console.error('Error marking historical watchlist notification read:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+app.post('/historical-watchlist/notifications/mark-all-read', async (req, res) => {
+  try {
+    const count = await markAllHistoricalWatchlistNotificationsRead()
+    res.json({ status: 'SUCCESS', count })
+  } catch (error) {
+    console.error('Error marking all historical watchlist notifications read:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
  * 404 handler for unmatched API routes
  */
 app.use((_, res) => {
@@ -940,5 +1101,78 @@ export const watchlistCleanup = onSchedule(
   async () => {
     const result = await runWatchlistCleanup()
     console.log('watchlistCleanup result:', JSON.stringify(result))
+  }
+)
+
+/**
+ * Historical Watchlist automation, Cloud Tasks-based (unlike watchlistTick's
+ * in-process bounded-concurrency fan-out above): this dispatcher runs every
+ * minute (the finest interval a watchlist entry can be configured with),
+ * finds entries due for a refresh (isEntryDue - drift-tolerant per-entry
+ * elapsed-time check against that entry's own interval, generalized from
+ * watchlistScheduler.js's isTierDue), and enqueues one Cloud Task per due
+ * entry rather than fetching in-process itself. Uses Firebase's native
+ * Cloud Tasks integration (onTaskDispatched below) rather than a hand-rolled
+ * gcloud-provisioned queue - the queue itself is created/updated
+ * automatically on `firebase deploy --only functions`, and the service
+ * account Cloud Tasks uses to invoke the task handler is wired up
+ * automatically too, so this needs no manual queue/IAM setup.
+ */
+export const historicalWatchlistDispatch = onSchedule(
+  { schedule: 'every 1 minutes', timeZone: 'Asia/Kolkata', timeoutSeconds: 120, memory: '256MiB' },
+  async () => {
+    const now = new Date()
+    const entries = (await listActiveHistoricalWatchlistEntries()).filter((entry) => isEntryDue(entry, now))
+    if (entries.length === 0) return
+
+    const queue = getFunctions().taskQueue('historicalWatchlistFetchTask')
+    await Promise.all(entries.map((entry) => queue.enqueue({ entryId: entry.id })))
+    console.log(`historicalWatchlistDispatch: enqueued ${entries.length} due entr${entries.length === 1 ? 'y' : 'ies'}`)
+  }
+)
+
+/**
+ * One task per due entry - `rateLimits` throttles concurrent Groww calls
+ * across all in-flight tasks (the Cloud Tasks equivalent of
+ * watchlistScheduler.js's ENTRY_CONCURRENCY constant, but enforced by the
+ * queue itself rather than in-process), and `retryConfig` gives each entry
+ * independent retries on transient failure - one failing symbol can never
+ * block or slow down any other entry's tick, unlike the shared-tick fan-out
+ * watchlistTick uses.
+ */
+export const historicalWatchlistFetchTask = onTaskDispatched(
+  {
+    retryConfig: { maxAttempts: 3, minBackoffSeconds: 30 },
+    rateLimits: { maxConcurrentDispatches: 4, maxDispatchesPerSecond: 2 },
+    timeoutSeconds: 120,
+    memory: '256MiB',
+  },
+  async (req) => {
+    const entry = await getHistoricalWatchlistEntry(req.data.entryId)
+    if (!entry || !entry.active) return
+
+    let groww_token
+    try {
+      groww_token = await getGrowwAccessToken()
+    } catch (error) {
+      console.error('historicalWatchlistFetchTask: failed to obtain Groww access token:', error.message)
+      return
+    }
+
+    await processDueEntry(entry, { groww_token })
+  }
+)
+
+/**
+ * Daily sync of the instrument master (see instrumentMasterSync.js) that
+ * backs GET /instrument-search - runs once overnight, well outside market
+ * hours, since it's a data-catalog refresh, not time-sensitive to the
+ * second.
+ */
+export const instrumentMasterSync = onSchedule(
+  { schedule: '0 6 * * *', timeZone: 'Asia/Kolkata', timeoutSeconds: 300, memory: '512MiB' },
+  async () => {
+    const result = await syncInstrumentMaster()
+    console.log('instrumentMasterSync result:', JSON.stringify(result))
   }
 )

@@ -221,4 +221,101 @@ export const getIndicatorSeries = async (symbol, { exchange = 'NSE', interval = 
   }
 }
 
+// On-demand AI insight over the historical candles/indicators for a range -
+// reads the server's own Firestore-cached data for this range, never sends
+// series data itself. `indicators` is the same comma-separated spec string
+// getIndicatorSeries takes.
+export const getHistoricalAiInsight = async (symbol, { exchange = 'NSE', interval = '1day', startTime, endTime, indicators }) => {
+  try {
+    const response = await apiClient.post('/historical-data/ai-insight', {
+      symbol,
+      exchange,
+      interval,
+      start_time: toGrowwDateTimeParam(startTime),
+      end_time: toGrowwDateTimeParam(endTime),
+      indicators,
+    })
+    return response.data
+  } catch (error) {
+    console.error('Error getting historical AI insight:', error)
+    throw error
+  }
+}
+
+// Historical Watchlist - tracks (symbol, exchange, interval) combinations
+// for automated background refresh (see functions/historicalWatchlistScheduler.js).
+// The client only ever manages the tracked list and reads notifications -
+// it never triggers a fetch itself (Cloud Tasks does that server-side).
+export const addHistoricalWatchlistEntry = async ({ symbol, exchange, interval, indicatorSpecs }) => {
+  try {
+    const response = await apiClient.post('/historical-watchlist', { symbol, exchange, interval, indicatorSpecs })
+    return response.data
+  } catch (error) {
+    console.error('Error adding historical watchlist entry:', error)
+    throw error
+  }
+}
+
+export const getHistoricalWatchlistEntries = async () => {
+  try {
+    const response = await apiClient.get('/historical-watchlist')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching historical watchlist entries:', error)
+    throw error
+  }
+}
+
+export const removeHistoricalWatchlistEntry = async (id) => {
+  try {
+    const response = await apiClient.delete(`/historical-watchlist/${id}`)
+    return response.data
+  } catch (error) {
+    console.error('Error removing historical watchlist entry:', error)
+    throw error
+  }
+}
+
+export const getHistoricalWatchlistNotifications = async (unreadOnly = false) => {
+  try {
+    const response = await apiClient.get('/historical-watchlist/notifications', { params: { unreadOnly } })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching historical watchlist notifications:', error)
+    throw error
+  }
+}
+
+export const markHistoricalWatchlistNotificationRead = async (id) => {
+  try {
+    const response = await apiClient.post(`/historical-watchlist/notifications/${id}/read`)
+    return response.data
+  } catch (error) {
+    console.error('Error marking historical watchlist notification read:', error)
+    throw error
+  }
+}
+
+export const markAllHistoricalWatchlistNotificationsRead = async () => {
+  try {
+    const response = await apiClient.post('/historical-watchlist/notifications/mark-all-read')
+    return response.data
+  } catch (error) {
+    console.error('Error marking all historical watchlist notifications read:', error)
+    throw error
+  }
+}
+
+// Search NSE/BSE cash-equity instruments by symbol OR company name (see
+// functions/instrumentMasterSync.js) - backs the Chart tab's symbol picker.
+export const searchInstruments = async (query) => {
+  try {
+    const response = await apiClient.get('/instrument-search', { params: { q: query } })
+    return response.data
+  } catch (error) {
+    console.error('Error searching instruments:', error)
+    throw error
+  }
+}
+
 export default apiClient

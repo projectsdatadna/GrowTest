@@ -61,6 +61,11 @@ const ROUTES = [
   { method: 'GET', path: '/historical-data/indicators?symbol=NIFTY&exchange=NSE&interval=1day&start_time=2026-08-01%2009:15:00&end_time=2026-09-17%2015:30:00&indicators=SMA:20,RSI:14' },
   { method: 'GET', path: '/historical-data', note: 'missing symbol -> 400' },
 
+  { method: 'GET', path: '/instrument-search?q=reliance' },
+  { method: 'GET', path: '/historical-watchlist' },
+  { method: 'GET', path: '/historical-watchlist/notifications' },
+  { method: 'GET', path: '/historical-watchlist/notifications?unreadOnly=true' },
+
   { method: 'GET', path: '/option-chain-snapshots' },
   { method: 'GET', path: `/option-chain-snapshots/${BOGUS_ID}`, ownNotFound: 'Snapshot not found' },
 
@@ -83,6 +88,16 @@ const ROUTES = [
   { method: 'POST', path: `/option-chain-snapshots/${BOGUS_ID}/regenerate-analysis`, body: {}, write: true },
   { method: 'POST', path: '/watchlist', body: {}, write: true },
   { method: 'DELETE', path: `/watchlist/${BOGUS_ID}`, write: true },
+  { method: 'POST', path: '/historical-data/ai-insight', body: {}, write: true },
+  { method: 'POST', path: '/historical-watchlist', body: {}, write: true },
+  { method: 'DELETE', path: `/historical-watchlist/${BOGUS_ID}`, write: true },
+  { method: 'POST', path: `/historical-watchlist/notifications/${BOGUS_ID}/read`, write: true },
+  { method: 'POST', path: '/historical-watchlist/notifications/mark-all-read', body: {}, write: true },
+  // /historical-watchlist/:id/trigger-fetch and /instrument-master-sync are
+  // LOCAL-ONLY dev conveniences (server.js only, no functions/index.js
+  // equivalent - Cloud Tasks/the daily sync schedule cover that server-side)
+  // - deliberately excluded from this shared table, whose whole point is
+  // flagging routes that exist in one runtime but not the other.
 ]
 
 async function request(method, path, body) {
