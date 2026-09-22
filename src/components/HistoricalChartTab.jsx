@@ -1,26 +1,27 @@
 /**
- * Historical Chart tab - lets the user search any NSE/BSE cash-equity
- * instrument by symbol OR company name (see functions/instrumentMasterSync.js)
- * plus exchange/interval, fetches OHLC candles (stored server-side in
- * Firestore, fetched from Groww only for what's missing/stale - see
- * functions/growwHistoricalData.js), then optionally computes+stores and
- * renders technical indicators alongside the price chart. Also offers an
- * on-demand AI insight over whatever's currently loaded, and lets the
- * current symbol/exchange/interval be added to the Historical Watchlist for
- * automated background refresh (functions/historicalWatchlistScheduler.js).
+ * Historical Chart tab - lets the user pick any of the same underlying
+ * symbols as the Greek Analysis tab (same source, same list - see
+ * getUnderlyingSymbols() below) plus exchange/interval, fetches OHLC
+ * candles (stored server-side in Firestore, fetched from Groww only for
+ * what's missing/stale - see functions/growwHistoricalData.js), then
+ * optionally computes+stores and renders technical indicators alongside
+ * the price chart. Also offers an on-demand AI insight over whatever's
+ * currently loaded, and lets the current symbol/exchange/interval be added
+ * to the Historical Watchlist for automated background refresh
+ * (functions/historicalWatchlistScheduler.js).
  *
  * Mounted twice (App.jsx's 'chart' and 'chart2' tabs) with different
  * `instanceKey` props so each copy keeps fully independent state - see
  * CHART_INSTANCES below and src/store/historicalChartSlice.js's factory.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import AsyncSelect from 'react-select/async'
+import Select from 'react-select'
 import {
+  getUnderlyingSymbols,
   getHistoricalCandles,
   getIndicatorSeries,
   getHistoricalAiInsight,
-  searchInstruments,
   addHistoricalWatchlistEntry,
   getHistoricalWatchlistEntries,
   removeHistoricalWatchlistEntry,
@@ -340,23 +341,19 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
   const [watchlistBusy, setWatchlistBusy] = useState(false)
   const [watchlistError, setWatchlistError] = useState('')
 
-  // Debounced (300ms) instrument search-by-symbol-or-name, backing the
-  // AsyncSelect below - avoids firing a request on every keystroke.
-  const searchTimeoutRef = useRef(null)
-  const loadSymbolOptions = useCallback((inputValue, callback) => {
-    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
-    if (!inputValue || inputValue.trim().length === 0) {
-      callback([])
-      return
-    }
-    searchTimeoutRef.current = setTimeout(() => {
-      searchInstruments(inputValue)
-        .then(({ results }) => callback((results || []).map((r) => ({ value: r.symbol, label: `${r.symbol} — ${r.name}` }))))
-        .catch((err) => {
-          console.error('Instrument search failed:', err)
-          callback([])
-        })
-    }, 300)
+  const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
+
+  // Same source/list as the Greek Analysis tab's own symbol picker - kept in
+  // sync deliberately (getUnderlyingSymbols() is the one canonical
+  // underlying-symbol list the whole app shares) rather than the broader
+  // per-instrument search this tab used briefly (functions/instrumentMasterSync.js's
+  // /instrument-search route still exists and works, just isn't used here
+  // anymore - nothing currently calls it, but it's left in place rather than
+  // torn out since removing it wasn't asked for).
+  useEffect(() => {
+    getUnderlyingSymbols()
+      .then(({ symbols }) => setUnderlyingSymbolOptions((symbols || []).map((symbol) => ({ value: symbol, label: symbol }))))
+      .catch((err) => console.error('Failed to load underlying symbols:', err))
   }, [])
 
   useEffect(() => {
@@ -515,17 +512,15 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
           <label className="text-[11px] uppercase text-on-surface-variant" htmlFor={`hc-symbol-${instanceKey}`}>
             Symbol
           </label>
-          <AsyncSelect
+          <Select
             inputId={`hc-symbol-${instanceKey}`}
             unstyled
             isClearable
             isDisabled={loading}
-            loadOptions={loadSymbolOptions}
-            defaultOptions={false}
+            options={underlyingSymbolOptions}
             value={selectedSymbol ? { value: selectedSymbol, label: selectedSymbol } : null}
             onChange={(selected) => dispatch(actions.setSelectedSymbol(selected?.value || ''))}
-            placeholder="Search symbol or company name..."
-            noOptionsMessage={({ inputValue }) => (inputValue ? 'No matches' : 'Type to search')}
+            placeholder="e.g., NIFTY"
             classNames={underlyingSymbolSelectClassNames}
             menuPortalTarget={document.body}
           />
