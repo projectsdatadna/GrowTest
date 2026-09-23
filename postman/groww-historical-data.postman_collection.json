@@ -1,0 +1,407 @@
+{
+  "info": {
+    "_postman_id": "3a4f2b94-3cef-4c6e-9d1e-0768db098133",
+    "name": "Groww Historical Data - ULTRACEMCO, VOLTAS, INDHOTEL",
+    "description": "Historical OHLC candles from Groww's current endpoint GET https://api.groww.in/v1/historical/candles for ULTRACEMCO, VOLTAS and INDHOTEL. 5 native tiers, each a single trailing-window request per symbol: 15minute/30d, 1hour/60d, 4hour/90d, 1day/180d, 1week/180d. Requires a Groww access token in the 'Groww Historical Data' environment's groww_access_token variable.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{groww_access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [],
+  "variable": [
+    {
+      "key": "groww_symbol",
+      "value": "NSE-ULTRACEMCO"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 - 15minute (30 day trailing)",
+      "description": "Native 15minute candles, trailing 30-day window computed at run time. Single call per symbol (within Groww's per-request cap). Run with Collection Runner + symbols.csv (3 iterations), or Send once per symbol manually.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const days = 30;",
+              "const pad = (n) => String(n).padStart(2, '0');",
+              "const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;",
+              "const end = new Date();",
+              "const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);",
+              "pm.variables.set('start_time', fmt(start));",
+              "pm.variables.set('end_time', fmt(end));"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get 15minute candles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-VERSION",
+                "value": "{{groww_api_version}}"
+              }
+            ],
+            "url": {
+              "raw": "{{groww_base_url}}/historical/candles?exchange=NSE&segment=CASH&groww_symbol={{groww_symbol}}&start_time={{start_time}}&end_time={{end_time}}&candle_interval=15minute",
+              "host": [
+                "{{groww_base_url}}"
+              ],
+              "path": [
+                "historical",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "exchange",
+                  "value": "NSE"
+                },
+                {
+                  "key": "segment",
+                  "value": "CASH"
+                },
+                {
+                  "key": "groww_symbol",
+                  "value": "{{groww_symbol}}"
+                },
+                {
+                  "key": "start_time",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "end_time",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "candle_interval",
+                  "value": "15minute"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2 - 1hour (60 day trailing)",
+      "description": "Native 1hour candles, trailing 60-day window computed at run time. Single call per symbol (within Groww's per-request cap). Run with Collection Runner + symbols.csv (3 iterations), or Send once per symbol manually.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const days = 60;",
+              "const pad = (n) => String(n).padStart(2, '0');",
+              "const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;",
+              "const end = new Date();",
+              "const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);",
+              "pm.variables.set('start_time', fmt(start));",
+              "pm.variables.set('end_time', fmt(end));"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get 1hour candles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-VERSION",
+                "value": "{{groww_api_version}}"
+              }
+            ],
+            "url": {
+              "raw": "{{groww_base_url}}/historical/candles?exchange=NSE&segment=CASH&groww_symbol={{groww_symbol}}&start_time={{start_time}}&end_time={{end_time}}&candle_interval=1hour",
+              "host": [
+                "{{groww_base_url}}"
+              ],
+              "path": [
+                "historical",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "exchange",
+                  "value": "NSE"
+                },
+                {
+                  "key": "segment",
+                  "value": "CASH"
+                },
+                {
+                  "key": "groww_symbol",
+                  "value": "{{groww_symbol}}"
+                },
+                {
+                  "key": "start_time",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "end_time",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "candle_interval",
+                  "value": "1hour"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3 - 4hour (90 day trailing)",
+      "description": "Native 4hour candles, trailing 90-day window computed at run time. Single call per symbol (within Groww's per-request cap). Run with Collection Runner + symbols.csv (3 iterations), or Send once per symbol manually.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const days = 90;",
+              "const pad = (n) => String(n).padStart(2, '0');",
+              "const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;",
+              "const end = new Date();",
+              "const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);",
+              "pm.variables.set('start_time', fmt(start));",
+              "pm.variables.set('end_time', fmt(end));"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get 4hour candles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-VERSION",
+                "value": "{{groww_api_version}}"
+              }
+            ],
+            "url": {
+              "raw": "{{groww_base_url}}/historical/candles?exchange=NSE&segment=CASH&groww_symbol={{groww_symbol}}&start_time={{start_time}}&end_time={{end_time}}&candle_interval=4hour",
+              "host": [
+                "{{groww_base_url}}"
+              ],
+              "path": [
+                "historical",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "exchange",
+                  "value": "NSE"
+                },
+                {
+                  "key": "segment",
+                  "value": "CASH"
+                },
+                {
+                  "key": "groww_symbol",
+                  "value": "{{groww_symbol}}"
+                },
+                {
+                  "key": "start_time",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "end_time",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "candle_interval",
+                  "value": "4hour"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4 - 1day (180 day trailing)",
+      "description": "Native 1day candles, trailing 180-day window computed at run time. Single call per symbol (within Groww's per-request cap). Run with Collection Runner + symbols.csv (3 iterations), or Send once per symbol manually.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const days = 180;",
+              "const pad = (n) => String(n).padStart(2, '0');",
+              "const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;",
+              "const end = new Date();",
+              "const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);",
+              "pm.variables.set('start_time', fmt(start));",
+              "pm.variables.set('end_time', fmt(end));"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get 1day candles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-VERSION",
+                "value": "{{groww_api_version}}"
+              }
+            ],
+            "url": {
+              "raw": "{{groww_base_url}}/historical/candles?exchange=NSE&segment=CASH&groww_symbol={{groww_symbol}}&start_time={{start_time}}&end_time={{end_time}}&candle_interval=1day",
+              "host": [
+                "{{groww_base_url}}"
+              ],
+              "path": [
+                "historical",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "exchange",
+                  "value": "NSE"
+                },
+                {
+                  "key": "segment",
+                  "value": "CASH"
+                },
+                {
+                  "key": "groww_symbol",
+                  "value": "{{groww_symbol}}"
+                },
+                {
+                  "key": "start_time",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "end_time",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "candle_interval",
+                  "value": "1day"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5 - 1week (180 day trailing)",
+      "description": "Native 1week candles, trailing 180-day window computed at run time. Single call per symbol (within Groww's per-request cap). Run with Collection Runner + symbols.csv (3 iterations), or Send once per symbol manually.",
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const days = 180;",
+              "const pad = (n) => String(n).padStart(2, '0');",
+              "const fmt = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;",
+              "const end = new Date();",
+              "const start = new Date(end.getTime() - days * 24 * 60 * 60 * 1000);",
+              "pm.variables.set('start_time', fmt(start));",
+              "pm.variables.set('end_time', fmt(end));"
+            ]
+          }
+        }
+      ],
+      "item": [
+        {
+          "name": "Get 1week candles",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-API-VERSION",
+                "value": "{{groww_api_version}}"
+              }
+            ],
+            "url": {
+              "raw": "{{groww_base_url}}/historical/candles?exchange=NSE&segment=CASH&groww_symbol={{groww_symbol}}&start_time={{start_time}}&end_time={{end_time}}&candle_interval=1week",
+              "host": [
+                "{{groww_base_url}}"
+              ],
+              "path": [
+                "historical",
+                "candles"
+              ],
+              "query": [
+                {
+                  "key": "exchange",
+                  "value": "NSE"
+                },
+                {
+                  "key": "segment",
+                  "value": "CASH"
+                },
+                {
+                  "key": "groww_symbol",
+                  "value": "{{groww_symbol}}"
+                },
+                {
+                  "key": "start_time",
+                  "value": "{{start_time}}"
+                },
+                {
+                  "key": "end_time",
+                  "value": "{{end_time}}"
+                },
+                {
+                  "key": "candle_interval",
+                  "value": "1week"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
