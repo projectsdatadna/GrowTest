@@ -103,6 +103,63 @@ function panelLabel(text, domainTop) {
 // among irrelevant selection tools.
 const MODE_BAR_BUTTONS_TO_REMOVE = ['lasso2d', 'select2d']
 
+// Shared by every crossover indicator (MACD/TSI/Stoch RSI/ADX/SMA/EMA) -
+// each computes 'bullish'/'bearish' single-point events the same way (see
+// e.g. macdCrossoverIndicator.js), so the price-panel + oscillator-panel
+// marker rendering (with legend dedup) is identical too; only which field
+// of event.value holds the oscillator-panel y-value differs, and whether
+// there's an oscillator panel at all - SMA/EMA crossovers pass
+// oscillatorYAxis: null since both their lines already overlay the price
+// panel, same as the plain SMA/EMA lines do, so there's no second panel to
+// mirror onto.
+function pushCrossoverTraces(traces, events, { oscillatorYAxis, oscillatorField, legendPrefix }) {
+  let shownBullishLegend = false
+  let shownBearishLegend = false
+
+  for (const event of events) {
+    const { type, price } = event.value
+    const isBullish = type === 'bullish'
+    const color = isBullish ? COLOR_SUPPORT : COLOR_RESISTANCE
+    const showLegend = isBullish ? !shownBullishLegend : !shownBearishLegend
+    if (isBullish) shownBullishLegend = true
+    else shownBearishLegend = true
+
+    // A circle-around-the-point marker (not a 2-point line) - a crossover
+    // is one instant in time (unlike divergence's two-swing-point line), so
+    // a hollow ring reads clearly as its own signal type against
+    // divergence's line+filled-circle markers.
+    const marker = { color, size: 10, symbol: 'circle-open-dot', line: { width: 2 } }
+
+    traces.push({
+      type: 'scatter',
+      mode: 'markers',
+      name: isBullish ? 'Bullish Crossover' : 'Bearish Crossover',
+      x: [toPlotlyDate(event.timestamp)],
+      y: [price],
+      marker,
+      showlegend: showLegend,
+      legendgroup: `${legendPrefix}-${type}`,
+      xaxis: 'x',
+      yaxis: 'y',
+    })
+
+    if (oscillatorYAxis) {
+      traces.push({
+        type: 'scatter',
+        mode: 'markers',
+        name: isBullish ? 'Bullish Crossover' : 'Bearish Crossover',
+        x: [toPlotlyDate(event.timestamp)],
+        y: [event.value[oscillatorField]],
+        marker,
+        showlegend: false,
+        legendgroup: `${legendPrefix}-${type}`,
+        xaxis: 'x',
+        yaxis: oscillatorYAxis,
+      })
+    }
+  }
+}
+
 function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig, isFullscreen = false }) {
   const { data, layout } = useMemo(() => {
     const showRsi = indicatorConfig.rsi.enabled
@@ -218,6 +275,50 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
           })
         }
       }
+    }
+
+    // Each crossover indicator computes its own underlying series
+    // internally, so none of these need their plain-indicator counterpart
+    // enabled - the second (oscillator-panel) marker is only meaningful
+    // (and only has a panel to draw on) when that counterpart is visible
+    // too, same conditional-mirror pattern RSI Divergence's rsiYAxis uses
+    // above.
+    if (indicatorConfig.macdCrossover.enabled) {
+      const { fastPeriod, slowPeriod, signalPeriod } = indicatorConfig.macdCrossover
+      const events = indicatorSeries[`MACDCROSS:${fastPeriod}:${slowPeriod}:${signalPeriod}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: showMacd ? yAxisKeyFor('macd') : null, oscillatorField: 'macd', legendPrefix: 'macdcross' })
+    }
+
+    if (indicatorConfig.tsiCrossover.enabled) {
+      const { longPeriod, shortPeriod, signalPeriod } = indicatorConfig.tsiCrossover
+      const events = indicatorSeries[`TSICROSS:${longPeriod}:${shortPeriod}:${signalPeriod}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: showTsi ? yAxisKeyFor('tsi') : null, oscillatorField: 'tsi', legendPrefix: 'tsicross' })
+    }
+
+    if (indicatorConfig.stochRsiCrossover.enabled) {
+      const { rsiPeriod, stochasticPeriod, kPeriod, dPeriod } = indicatorConfig.stochRsiCrossover
+      const events = indicatorSeries[`STOCHRSICROSS:${rsiPeriod}:${stochasticPeriod}:${kPeriod}:${dPeriod}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: showStochRsi ? yAxisKeyFor('stochRsi') : null, oscillatorField: 'k', legendPrefix: 'stochrsicross' })
+    }
+
+    if (indicatorConfig.adxCrossover.enabled) {
+      const events = indicatorSeries[`ADXCROSS:${indicatorConfig.adxCrossover.period}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: showAdx ? yAxisKeyFor('adx') : null, oscillatorField: 'pdi', legendPrefix: 'adxcross' })
+    }
+
+    // SMA/EMA crossovers overlay the price panel only (both lines are
+    // already price-scale, same as the plain SMA/EMA lines) - no
+    // oscillator panel to mirror onto, so oscillatorYAxis is always null.
+    if (indicatorConfig.smaCrossover.enabled) {
+      const { fastPeriod, slowPeriod } = indicatorConfig.smaCrossover
+      const events = indicatorSeries[`SMACROSS:${fastPeriod}:${slowPeriod}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: null, oscillatorField: null, legendPrefix: 'smacross' })
+    }
+
+    if (indicatorConfig.emaCrossover.enabled) {
+      const { fastPeriod, slowPeriod } = indicatorConfig.emaCrossover
+      const events = indicatorSeries[`EMACROSS:${fastPeriod}:${slowPeriod}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: null, oscillatorField: null, legendPrefix: 'emacross' })
     }
 
     const layoutAxes = {

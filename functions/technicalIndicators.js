@@ -7,6 +7,11 @@
 
 import { SMA, EMA, BollingerBands, RSI, MACD, ADX, StochasticRSI } from 'technicalindicators'
 import { saveIndicatorSeriesBatch } from './historicalDataFirestoreClient.js'
+import { computeMacdCrossover } from './macdCrossoverIndicator.js'
+import { computeTsiCrossover } from './tsiCrossoverIndicator.js'
+import { computeStochRsiCrossover } from './stochRsiCrossoverIndicator.js'
+import { computeAdxCrossover } from './adxCrossoverIndicator.js'
+import { computeSmaCrossover, computeEmaCrossover } from './maCrossoverIndicator.js'
 
 // "SMA:20" -> {indicator:'SMA', params:{period:20}, paramsKey:'20'}
 // "BB:20:2" -> {indicator:'BB', params:{period:20,stdDev:2}, paramsKey:'20:2'}
@@ -47,6 +52,22 @@ export function parseIndicatorSpec(spec) {
     case 'RSIDIV':
       if (nums.length !== 2) throw new Error(`RSIDIV expects two params (rsiPeriod:lookback), got "${spec}"`)
       return { indicator, params: { rsiPeriod: nums[0], lookback: nums[1] }, paramsKey }
+    case 'MACDCROSS':
+      if (nums.length !== 3) throw new Error(`MACDCROSS expects three params (fastPeriod:slowPeriod:signalPeriod), got "${spec}"`)
+      return { indicator, params: { fastPeriod: nums[0], slowPeriod: nums[1], signalPeriod: nums[2] }, paramsKey }
+    case 'TSICROSS':
+      if (nums.length !== 3) throw new Error(`TSICROSS expects three params (longPeriod:shortPeriod:signalPeriod), got "${spec}"`)
+      return { indicator, params: { longPeriod: nums[0], shortPeriod: nums[1], signalPeriod: nums[2] }, paramsKey }
+    case 'STOCHRSICROSS':
+      if (nums.length !== 4) throw new Error(`STOCHRSICROSS expects four params (rsiPeriod:stochasticPeriod:kPeriod:dPeriod), got "${spec}"`)
+      return { indicator, params: { rsiPeriod: nums[0], stochasticPeriod: nums[1], kPeriod: nums[2], dPeriod: nums[3] }, paramsKey }
+    case 'ADXCROSS':
+      if (nums.length !== 1) throw new Error(`ADXCROSS expects one param (period), got "${spec}"`)
+      return { indicator, params: { period: nums[0] }, paramsKey }
+    case 'SMACROSS':
+    case 'EMACROSS':
+      if (nums.length !== 2) throw new Error(`${indicator} expects two params (fastPeriod:slowPeriod), got "${spec}"`)
+      return { indicator, params: { fastPeriod: nums[0], slowPeriod: nums[1] }, paramsKey }
     default:
       throw new Error(`Unsupported indicator: ${indicator}`)
   }
@@ -136,6 +157,23 @@ function computeIndicator(indicator, params, candles) {
     }
     case 'RSIDIV':
       return computeRsiDivergence(candles, { rsiPeriod: params.rsiPeriod, lookback: params.lookback })
+    case 'MACDCROSS':
+      return computeMacdCrossover(candles, { fastPeriod: params.fastPeriod, slowPeriod: params.slowPeriod, signalPeriod: params.signalPeriod })
+    case 'TSICROSS':
+      return computeTsiCrossover(candles, { longPeriod: params.longPeriod, shortPeriod: params.shortPeriod, signalPeriod: params.signalPeriod })
+    case 'STOCHRSICROSS':
+      return computeStochRsiCrossover(candles, {
+        rsiPeriod: params.rsiPeriod,
+        stochasticPeriod: params.stochasticPeriod,
+        kPeriod: params.kPeriod,
+        dPeriod: params.dPeriod,
+      })
+    case 'ADXCROSS':
+      return computeAdxCrossover(candles, { period: params.period })
+    case 'SMACROSS':
+      return computeSmaCrossover(candles, { fastPeriod: params.fastPeriod, slowPeriod: params.slowPeriod })
+    case 'EMACROSS':
+      return computeEmaCrossover(candles, { fastPeriod: params.fastPeriod, slowPeriod: params.slowPeriod })
     default:
       throw new Error(`Unsupported indicator: ${indicator}`)
   }
@@ -151,7 +189,7 @@ function computeIndicator(indicator, params, candles) {
 // out the same length as each other - only the signal EMA is shorter (by
 // signalPeriod-1), padded with `null` for the gap (same technique MACD's own
 // case uses for its shorter signal leg - Firestore rejects `undefined`).
-function computeTSI(candles, { longPeriod, shortPeriod, signalPeriod }) {
+export function computeTSI(candles, { longPeriod, shortPeriod, signalPeriod }) {
   const closes = candles.map((c) => c.close)
   const momentum = []
   const absMomentum = []

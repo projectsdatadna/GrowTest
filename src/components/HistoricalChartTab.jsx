@@ -28,6 +28,7 @@ import {
   addHistoricalWatchlistEntry,
   getHistoricalWatchlistEntries,
   removeHistoricalWatchlistEntry,
+  getHistoricalWatchlistAnalysis,
 } from '../services/api'
 import { historicalChartPrimarySlice, historicalChartSecondarySlice } from '../store/index'
 import { setHistoricalWatchlistEntries } from '../store/historicalWatchlistSlice'
@@ -168,6 +169,29 @@ const INDICATOR_ROWS = [
   },
   { key: 'adx', label: 'ADX', fields: [{ name: 'period', label: 'Period' }] },
   { key: 'rsiDivergence', label: 'RSI Divergence', fields: [{ name: 'rsiPeriod', label: 'RSI' }, { name: 'lookback', label: 'Lookback' }] },
+  {
+    key: 'macdCrossover',
+    label: 'MACD Crossover',
+    fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }, { name: 'signalPeriod', label: 'Signal' }],
+  },
+  {
+    key: 'tsiCrossover',
+    label: 'TSI Crossover',
+    fields: [{ name: 'longPeriod', label: 'Long' }, { name: 'shortPeriod', label: 'Short' }, { name: 'signalPeriod', label: 'Signal' }],
+  },
+  {
+    key: 'stochRsiCrossover',
+    label: 'Stoch RSI Crossover',
+    fields: [
+      { name: 'rsiPeriod', label: 'RSI' },
+      { name: 'stochasticPeriod', label: 'Stoch' },
+      { name: 'kPeriod', label: 'K' },
+      { name: 'dPeriod', label: 'D' },
+    ],
+  },
+  { key: 'adxCrossover', label: 'ADX Crossover', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'smaCrossover', label: 'SMA Crossover', fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }] },
+  { key: 'emaCrossover', label: 'EMA Crossover', fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }] },
 ]
 
 function buildIndicatorSpecs(indicatorConfig) {
@@ -185,6 +209,21 @@ function buildIndicatorSpecs(indicatorConfig) {
   }
   if (indicatorConfig.adx.enabled) specs.push(`ADX:${indicatorConfig.adx.period}`)
   if (indicatorConfig.rsiDivergence.enabled) specs.push(`RSIDIV:${indicatorConfig.rsiDivergence.rsiPeriod}:${indicatorConfig.rsiDivergence.lookback}`)
+  if (indicatorConfig.macdCrossover.enabled) {
+    const { fastPeriod, slowPeriod, signalPeriod } = indicatorConfig.macdCrossover
+    specs.push(`MACDCROSS:${fastPeriod}:${slowPeriod}:${signalPeriod}`)
+  }
+  if (indicatorConfig.tsiCrossover.enabled) {
+    const { longPeriod, shortPeriod, signalPeriod } = indicatorConfig.tsiCrossover
+    specs.push(`TSICROSS:${longPeriod}:${shortPeriod}:${signalPeriod}`)
+  }
+  if (indicatorConfig.stochRsiCrossover.enabled) {
+    const { rsiPeriod, stochasticPeriod, kPeriod, dPeriod } = indicatorConfig.stochRsiCrossover
+    specs.push(`STOCHRSICROSS:${rsiPeriod}:${stochasticPeriod}:${kPeriod}:${dPeriod}`)
+  }
+  if (indicatorConfig.adxCrossover.enabled) specs.push(`ADXCROSS:${indicatorConfig.adxCrossover.period}`)
+  if (indicatorConfig.smaCrossover.enabled) specs.push(`SMACROSS:${indicatorConfig.smaCrossover.fastPeriod}:${indicatorConfig.smaCrossover.slowPeriod}`)
+  if (indicatorConfig.emaCrossover.enabled) specs.push(`EMACROSS:${indicatorConfig.emaCrossover.fastPeriod}:${indicatorConfig.emaCrossover.slowPeriod}`)
   return specs
 }
 
@@ -241,7 +280,7 @@ const OUTLOOK_STYLES = {
   neutral: 'bg-surface-container-highest text-on-surface-variant',
 }
 
-function AiInsightCard({ insight }) {
+function AiInsightCard({ insight, title = 'AI Insight' }) {
   const analysis = insight.parsed_analysis
   if (!analysis) {
     return (
@@ -254,7 +293,7 @@ function AiInsightCard({ insight }) {
   return (
     <div className="glass-panel p-md rounded-xl flex flex-col gap-sm">
       <div className="flex items-center justify-between flex-wrap gap-sm">
-        <h4 className="text-xs font-medium text-on-surface-variant uppercase">AI Insight</h4>
+        <h4 className="text-xs font-medium text-on-surface-variant uppercase">{title}</h4>
         <div className="flex items-center gap-xs">
           <span className={`px-sm py-[2px] rounded-full text-xs font-medium capitalize ${OUTLOOK_STYLES[analysis.outlook] || OUTLOOK_STYLES.neutral}`}>
             {analysis.outlook || 'neutral'}
@@ -301,6 +340,19 @@ function formatDivergenceDate(timestampSeconds) {
   )
 }
 
+// Same relative-time formatting as AppShell's NotificationBell - kept as a
+// small local copy rather than a new shared-utils module for one reuse.
+function timeAgo(isoString) {
+  if (!isoString) return ''
+  const diffMs = Date.now() - new Date(isoString).getTime()
+  const minutes = Math.floor(diffMs / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 // One row per detected event - drives both the price-panel lines
 // (HistoricalCandlestickChart.jsx) and this card, both reading the exact
 // same indicatorSeries['RSIDIV:...'] array so they never disagree.
@@ -345,6 +397,47 @@ function DivergenceCard({ events }) {
   )
 }
 
+// One row per detected event - drives both the price/oscillator-panel
+// markers (HistoricalCandlestickChart.jsx) and this card, both reading the
+// exact same indicatorSeries[...] array so they never disagree. Shared by
+// every crossover type (MACD/TSI/Stoch RSI/ADX/SMA/EMA) - `title` and
+// `formatDetail(value)` let each caller supply its own heading and detail
+// line (e.g. "+DI / -DI" for ADX) without duplicating this card six times.
+function CrossoverCard({ events, title, formatDetail }) {
+  const bullishCount = events.filter((e) => e.value.type === 'bullish').length
+  const bearishCount = events.length - bullishCount
+
+  return (
+    <div className="glass-panel p-md rounded-xl flex flex-col gap-sm">
+      <div className="flex items-center justify-between flex-wrap gap-sm">
+        <h4 className="text-xs font-medium text-on-surface-variant uppercase">{title}</h4>
+        <div className="flex items-center gap-xs text-xs">
+          <span className="px-sm py-[2px] rounded-full bg-bullish/15 text-bullish font-medium">{bullishCount} Bullish</span>
+          <span className="px-sm py-[2px] rounded-full bg-bearish/15 text-bearish font-medium">{bearishCount} Bearish</span>
+        </div>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-sm text-on-surface-variant">No crossover detected over the loaded range.</p>
+      ) : (
+        <ul className="flex flex-col gap-xs">
+          {[...events].reverse().map((event, i) => {
+            const { type, price } = event.value
+            const isBullish = type === 'bullish'
+            return (
+              <li key={i} className="flex items-center justify-between gap-sm text-sm border-t border-terminal-border pt-xs first:border-t-0 first:pt-0">
+                <span className={`font-medium capitalize ${isBullish ? 'text-bullish' : 'text-bearish'}`}>{type}</span>
+                <span className="text-on-surface-variant text-xs">{formatDivergenceDate(event.timestamp)}</span>
+                <span className="text-on-surface text-xs">Price {price.toFixed(2)}</span>
+                <span className="text-on-surface text-xs">{formatDetail(event.value)}</span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function HistoricalChartTab({ instanceKey = 'primary' }) {
   const { stateKey, actions } = CHART_INSTANCES[instanceKey]
   const dispatch = useDispatch()
@@ -365,6 +458,8 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
   const [aiInsight, setAiInsight] = useState(null)
   const [aiLoading, setAiLoading] = useState(false)
   const [aiError, setAiError] = useState('')
+
+  const [automatedInsight, setAutomatedInsight] = useState(null)
 
   const [watchlistBusy, setWatchlistBusy] = useState(false)
   const [watchlistError, setWatchlistError] = useState('')
@@ -514,6 +609,28 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
   }
 
   const alreadyWatched = watchlistEntries.some((e) => e.symbol === selectedSymbol && e.exchange === exchange && e.interval === interval)
+  const watchedEntry = watchlistEntries.find((e) => e.symbol === selectedSymbol && e.exchange === exchange && e.interval === interval)
+
+  // The Historical Watchlist automation (functions/historicalWatchlistScheduler.js)
+  // runs AI inference on its own schedule whenever the currently-loaded
+  // symbol/exchange/interval matches an active watchlist entry - shown via
+  // the same AiInsightCard the manual button uses, just fed by whatever
+  // that automation last stored rather than a fresh on-demand call.
+  useEffect(() => {
+    if (!watchedEntry) {
+      setAutomatedInsight(null)
+      return
+    }
+    let cancelled = false
+    getHistoricalWatchlistAnalysis(watchedEntry.id)
+      .then(({ analysis }) => {
+        if (!cancelled) setAutomatedInsight(analysis)
+      })
+      .catch((err) => console.error('Failed to load automated AI insight:', err))
+    return () => {
+      cancelled = true
+    }
+  }, [watchedEntry?.id])
 
   const handleAddToWatchlist = () => {
     if (!selectedSymbol) return
@@ -746,9 +863,73 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
       {aiError && <div className="glass-panel p-md rounded-xl text-sm text-error">{aiError}</div>}
       {aiInsight && <AiInsightCard insight={aiInsight} />}
 
+      {watchedEntry && automatedInsight && (
+        <AiInsightCard insight={automatedInsight} title={`Automated Insight · updated ${timeAgo(automatedInsight.createdAt)}`} />
+      )}
+
       {indicatorConfig.rsiDivergence.enabled && (
         <DivergenceCard
           events={indicatorSeries[`RSIDIV:${indicatorConfig.rsiDivergence.rsiPeriod}:${indicatorConfig.rsiDivergence.lookback}`] || []}
+        />
+      )}
+
+      {indicatorConfig.macdCrossover.enabled && (
+        <CrossoverCard
+          title="MACD Crossover"
+          formatDetail={(v) => `MACD ${v.macd.toFixed(2)} / Signal ${v.signal.toFixed(2)}`}
+          events={
+            indicatorSeries[
+              `MACDCROSS:${indicatorConfig.macdCrossover.fastPeriod}:${indicatorConfig.macdCrossover.slowPeriod}:${indicatorConfig.macdCrossover.signalPeriod}`
+            ] || []
+          }
+        />
+      )}
+
+      {indicatorConfig.tsiCrossover.enabled && (
+        <CrossoverCard
+          title="TSI Crossover"
+          formatDetail={(v) => `TSI ${v.tsi.toFixed(2)} / Signal ${v.signal.toFixed(2)}`}
+          events={
+            indicatorSeries[
+              `TSICROSS:${indicatorConfig.tsiCrossover.longPeriod}:${indicatorConfig.tsiCrossover.shortPeriod}:${indicatorConfig.tsiCrossover.signalPeriod}`
+            ] || []
+          }
+        />
+      )}
+
+      {indicatorConfig.stochRsiCrossover.enabled && (
+        <CrossoverCard
+          title="Stoch RSI Crossover"
+          formatDetail={(v) => `%K ${v.k.toFixed(2)} / %D ${v.d.toFixed(2)}`}
+          events={
+            indicatorSeries[
+              `STOCHRSICROSS:${indicatorConfig.stochRsiCrossover.rsiPeriod}:${indicatorConfig.stochRsiCrossover.stochasticPeriod}:${indicatorConfig.stochRsiCrossover.kPeriod}:${indicatorConfig.stochRsiCrossover.dPeriod}`
+            ] || []
+          }
+        />
+      )}
+
+      {indicatorConfig.adxCrossover.enabled && (
+        <CrossoverCard
+          title="ADX Crossover"
+          formatDetail={(v) => `+DI ${v.pdi.toFixed(2)} / -DI ${v.mdi.toFixed(2)}`}
+          events={indicatorSeries[`ADXCROSS:${indicatorConfig.adxCrossover.period}`] || []}
+        />
+      )}
+
+      {indicatorConfig.smaCrossover.enabled && (
+        <CrossoverCard
+          title="SMA Crossover"
+          formatDetail={(v) => `Fast ${v.fast.toFixed(2)} / Slow ${v.slow.toFixed(2)}`}
+          events={indicatorSeries[`SMACROSS:${indicatorConfig.smaCrossover.fastPeriod}:${indicatorConfig.smaCrossover.slowPeriod}`] || []}
+        />
+      )}
+
+      {indicatorConfig.emaCrossover.enabled && (
+        <CrossoverCard
+          title="EMA Crossover"
+          formatDetail={(v) => `Fast ${v.fast.toFixed(2)} / Slow ${v.slow.toFixed(2)}`}
+          events={indicatorSeries[`EMACROSS:${indicatorConfig.emaCrossover.fastPeriod}:${indicatorConfig.emaCrossover.slowPeriod}`] || []}
         />
       )}
 

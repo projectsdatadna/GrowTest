@@ -26,6 +26,12 @@ function buildInitialState() {
       stochRsi: { enabled: false, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 },
       adx: { enabled: false, period: 14 },
       rsiDivergence: { enabled: false, rsiPeriod: 14, lookback: 5 },
+      macdCrossover: { enabled: false, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 },
+      tsiCrossover: { enabled: false, longPeriod: 25, shortPeriod: 13, signalPeriod: 13 },
+      stochRsiCrossover: { enabled: false, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 },
+      adxCrossover: { enabled: false, period: 14 },
+      smaCrossover: { enabled: false, fastPeriod: 50, slowPeriod: 200 },
+      emaCrossover: { enabled: false, fastPeriod: 12, slowPeriod: 26 },
     },
   }
 }
