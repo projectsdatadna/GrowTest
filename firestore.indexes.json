@@ -94,6 +94,14 @@
       ]
     },
     {
+      "collectionGroup": "historicalWatchlistAnalyses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "watchlistId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "aiUsageLog",
       "queryScope": "COLLECTION",
       "fields": [

@@ -276,6 +276,19 @@ export const removeHistoricalWatchlistEntry = async (id) => {
   }
 }
 
+// Latest automated AI insight for one entry (or null if none has run yet) -
+// computed server-side on the entry's own configured interval, same prompt
+// the on-demand "AI Insight" button uses (getHistoricalAiInsight below).
+export const getHistoricalWatchlistAnalysis = async (id) => {
+  try {
+    const response = await apiClient.get(`/historical-watchlist/${id}/analysis`)
+    return response.data
+  } catch (error) {
+    console.error('Error fetching historical watchlist analysis:', error)
+    throw error
+  }
+}
+
 export const getHistoricalWatchlistNotifications = async (unreadOnly = false) => {
   try {
     const response = await apiClient.get('/historical-watchlist/notifications', { params: { unreadOnly } })

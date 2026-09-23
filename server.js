@@ -44,6 +44,7 @@ import {
   listHistoricalWatchlistNotifications,
   markHistoricalWatchlistNotificationRead,
   markAllHistoricalWatchlistNotificationsRead,
+  getLatestHistoricalWatchlistAnalysis,
 } from './functions/historicalWatchlistFirestoreClient.js'
 import { processDueEntry } from './functions/historicalWatchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './functions/instrumentMasterSync.js'
@@ -1303,6 +1304,16 @@ app.delete('/historical-watchlist/:id', async (req, res) => {
   }
 })
 
+app.get('/historical-watchlist/:id/analysis', async (req, res) => {
+  try {
+    const analysis = await getLatestHistoricalWatchlistAnalysis(req.params.id)
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    console.error('Error fetching historical watchlist analysis:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
 app.get('/historical-watchlist/notifications', async (req, res) => {
   try {
     const unreadOnly = req.query.unreadOnly === 'true'
@@ -1343,7 +1354,8 @@ app.post('/historical-watchlist/:id/trigger-fetch', async (req, res) => {
     if (!entry) return res.status(404).json({ error: 'Historical watchlist entry not found' })
 
     const accessToken = await getGrowwAccessToken()
-    await processDueEntry(entry, { groww_token: accessToken })
+    const azureConfig = { apiKey: AZURE_OPENAI_API_KEY, endpoint: AZURE_OPENAI_ENDPOINT, deployment: AZURE_OPENAI_DEPLOYMENT, apiVersion: AZURE_OPENAI_API_VERSION }
+    await processDueEntry(entry, { groww_token: accessToken, azureConfig })
     res.json({ status: 'SUCCESS' })
   } catch (error) {
     console.error('Error triggering historical watchlist fetch:', error.message)

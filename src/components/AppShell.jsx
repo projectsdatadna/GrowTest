@@ -114,7 +114,18 @@ function NotificationBell() {
                   </span>
                   <span className="text-[10px] text-on-surface-variant">{timeAgo(n.createdAt)}</span>
                 </div>
-                <div className="text-xs text-on-surface-variant">{n.newCandleCount} new candle{n.newCandleCount === 1 ? '' : 's'}</div>
+                <div className="text-xs text-on-surface-variant">
+                  {n.type === 'analysis' ? (
+                    <>
+                      AI insight: <span className={n.outlook === 'bullish' ? 'text-bullish' : n.outlook === 'bearish' ? 'text-bearish' : ''}>{n.outlook}</span>
+                      {n.summary ? ` — ${n.summary}` : ''}
+                    </>
+                  ) : (
+                    <>
+                      {n.newCandleCount} new candle{n.newCandleCount === 1 ? '' : 's'}
+                    </>
+                  )}
+                </div>
               </div>
             ))}
           </div>

@@ -49,6 +49,7 @@ import {
   listHistoricalWatchlistNotifications,
   markHistoricalWatchlistNotificationRead,
   markAllHistoricalWatchlistNotificationsRead,
+  getLatestHistoricalWatchlistAnalysis,
 } from './historicalWatchlistFirestoreClient.js'
 import { isEntryDue, processDueEntry } from './historicalWatchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
@@ -1016,6 +1017,16 @@ app.delete('/historical-watchlist/:id', async (req, res) => {
   }
 })
 
+app.get('/historical-watchlist/:id/analysis', async (req, res) => {
+  try {
+    const analysis = await getLatestHistoricalWatchlistAnalysis(req.params.id)
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    console.error('Error fetching historical watchlist analysis:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
 app.get('/historical-watchlist/notifications', async (req, res) => {
   try {
     const unreadOnly = req.query.unreadOnly === 'true'
@@ -1134,19 +1145,28 @@ export const watchlistCleanup = onSchedule(
 /**
  * Historical Watchlist automation, Cloud Tasks-based (unlike watchlistTick's
  * in-process bounded-concurrency fan-out above): this dispatcher runs every
- * minute (the finest interval a watchlist entry can be configured with),
- * finds entries due for a refresh (isEntryDue - drift-tolerant per-entry
- * elapsed-time check against that entry's own interval, generalized from
- * watchlistScheduler.js's isTierDue), and enqueues one Cloud Task per due
- * entry rather than fetching in-process itself. Uses Firebase's native
- * Cloud Tasks integration (onTaskDispatched below) rather than a hand-rolled
- * gcloud-provisioned queue - the queue itself is created/updated
- * automatically on `firebase deploy --only functions`, and the service
- * account Cloud Tasks uses to invoke the task handler is wired up
- * automatically too, so this needs no manual queue/IAM setup.
+ * 5 minutes, finds entries due for a refresh (isEntryDue - drift-tolerant
+ * per-entry elapsed-time check against that entry's own interval,
+ * generalized from watchlistScheduler.js's isTierDue), and enqueues one
+ * Cloud Task per due entry rather than fetching in-process itself. Uses
+ * Firebase's native Cloud Tasks integration (onTaskDispatched below) rather
+ * than a hand-rolled gcloud-provisioned queue - the queue itself is
+ * created/updated automatically on `firebase deploy --only functions`, and
+ * the service account Cloud Tasks uses to invoke the task handler is wired
+ * up automatically too, so this needs no manual queue/IAM setup.
+ *
+ * 5 minutes (not the historicalWatchlistScheduler.js's own finest interval,
+ * 15minute) is a deliberate compromise, not a mirror of that floor: at
+ * every 15 minutes, a 15-minute entry's worst-case actual refresh cadence
+ * would stretch toward ~30 minutes (crossing its own due threshold right
+ * after a dispatch tick means waiting nearly a full 15 minutes for the
+ * next one) - 5 minutes keeps that worst case closer to ~20 minutes while
+ * still cutting invocation count by ~80% versus the every-1-minute this
+ * replaced (most ticks are a no-op Firestore query either way - this
+ * function does no real work itself, see the doc above).
  */
 export const historicalWatchlistDispatch = onSchedule(
-  { schedule: 'every 1 minutes', timeZone: 'Asia/Kolkata', timeoutSeconds: 120, memory: '256MiB' },
+  { schedule: 'every 5 minutes', timeZone: 'Asia/Kolkata', timeoutSeconds: 120, memory: '256MiB' },
   async () => {
     const now = new Date()
     const entries = (await listActiveHistoricalWatchlistEntries()).filter((entry) => isEntryDue(entry, now))
@@ -1165,14 +1185,22 @@ export const historicalWatchlistDispatch = onSchedule(
  * queue itself rather than in-process), and `retryConfig` gives each entry
  * independent retries on transient failure - one failing symbol can never
  * block or slow down any other entry's tick, unlike the shared-tick fan-out
- * watchlistTick uses.
+ * watchlistTick uses. Declares the same Azure secrets watchlistTick does
+ * (needed now that processDueEntry also runs AI inference per entry -
+ * previously this task never touched Azure at all) and a longer timeout
+ * than the candles/indicators-only 120s used before: one AI call alone
+ * regularly takes 80-90s+ (see watchlistScheduler.js's own comment on this),
+ * on top of the candle fetch - still well under watchlistTick's 540s, which
+ * covers many entries and two AI calls each in one invocation, vs. one
+ * entry and one AI call here.
  */
 export const historicalWatchlistFetchTask = onTaskDispatched(
   {
     retryConfig: { maxAttempts: 3, minBackoffSeconds: 30 },
     rateLimits: { maxConcurrentDispatches: 4, maxDispatchesPerSecond: 2 },
-    timeoutSeconds: 120,
+    timeoutSeconds: 180,
     memory: '256MiB',
+    secrets: [AZURE_OPENAI_API_KEY_SECRET, AZURE_OPENAI_ENDPOINT_SECRET, AZURE_OPENAI_DEPLOYMENT_SECRET, AZURE_OPENAI_API_VERSION_SECRET],
   },
   async (req) => {
     const entry = await getHistoricalWatchlistEntry(req.data.entryId)
@@ -1186,7 +1214,7 @@ export const historicalWatchlistFetchTask = onTaskDispatched(
       return
     }
 
-    await processDueEntry(entry, { groww_token })
+    await processDueEntry(entry, { groww_token, azureConfig: getAzureConfig() })
   }
 )
 

@@ -25,6 +25,7 @@ const db = getFirestore(admin.app(), DATABASE_ID)
 
 const HISTORICAL_WATCHLIST_COLLECTION = 'historicalWatchlist'
 const HISTORICAL_WATCHLIST_NOTIFICATIONS_COLLECTION = 'historicalWatchlistNotifications'
+const HISTORICAL_WATCHLIST_ANALYSES_COLLECTION = 'historicalWatchlistAnalyses'
 
 function serializeDoc(doc) {
   const data = doc.data()
@@ -92,16 +93,75 @@ export async function saveHistoricalWatchlistFetchError(id, message) {
   })
 }
 
+// One doc per automated AI run for an entry - unlike the option-chain
+// Watchlist's watchlistAnalyses (wiped nightly by watchlistCleanup), these
+// persist indefinitely, same as this feature's own historicalCandles/
+// technicalIndicators already do - there's no cleanup job for the
+// Historical Watchlist at all.
+export async function saveHistoricalWatchlistAnalysis({ watchlistId, symbol, exchange, interval, parsed_analysis, raw_text, usage, candleTimestamp }) {
+  const docRef = await db.collection(HISTORICAL_WATCHLIST_ANALYSES_COLLECTION).add({
+    watchlistId,
+    symbol,
+    exchange,
+    interval,
+    parsed_analysis,
+    raw_text: raw_text || '',
+    usage: usage || null,
+    candleTimestamp,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  })
+  return docRef.id
+}
+
+export async function getLatestHistoricalWatchlistAnalysis(watchlistId) {
+  const snapshot = await db
+    .collection(HISTORICAL_WATCHLIST_ANALYSES_COLLECTION)
+    .where('watchlistId', '==', watchlistId)
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get()
+  return snapshot.empty ? null : serializeDoc(snapshot.docs[0])
+}
+
 // One row per detected data update - read by the AppShell bell icon
-// (poll-based, matching WatchlistTab's own polling convention).
+// (poll-based, matching WatchlistTab's own polling convention). `type`
+// discriminates this from createHistoricalWatchlistAnalysisNotification
+// below - a notification document predating this field simply has no
+// `type`, which NotificationBell treats as 'candles' (its original, only
+// shape), so no migration is needed for already-persisted docs.
 export async function createHistoricalWatchlistNotification({ watchlistId, symbol, exchange, interval, newCandleCount, latestCandleTimestamp }) {
   const docRef = await db.collection(HISTORICAL_WATCHLIST_NOTIFICATIONS_COLLECTION).add({
+    type: 'candles',
     watchlistId,
     symbol,
     exchange,
     interval,
     newCandleCount,
     latestCandleTimestamp,
+    read: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  })
+  return docRef.id
+}
+
+// Deliberately carries only a short outlook/summary, not the full
+// parsed_analysis blob - this is a notification, not the analysis record
+// itself (that's historicalWatchlistAnalyses above). Callers should only
+// create one of these when the outlook has actually changed since the
+// entry's previous automated run (see processDueEntry in
+// historicalWatchlistScheduler.js) - never on an entry's first-ever run
+// (nothing to compare against yet) and never when the read is unchanged,
+// the same "only notify on real new information" restraint
+// createHistoricalWatchlistNotification already applies to new candles.
+export async function createHistoricalWatchlistAnalysisNotification({ watchlistId, symbol, exchange, interval, outlook, summary }) {
+  const docRef = await db.collection(HISTORICAL_WATCHLIST_NOTIFICATIONS_COLLECTION).add({
+    type: 'analysis',
+    watchlistId,
+    symbol,
+    exchange,
+    interval,
+    outlook,
+    summary,
     read: false,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   })
