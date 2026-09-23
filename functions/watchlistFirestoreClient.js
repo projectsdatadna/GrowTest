@@ -78,7 +78,7 @@ export async function clearWatchlistFetchError(id) {
   await db.collection(WATCHLIST_COLLECTION).doc(id).update({ last_fetch_error: null })
 }
 
-// One row per 5-minute rolling fetch - the raw data source all three tiers
+// One row per 15-minute rolling fetch - the raw data source both tiers
 // read from by time-lookup via findWatchlistSnapshotNear.
 export async function saveWatchlistSnapshot({ watchlist_id, underlying_ltp, filtered_strikes }) {
   const docRef = await db.collection(WATCHLIST_SNAPSHOTS_COLLECTION).add({

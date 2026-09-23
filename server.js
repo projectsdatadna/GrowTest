@@ -1031,15 +1031,15 @@ app.delete('/watchlist/:id', async (req, res) => {
 })
 
 /**
- * Latest computed analysis for one watchlist entry's tier (5m/15m/75m) -
+ * Latest computed analysis for one watchlist entry's tier (15m/75m) -
  * the Watchlist tab polls this on that tier's own cadence; it never
  * triggers analysis itself, only reads what watchlistTick already saved.
  */
 app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
   try {
     const { id, tier } = req.params
-    if (!['5m', '15m', '75m'].includes(tier)) {
-      return res.status(400).json({ error: 'tier must be one of 5m, 15m, 75m' })
+    if (!['15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 15m, 75m' })
     }
     const [analysis, entry] = await Promise.all([getLatestWatchlistAnalysis(id, tier), getWatchlistEntry(id)])
     const response = { status: 'SUCCESS', analysis }

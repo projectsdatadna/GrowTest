@@ -53,10 +53,10 @@ export function minutesSinceMarketOpen(date = new Date()) {
 // to be processed strictly one at a time; with a Groww fetch plus two ~80-90s
 // AI calls per due tier, that scales linearly with entry count and, past
 // roughly a handful of entries, a single tick's real wall-clock duration
-// blows past both the 5-minute schedule and the 540s function timeout. A
+// blows past both the 15-minute schedule and the 540s function timeout. A
 // later-queued entry then gets processed many real minutes after earlier
 // ones despite every entry sharing the same nominal tick `now` - which is
-// exactly what produced 5m/15m/75m all resolving to the same "previous"
+// exactly what produced 15m/75m all resolving to the same "previous"
 // snapshot for entries near the end of an 11-entry watchlist. Kept
 // conservative (not "run everything at once") to avoid bursting past
 // Groww/Azure OpenAI's own concurrent-request limits - raise it if the
@@ -83,7 +83,7 @@ async function mapWithConcurrency(items, limit, mapper) {
   return results
 }
 
-const TIER_MINUTES = { '5m': 5, '15m': 15, '75m': 75 }
+const TIER_MINUTES = { '15m': 15, '75m': 75 }
 
 // A matched "previous" snapshot further than this multiple of the tier's own
 // window from its target time is rejected (findWatchlistSnapshotNear returns
@@ -91,14 +91,14 @@ const TIER_MINUTES = { '5m': 5, '15m': 15, '75m': 75 }
 // for why this doesn't reintroduce the fixed-tolerance bug it replaced.
 const PREVIOUS_SNAPSHOT_MAX_DISTANCE_MULTIPLIER = 2
 
-// Ticks are scheduled "every 5 minutes" but real-world dispatch drifts
-// (observed ~6 minutes apart in production, since each tick's own AI calls
-// take 80-90+ seconds) - so whether a 15m/75m tier is due is decided by real
-// elapsed time since that tier's own last analysis, not by assuming `now`
-// lands on an exact multiple-of-15/75 boundary since market open (that
-// modulo check silently never fired once the schedule drifted off a clean
-// 5-minute grid, so those tiers never got any data at all). A small
-// tolerance lets a tick that's due, say, 30-60s early still count.
+// Ticks are scheduled "every 15 minutes" but real-world dispatch drifts
+// (observed a minute or two late in production, since each tick's own AI
+// calls take 80-90+ seconds) - so whether the 75m tier is due is decided by
+// real elapsed time since its own last analysis, not by assuming `now` lands
+// on an exact multiple-of-75 boundary since market open (that modulo check
+// silently never fired once the schedule drifted off a clean 15-minute grid,
+// so that tier never got any data at all). A small tolerance lets a tick
+// that's due, say, 30-60s early still count.
 const TIER_DUE_TOLERANCE_MINUTES = 1
 
 async function isTierDue(watchlist_id, tier, now) {
@@ -132,13 +132,13 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
   // The previous tier report is simply whatever this tier's own last saved
   // analysis was - independent of which raw snapshot `previousDoc` above
   // happens to be. Coupling the two (finding the analysis doc whose own
-  // current_snapshot_id matched previousDoc.id) broke intermittently: 15m/75m
-  // only run occasionally, so their own historical current_snapshot_ids are
+  // current_snapshot_id matched previousDoc.id) broke intermittently: 75m
+  // only runs occasionally, so its own historical current_snapshot_ids are
   // sparse and frequently don't include whichever raw snapshot is closest in
-  // time on a given tick - and even 5m could miss if the prior tick's own
-  // analysis had failed while its raw snapshot still saved. Read here, before
-  // this tick's own saveWatchlistAnalysis call below, so it naturally returns
-  // whatever preceded this new one.
+  // time on a given tick - and even 15m (which runs every tick) could miss if
+  // the prior tick's own analysis had failed while its raw snapshot still
+  // saved. Read here, before this tick's own saveWatchlistAnalysis call
+  // below, so it naturally returns whatever preceded this new one.
   const [masterResult, summarizedResult, previousAnalysisDoc] = await Promise.all([
     analyzeWithAI(buildInstitutionalAnalysisPrompt(current, previous), azureConfig),
     analyzeWithAI(buildSummarizedRecommendationsPrompt(current, previous), azureConfig),
@@ -214,8 +214,7 @@ async function processEntry(entry, { groww_token, azureConfig }) {
     })
     const currentSnapshot = { underlying_ltp: chain.underlying_ltp, filtered_strikes: chain.filtered_strikes }
 
-    const tiersToRun = ['5m']
-    if (await isTierDue(entry.id, '15m', now)) tiersToRun.push('15m')
+    const tiersToRun = ['15m']
     if (await isTierDue(entry.id, '75m', now)) tiersToRun.push('75m')
 
     // Independent per tier (each only needs currentSnapshot, already fetched
@@ -249,12 +248,12 @@ async function processEntry(entry, { groww_token, azureConfig }) {
 }
 
 /**
- * The 5-minute tick: fetches fresh data for every active watchlist entry
- * and always runs the 5-min tier, plus the 15-min/75-min tiers whenever
- * they're due (see isTierDue) for that entry. One Groww fetch per entry
- * serves all three tiers - no redundant fetching. Entries are processed with
- * bounded concurrency (see ENTRY_CONCURRENCY) rather than one at a time, so
- * total tick duration doesn't scale linearly with watchlist size.
+ * The 15-minute tick: fetches fresh data for every active watchlist entry
+ * and always runs the 15-min tier, plus the 75-min tier whenever it's due
+ * (see isTierDue) for that entry. One Groww fetch per entry serves both
+ * tiers - no redundant fetching. Entries are processed with bounded
+ * concurrency (see ENTRY_CONCURRENCY) rather than one at a time, so total
+ * tick duration doesn't scale linearly with watchlist size.
  */
 export async function runWatchlistTick({ groww_token, azureConfig, now = new Date() }) {
   if (!isWithinMarketHours(now)) {

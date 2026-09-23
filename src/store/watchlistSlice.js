@@ -3,7 +3,7 @@ import { createSlice } from '@reduxjs/toolkit'
 const initialState = {
   entries: [],
   selectedSymbol: '',
-  selectedTier: '5m',
+  selectedTier: '15m',
   selectedPromptType: 'master_prompt',
 }
 

@@ -142,7 +142,7 @@ function GreekAnalysis() {
             type="button"
             disabled={addingToWatchlist || !formData.underlying_symbol || !formData.exchange || !formData.expiry_date || !formData.points_range}
             onClick={handleAddToWatchlist}
-            title="Track this symbol on the Watchlist tab - fetched and analyzed automatically every 5 minutes"
+            title="Track this symbol on the Watchlist tab - fetched and analyzed automatically every 15 minutes"
             className="flex items-center gap-sm px-md py-base border border-terminal-border rounded-lg hover:bg-surface-container-highest transition-all text-sm disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <span className="material-symbols-outlined">visibility</span>
@@ -259,7 +259,7 @@ function GreekAnalysis() {
         <h3 className="text-sm font-bold text-white uppercase tracking-wider">Watchlist</h3>
         {watchlistEntries.length === 0 ? (
           <p className="text-on-surface-variant text-sm">
-            No symbols tracked yet. Fill in the form above and click "Add to Watchlist" to auto-analyze it every 5 minutes on the Watchlist tab.
+            No symbols tracked yet. Fill in the form above and click "Add to Watchlist" to auto-analyze it every 15 minutes on the Watchlist tab.
           </p>
         ) : (
           <ul className="flex flex-col gap-xs">

@@ -26,7 +26,6 @@ import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, getMarke
 import { computeMarketPulse } from './marketPulseEngine'
 
 const TIERS = [
-  { key: '5m', label: '5 Minutes', pollMs: 5 * 60 * 1000 },
   { key: '15m', label: '15 Minutes', pollMs: 15 * 60 * 1000 },
   { key: '75m', label: '75 Minutes', pollMs: 75 * 60 * 1000 },
 ]
@@ -116,7 +115,11 @@ function WatchlistTab() {
         })
     }
     fetchAnalysis()
-    const tier = TIERS.find((t) => t.key === selectedTier)
+    // Falls back to TIERS[0] for a persisted selectedTier that no longer
+    // exists (e.g. the removed '5m' tier, still sitting in a returning
+    // user's redux-persist storage from before it was dropped) - otherwise
+    // this crashes on tier.pollMs below instead of just picking a valid tier.
+    const tier = TIERS.find((t) => t.key === selectedTier) || TIERS[0]
     const id = setInterval(fetchAnalysis, tier.pollMs)
     return () => {
       cancelled = true
@@ -125,7 +128,7 @@ function WatchlistTab() {
   }, [selectedEntryId, selectedTier])
 
   const selectedEntry = symbolEntries.find((e) => e.id === selectedEntryId)
-  const tierLabel = TIERS.find((t) => t.key === selectedTier)?.label || ''
+  const tierLabel = (TIERS.find((t) => t.key === selectedTier) || TIERS[0]).label
 
   const currentAnalysisField = selectedPromptType === 'summarized_recommendations' ? 'summarized_recommendations_analysis' : 'master_prompt_analysis'
   const previousAnalysisField =
@@ -167,7 +170,7 @@ function WatchlistTab() {
       <section className="flex flex-col gap-xs">
         <h2 className="text-2xl font-bold text-white">Watchlist</h2>
         <p className="text-on-surface-variant text-sm">
-          Auto-fetched and analyzed server-side every 5 minutes during market hours (9:15 AM - 3:30 PM IST). Data resets each evening.
+          Auto-fetched and analyzed server-side every 15 minutes during market hours (9:15 AM - 3:30 PM IST). Data resets each evening.
         </p>
       </section>
 

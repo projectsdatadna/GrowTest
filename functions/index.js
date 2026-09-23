@@ -766,15 +766,15 @@ app.delete('/watchlist/:id', async (req, res) => {
 })
 
 /**
- * Latest computed analysis for one watchlist entry's tier (5m/15m/75m) -
+ * Latest computed analysis for one watchlist entry's tier (15m/75m) -
  * the Watchlist tab polls this on that tier's own cadence; it never
  * triggers analysis itself, only reads what watchlistTick already saved.
  */
 app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
   try {
     const { id, tier } = req.params
-    if (!['5m', '15m', '75m'].includes(tier)) {
-      return res.status(400).json({ error: 'tier must be one of 5m, 15m, 75m' })
+    if (!['15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 15m, 75m' })
     }
     const [analysis, entry] = await Promise.all([getLatestWatchlistAnalysis(id, tier), getWatchlistEntry(id)])
     const response = { status: 'SUCCESS', analysis }
@@ -1077,15 +1077,15 @@ export const growtestApi = onRequest(
 )
 
 /**
- * Watchlist tracking - runs every 5 minutes, unattended, independent of any
+ * Watchlist tracking - runs every 15 minutes, unattended, independent of any
  * browser being open. Guards itself to 9:15-15:30 IST on trading weekdays
  * (see isWithinMarketHours) rather than trying to encode that window in the
- * cron expression itself, so it's simplest to just schedule "every 5
+ * cron expression itself, so it's simplest to just schedule "every 15
  * minutes" all day and let the function skip non-market-hours ticks.
  */
 export const watchlistTick = onSchedule(
   {
-    schedule: 'every 5 minutes',
+    schedule: 'every 15 minutes',
     timeZone: 'Asia/Kolkata',
     timeoutSeconds: 540,
     memory: '512MiB',
@@ -1099,7 +1099,7 @@ export const watchlistTick = onSchedule(
   async () => {
     // Gated here too (not just inside runWatchlistTick) so a missing/invalid
     // token doesn't get recorded as a fresh failure against every entry once
-    // per 5-minute tick around the clock outside market hours.
+    // per 15-minute tick around the clock outside market hours.
     if (!isWithinMarketHours()) {
       return
     }
