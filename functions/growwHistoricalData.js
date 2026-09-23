@@ -148,6 +148,38 @@ function fillMissingOpens(candles) {
   return candles
 }
 
+// Groww's live API has been observed returning a candle with one field
+// wildly corrupted relative to its own other three fields - e.g. a `high`
+// of 64505 on a day whose open/low/close all sat around 627-652, everything
+// else about the candle (and its neighbors) normal. Looks like a decimal-
+// point-dropped feed glitch on Groww's end (645.05 -> 64505), not anything
+// in parseGrowwCandles above, which passes these fields through untouched.
+// A single such candle blows out the whole chart's y-axis autorange,
+// squashing every other candle/indicator/crossover-marker into an
+// unreadable sliver near zero - which is what actually made crossover
+// markers look "mispositioned" (they weren't; the axis was). No real
+// single-session move on a listed equity gets anywhere near this ratio, so
+// rather than trust an implausible value, the candle is dropped entirely
+// (not clipped/fabricated) - same principle as fillMissingOpens preferring
+// "use the last known-good value" over inventing one.
+const MAX_PLAUSIBLE_INTRA_CANDLE_RATIO = 10
+
+function isPlausibleCandle(candle) {
+  const values = [candle.open, candle.high, candle.low, candle.close].filter((v) => v != null && Number.isFinite(v))
+  if (values.length === 0) return false
+  const maxV = Math.max(...values)
+  const minV = Math.min(...values)
+  return minV > 0 && maxV / minV <= MAX_PLAUSIBLE_INTRA_CANDLE_RATIO
+}
+
+function dropImplausibleCandles(candles) {
+  return candles.filter((candle) => {
+    if (isPlausibleCandle(candle)) return true
+    console.error('Dropping implausible candle (corrupt OHLC field from Groww):', JSON.stringify(candle))
+    return false
+  })
+}
+
 // Splits [rangeStart, rangeEnd] into consecutive chunks no wider than this
 // interval's MAX_SPAN_DAYS - Groww rejects a single call spanning more than
 // that with a GA001 error rather than truncating it itself.
@@ -241,13 +273,16 @@ export async function ensureCandlesFresh({ exchange, symbol, interval, rangeStar
       fetchedChunks.push(...parseGrowwCandles(response.data))
     }
 
-    const candles = fillMissingOpens(fetchedChunks)
+    const candles = fillMissingOpens(dropImplausibleCandles(fetchedChunks))
     if (candles.length > 0) {
       await saveCandlesBatch(symbol, exchange, interval, candles)
     }
     const refreshed = await listCandlesInRange(symbol, exchange, interval, rangeStartTs, rangeEndTs)
-    return { candles: refreshed }
+    return { candles: dropImplausibleCandles(refreshed) }
   }
 
-  return { candles: stored }
+  // Also filtered here (not just on the freshly-fetched path above) so a
+  // candle cached before this check existed gets scrubbed transparently on
+  // read, without a separate one-off Firestore cleanup.
+  return { candles: dropImplausibleCandles(stored) }
 }
