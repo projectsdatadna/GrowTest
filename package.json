@@ -20,11 +20,13 @@
     "express": "^4.18.2",
     "plotly.js-finance-dist-min": "^4.1.1",
     "react": "^18.2.0",
+    "react-datepicker": "^9.1.0",
     "react-dom": "^18.2.0",
     "react-plotly.js": "^2.6.0",
     "react-redux": "^9.3.0",
     "react-select": "^5.8.0",
     "redux-persist": "^6.0.0",
+    "screenfull": "^6.0.2",
     "technicalindicators": "^3.1.0"
   },
   "devDependencies": {

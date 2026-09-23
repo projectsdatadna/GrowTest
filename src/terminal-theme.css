@@ -44,3 +44,97 @@ body {
 .glow-line {
   filter: drop-shadow(0 0 4px #27d67b);
 }
+
+/* Historical Chart's Start/End react-datepicker popups - scoped under
+   .hc-datepicker-calendar/.hc-datepicker-icon (passed via calendarClassName/
+   calendarIconClassName in HistoricalChartTab.jsx, always present alongside
+   react-datepicker's own base classes on the same element) so this only
+   restyles those two pickers to match the app's dark theme instead of
+   react-datepicker's default light one. */
+.hc-datepicker-wrapper {
+  display: block;
+}
+
+/* react-datepicker reserves left padding on the input for the icon via its
+   own .react-datepicker__view-calendar-icon rule, but leaves the icon itself
+   unpositioned (no top/left) - pin it to a vertically-centered left inset
+   here. pointer-events: none lets clicks pass straight through to the input
+   underneath, which already opens the calendar on its own onClick - so
+   clicking the icon and clicking the field both resolve to the exact same
+   handler instead of needing two separate click targets kept in sync. */
+.hc-datepicker-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #c7c4d6;
+  pointer-events: none;
+}
+
+.hc-datepicker-wrapper .react-datepicker__view-calendar-icon input {
+  padding: 8px 16px 8px 34px;
+}
+
+.hc-datepicker-calendar.react-datepicker {
+  background: #0d1728;
+  border: 1px solid #243248;
+  border-radius: 12px;
+  font-family: 'Inter', sans-serif;
+  color: #e4e1ec;
+}
+
+.hc-datepicker-calendar .react-datepicker__header {
+  background: #1b1b23;
+  border-bottom: 1px solid #243248;
+  border-top-left-radius: 12px;
+  border-top-right-radius: 12px;
+}
+
+.hc-datepicker-calendar .react-datepicker__current-month,
+.hc-datepicker-calendar .react-datepicker__day-name,
+.hc-datepicker-calendar .react-datepicker-time__header {
+  color: #e4e1ec;
+}
+
+.hc-datepicker-calendar .react-datepicker__navigation-icon::before {
+  border-color: #c7c4d6;
+}
+
+.hc-datepicker-calendar .react-datepicker__day {
+  color: #e4e1ec;
+}
+
+.hc-datepicker-calendar .react-datepicker__day:hover,
+.hc-datepicker-calendar .react-datepicker__time-list-item:hover {
+  background: #2a2931 !important;
+}
+
+.hc-datepicker-calendar .react-datepicker__day--outside-month {
+  color: #918f9f;
+}
+
+.hc-datepicker-calendar .react-datepicker__day--selected,
+.hc-datepicker-calendar .react-datepicker__day--keyboard-selected,
+.hc-datepicker-calendar .react-datepicker__time-list-item--selected {
+  background: #8283ff !important;
+  color: #120094 !important;
+}
+
+.hc-datepicker-calendar .react-datepicker__day--disabled {
+  color: #464554;
+}
+
+.hc-datepicker-calendar .react-datepicker__time-container,
+.hc-datepicker-calendar .react-datepicker__time-container .react-datepicker__time {
+  background: #0d1728;
+  border-left: 1px solid #243248;
+}
+
+.hc-datepicker-calendar .react-datepicker__time-list-item {
+  color: #e4e1ec;
+}
+
+.hc-datepicker-calendar .react-datepicker__triangle::before,
+.hc-datepicker-calendar .react-datepicker__triangle::after {
+  display: none;
+}

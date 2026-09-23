@@ -17,6 +17,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import Select from 'react-select'
+import DatePicker from 'react-datepicker'
+import screenfull from 'screenfull'
+import 'react-datepicker/dist/react-datepicker.css'
 import {
   getUnderlyingSymbols,
   getHistoricalCandles,
@@ -35,6 +38,16 @@ const CHART_INSTANCES = {
   primary: { stateKey: 'historicalChartPrimary', actions: historicalChartPrimarySlice.actions },
   secondary: { stateKey: 'historicalChartSecondary', actions: historicalChartSecondarySlice.actions },
 }
+
+// Every `.glass-panel` in this app (including the filter bar these pickers
+// live in) sets backdrop-filter, which creates its own CSS stacking context.
+// Left un-portaled, react-datepicker's popup renders as a normal descendant
+// of that context and overflows below the filter bar's own box - visually
+// landing on top of the Indicators panel underneath, but PAINTED first
+// (same stack level, earlier DOM position), so that later glass-panel's own
+// stacking context covers the overflowing part of the calendar. Portaling
+// to document.body sidesteps the whole local stacking context.
+const DATEPICKER_PORTAL_ID = 'hc-datepicker-portal'
 
 const underlyingSymbolSelectClassNames = {
   control: () =>
@@ -62,11 +75,6 @@ const underlyingSymbolSelectClassNames = {
 // accepted set is a specific enum: e.g. '60minute' is rejected, the hour
 // interval is '1hour').
 const INTERVAL_OPTIONS = [
-  { value: '1minute', label: '1 Minute' },
-  { value: '2minute', label: '2 Minute' },
-  { value: '3minute', label: '3 Minute' },
-  { value: '5minute', label: '5 Minute' },
-  { value: '10minute', label: '10 Minute' },
   { value: '15minute', label: '15 Minute' },
   { value: '30minute', label: '30 Minute' },
   { value: '1hour', label: '1 Hour' },
@@ -81,11 +89,6 @@ const INTERVAL_OPTIONS = [
 // interval's own MAX_SPAN_DAYS cap (functions/growwHistoricalData.js)
 // without necessarily maxing it out.
 const DEFAULT_LOOKBACK_DAYS = {
-  '1minute': 2,
-  '2minute': 2,
-  '3minute': 2,
-  '5minute': 5,
-  '10minute': 7,
   '15minute': 7,
   '30minute': 14,
   '1hour': 30,
@@ -111,6 +114,31 @@ function formatIstForInput(date) {
   }).formatToParts(date)
   const map = Object.fromEntries(parts.map((p) => [p.type, p.value]))
   return `${map.year}-${map.month}-${map.day}T${map.hour}:${map.minute}`
+}
+
+// Rebuilds the same 'YYYY-MM-DDTHH:mm' shape from a Date the calendar picker
+// hands back, reading its LOCAL y/m/d/h/mi fields directly (no Intl/timezone
+// math, unlike formatIstForInput above). startTime/endTime are timezone-naive
+// IST wall-clock strings (see formatIstForInput's comment); a Date built from
+// one of those strings via `new Date(str)` and read back through its local
+// getters reproduces the identical string on any browser timezone, since
+// both the construction and this extraction consistently use the browser's
+// own local interpretation - no real IST conversion needed here.
+function formatPickerValue(date) {
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`
+}
+
+// Blocks typed edits to the Start/End calendar inputs while leaving calendar
+// day/time-list clicks untouched - react-datepicker's own `readOnly` prop
+// looks like the obvious fit but also disables day selection entirely (see
+// its handleSelect: `if (props.readOnly) return`), which would break the
+// picker outright. `onChangeRaw` only gates the input's native onChange (i.e.
+// actual keystrokes) - calling preventDefault() there makes handleChange
+// bail out before it parses/applies the typed text, while handleSelect
+// (calendar clicks) never checks it and keeps working normally.
+function blockTypedDateInput(event) {
+  event?.preventDefault?.()
 }
 
 function computeDefaultRange(interval) {
@@ -343,6 +371,16 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
 
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
 
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const chartPanelRef = useRef(null)
+  // Invalidates any in-flight handleFetch() response so a stale reply (a slow
+  // request superseded by a newer click, or one that resolves after unmount)
+  // never overwrites state - mirrors the `cancelled` closure flag the old
+  // auto-fetching effect used, just re-shaped for a manual click handler
+  // instead of an effect cleanup.
+  const fetchToken = useRef(0)
+  useEffect(() => () => { fetchToken.current += 1 }, [])
+
   // Same source/list as the Greek Analysis tab's own symbol picker - kept in
   // sync deliberately (getUnderlyingSymbols() is the one canonical
   // underlying-symbol list the whole app shares) rather than the broader
@@ -400,31 +438,40 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [interval, startTime, endTime])
 
+  // Candle fetching is manual now (see handleFetch below, wired to the
+  // "Fetch Data" button) - editing any filter no longer hits the API on its
+  // own. This effect only clears out the now-stale chart/error for the
+  // *previous* symbol/exchange/interval so it doesn't keep looking "live"
+  // after the user changes one of those - it never calls the API itself.
+  // Deliberately excludes startTime/endTime: adjusting the date range alone
+  // shouldn't blank the currently-displayed chart, only a Fetch click should
+  // replace it.
   useEffect(() => {
-    if (!selectedSymbol || !startTime || !endTime) {
-      setCandles([])
-      return
-    }
-    let cancelled = false
+    setCandles([])
+    setIndicatorSeries({})
+    setError('')
+  }, [selectedSymbol, exchange, interval])
+
+  const handleFetch = () => {
+    if (!selectedSymbol || !startTime || !endTime) return
+    const requestId = ++fetchToken.current
     setLoading(true)
     setError('')
     getHistoricalCandles(selectedSymbol, { exchange, interval, startTime, endTime })
       .then(({ candles: fetched }) => {
-        if (!cancelled) setCandles(fetched || [])
+        if (fetchToken.current !== requestId) return
+        setCandles(fetched || [])
       })
       .catch((err) => {
-        if (!cancelled) {
-          setError(err.response?.data?.error || err.message || 'Failed to load historical data')
-          setCandles([])
-        }
+        if (fetchToken.current !== requestId) return
+        setError(err.response?.data?.error || err.message || 'Failed to load historical data')
+        setCandles([])
       })
       .finally(() => {
-        if (!cancelled) setLoading(false)
+        if (fetchToken.current !== requestId) return
+        setLoading(false)
       })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedSymbol, exchange, interval, startTime, endTime])
+  }
 
   useEffect(() => {
     if (!selectedSymbol || candles.length === 0) {
@@ -489,6 +536,25 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
       .finally(() => setWatchlistBusy(false))
   }
 
+  // Keeps isFullscreen in sync when the browser exits fullscreen outside our
+  // own toggle button (Esc key, browser chrome) - screenfull normalizes this
+  // across browsers' prefixed fullscreenchange events into one 'change' event.
+  useEffect(() => {
+    if (!screenfull.isEnabled) return
+    const onChange = () => setIsFullscreen(screenfull.isFullscreen)
+    screenfull.on('change', onChange)
+    return () => screenfull.off('change', onChange)
+  }, [])
+
+  const handleToggleFullscreen = () => {
+    if (!screenfull.isEnabled || !chartPanelRef.current) return
+    screenfull.toggle(chartPanelRef.current)
+    // Plotly's useResizeHandler listens for the window 'resize' event, which
+    // a Fullscreen API transition doesn't always fire on its own - nudge it
+    // once the transition settles so the plot actually fills the new size.
+    window.setTimeout(() => window.dispatchEvent(new Event('resize')), 50)
+  }
+
   return (
     <div className="flex flex-col gap-lg">
       <div className="glass-panel p-md rounded-xl flex items-end gap-lg flex-wrap">
@@ -549,22 +615,25 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
           <label className="text-[11px] uppercase text-on-surface-variant" htmlFor={`hc-start-${instanceKey}`}>
             Start
           </label>
-          <input
+          <DatePicker
             id={`hc-start-${instanceKey}`}
-            type="datetime-local"
-            value={startTime}
-            // A datetime-local input's own .value reads as '' any time the
-            // combined date+time isn't complete yet - not just on explicit
-            // clear, but constantly during normal in-place editing (typing a
-            // new segment, using the picker mid-selection). Forwarding that
-            // transient '' to Redux made startTime empty for an instant,
-            // which immediately re-triggered the mount/interval-change
-            // effect above and stomped BOTH fields with a fresh computed
-            // default - so editing the date looked like it silently reset
-            // instead of taking. Only forward a complete value.
-            onChange={(e) => e.target.value && dispatch(actions.setStartTime(e.target.value))}
+            selected={startTime ? new Date(startTime) : null}
+            onChange={(date) => date && dispatch(actions.setStartTime(formatPickerValue(date)))}
+            onChangeRaw={blockTypedDateInput}
+            showTimeSelect
+            timeIntervals={15}
+            dateFormat="dd MMM yyyy, HH:mm"
+            showIcon
+            icon={<span className="material-symbols-outlined text-[16px] leading-none">calendar_month</span>}
+            calendarIconClassName="hc-datepicker-icon"
             disabled={loading}
-            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface disabled:opacity-50"
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm text-on-surface disabled:opacity-50 w-[190px] cursor-pointer"
+            wrapperClassName="hc-datepicker-wrapper"
+            popperClassName="hc-datepicker-popper"
+            calendarClassName="hc-datepicker-calendar"
+            portalId={DATEPICKER_PORTAL_ID}
+            maxDate={endTime ? new Date(endTime) : undefined}
+            autoComplete="off"
           />
         </div>
 
@@ -572,17 +641,37 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
           <label className="text-[11px] uppercase text-on-surface-variant" htmlFor={`hc-end-${instanceKey}`}>
             End
           </label>
-          <input
+          <DatePicker
             id={`hc-end-${instanceKey}`}
-            type="datetime-local"
-            value={endTime}
-            // See the matching comment on the Start field above - same
-            // transient-empty-value hazard, same fix.
-            onChange={(e) => e.target.value && dispatch(actions.setEndTime(e.target.value))}
+            selected={endTime ? new Date(endTime) : null}
+            onChange={(date) => date && dispatch(actions.setEndTime(formatPickerValue(date)))}
+            onChangeRaw={blockTypedDateInput}
+            showTimeSelect
+            timeIntervals={15}
+            dateFormat="dd MMM yyyy, HH:mm"
+            showIcon
+            icon={<span className="material-symbols-outlined text-[16px] leading-none">calendar_month</span>}
+            calendarIconClassName="hc-datepicker-icon"
             disabled={loading}
-            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface disabled:opacity-50"
+            className="bg-surface-container-low border border-terminal-border rounded-lg text-sm text-on-surface disabled:opacity-50 w-[190px] cursor-pointer"
+            wrapperClassName="hc-datepicker-wrapper"
+            popperClassName="hc-datepicker-popper"
+            calendarClassName="hc-datepicker-calendar"
+            portalId={DATEPICKER_PORTAL_ID}
+            minDate={startTime ? new Date(startTime) : undefined}
+            autoComplete="off"
           />
         </div>
+
+        <button
+          type="button"
+          onClick={handleFetch}
+          disabled={!selectedSymbol || !startTime || !endTime || loading}
+          className="px-md py-base rounded-lg text-sm bg-primary text-on-primary disabled:opacity-50 disabled:cursor-default hover:opacity-90 flex items-center gap-xs"
+        >
+          {loading ? <Spinner /> : <span className="material-symbols-outlined text-[18px] leading-none">search</span>}
+          Fetch Data
+        </button>
 
         {selectedSymbol && (
           <button
@@ -666,6 +755,9 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
       {!selectedSymbol && (
         <div className="glass-panel p-xl rounded-xl text-center text-on-surface-variant text-sm">Search for a symbol above to load its chart.</div>
       )}
+      {selectedSymbol && !loading && !error && candles.length === 0 && (
+        <div className="glass-panel p-xl rounded-xl text-center text-on-surface-variant text-sm">Click "Fetch Data" to load the chart for the selected filters.</div>
+      )}
       {selectedSymbol && loading && candles.length === 0 && (
         <div className="glass-panel p-xl rounded-xl flex items-center justify-center gap-sm text-on-surface-variant text-sm">
           <Spinner />
@@ -676,16 +768,58 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
         <div className="glass-panel p-xl rounded-xl text-center text-error text-sm">{error}</div>
       )}
       {selectedSymbol && candles.length > 0 && (
-        <div className="glass-panel p-md rounded-xl relative">
-          {(loading || indicatorsLoading) && (
-            <div className="absolute inset-0 bg-surface/40 rounded-xl flex items-start justify-center pt-xl z-10">
-              <div className="glass-panel px-md py-sm rounded-lg flex items-center gap-sm text-sm text-on-surface">
-                <Spinner />
-                {loading ? 'Refreshing chart...' : 'Updating indicators...'}
-              </div>
+        <div
+          ref={chartPanelRef}
+          className={
+            isFullscreen
+              ? 'bg-surface p-md flex flex-col gap-sm w-screen h-screen'
+              : 'glass-panel p-md rounded-xl flex flex-col gap-sm'
+          }
+        >
+          <div className="flex items-center justify-between gap-sm flex-wrap">
+            <span className="text-sm text-on-surface-variant">
+              <span className="text-on-surface font-medium">{selectedSymbol}</span> · {exchange} ·{' '}
+              {INTERVAL_OPTIONS.find((opt) => opt.value === interval)?.label || interval}
+            </span>
+            <div className="flex items-center gap-sm">
+              <button
+                type="button"
+                onClick={handleFetch}
+                disabled={loading}
+                title="Refresh"
+                aria-label="Refresh chart"
+                className="material-symbols-outlined text-[20px] leading-none text-on-surface-variant hover:text-on-surface disabled:opacity-50 cursor-pointer disabled:cursor-default"
+              >
+                refresh
+              </button>
+              <button
+                type="button"
+                onClick={handleToggleFullscreen}
+                disabled={!screenfull.isEnabled}
+                title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
+                className="material-symbols-outlined text-[20px] leading-none text-on-surface-variant hover:text-on-surface disabled:opacity-50 cursor-pointer disabled:cursor-default"
+              >
+                {isFullscreen ? 'fullscreen_exit' : 'fullscreen'}
+              </button>
             </div>
-          )}
-          <HistoricalCandlestickChart candles={candles} indicatorSeries={indicatorSeries} indicatorConfig={indicatorConfig} />
+          </div>
+          <div className={isFullscreen ? 'relative flex-1 overflow-auto' : 'relative'}>
+            {(loading || indicatorsLoading) && (
+              <div className="absolute inset-0 bg-surface/40 rounded-xl flex items-start justify-center pt-xl z-10">
+                <div className="glass-panel px-md py-sm rounded-lg flex items-center gap-sm text-sm text-on-surface">
+                  <Spinner />
+                  {loading ? 'Refreshing chart...' : 'Updating indicators...'}
+                </div>
+              </div>
+            )}
+            <HistoricalCandlestickChart
+              candles={candles}
+              indicatorSeries={indicatorSeries}
+              indicatorConfig={indicatorConfig}
+              isFullscreen={isFullscreen}
+            />
+          </div>
         </div>
       )}
     </div>

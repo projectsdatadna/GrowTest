@@ -98,7 +98,12 @@ function panelLabel(text, domainTop) {
   }
 }
 
-function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig }) {
+// Mode bar tools that don't apply to OHLC/indicator data - trimmed out so
+// zoom/pan/autoscale/download-as-PNG (the ones that do apply) aren't buried
+// among irrelevant selection tools.
+const MODE_BAR_BUTTONS_TO_REMOVE = ['lasso2d', 'select2d']
+
+function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig, isFullscreen = false }) {
   const { data, layout } = useMemo(() => {
     const showRsi = indicatorConfig.rsi.enabled
     const showMacd = indicatorConfig.macd.enabled
@@ -325,12 +330,21 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig 
       layoutAxes.shapes = [...(layoutAxes.shapes || []), ...referenceLines(yaxis, [25])]
     }
 
+    // Fullscreen wraps the plot in its own scrollable container (see
+    // HistoricalChartTab.jsx), so growing taller than one screen is fine -
+    // this just makes sure a short chart (few/no indicator panels) still
+    // fills the available viewport instead of leaving a band of empty
+    // background below it. FULLSCREEN_CHROME_PX approximates the fullscreen
+    // toolbar row + surrounding padding that sits above the plot.
+    const FULLSCREEN_CHROME_PX = 100
+    const plotHeight = isFullscreen ? Math.max(plotHeightPx + CHROME_PX, window.innerHeight - FULLSCREEN_CHROME_PX) : plotHeightPx + CHROME_PX
+
     return {
       data: traces,
       layout: {
         ...layoutAxes,
         annotations,
-        height: plotHeightPx + CHROME_PX,
+        height: plotHeight,
         autosize: true,
         margin: { l: 45, r: 20, t: 10, b: 30 },
         showlegend: true,
@@ -340,12 +354,20 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig 
         font: { color: COLOR_TEXT },
       },
     }
-  }, [candles, indicatorSeries, indicatorConfig])
+  }, [candles, indicatorSeries, indicatorConfig, isFullscreen])
 
   // No inline height here - layout.height above drives the actual size (it
   // grows as more indicator panels are enabled), autosize + useResizeHandler
   // still keep the width responsive.
-  return <Plot data={data} layout={layout} style={{ width: '100%' }} useResizeHandler config={{ displaylogo: false }} />
+  return (
+    <Plot
+      data={data}
+      layout={layout}
+      style={{ width: '100%' }}
+      useResizeHandler
+      config={{ displaylogo: false, displayModeBar: true, modeBarButtonsToRemove: MODE_BAR_BUTTONS_TO_REMOVE }}
+    />
+  )
 }
 
 // Dotted threshold reference lines (RSI's 30/70, Stoch RSI's 20/80, ADX's
