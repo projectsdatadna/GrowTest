@@ -29,6 +29,7 @@ import {
   analyzeWithAI,
   isSameInstrument,
 } from './aiAnalysisPrompt.js'
+import { logAiUsage } from './aiUsageFirestoreClient.js'
 import { fetchFilteredOptionChain } from './growwOptionChain.js'
 import {
   createWatchlistEntry,
@@ -443,7 +444,9 @@ Please provide:
 
 Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
-      const result = await analyzeWithAI(promptContent, getAzureConfig())
+      const azureConfig = getAzureConfig()
+      const result = await analyzeWithAI(promptContent, azureConfig)
+      logAiUsage({ feature: 'analyze_option_chain', usage: result.usage, model: azureConfig.deployment, metadata: { trading_symbol, underlying_symbol, exchange, expiry_date } })
       aiAnalysis = {
         status: 'SUCCESS',
         symbol: trading_symbol,
@@ -516,9 +519,11 @@ app.post('/analyze-option-chain-range', async (req, res) => {
           ? buildSummarizedRecommendationsPrompt(current, previous)
           : buildInstitutionalAnalysisPrompt(current, previous)
 
-      const result = await analyzeWithAI(promptContent, getAzureConfig())
-      parsed_analysis = result.parsed_analysis
-      raw_text = result.raw_text
+      const azureConfig = getAzureConfig()
+      const aiResult = await analyzeWithAI(promptContent, azureConfig)
+      parsed_analysis = aiResult.parsed_analysis
+      raw_text = aiResult.raw_text
+      logAiUsage({ feature: 'analyze_option_chain_range', usage: aiResult.usage, model: azureConfig.deployment, metadata: { underlying_symbol, exchange, expiry_date, prompt_type } })
     } catch (error) {
       console.error('AI Inference Error:', error.message)
       return res.status(error.response?.status || 500).json({ error: 'Failed to call AI inference', message: error.message })
@@ -597,7 +602,9 @@ Please provide:
 
 Format your response as JSON with keys: sentiment, support_level, resistance_level, strategy, risk_assessment, confidence, detail_analysis`
 
-    const result = await analyzeWithAI(promptContent, getAzureConfig())
+    const azureConfig = getAzureConfig()
+    const result = await analyzeWithAI(promptContent, azureConfig)
+    logAiUsage({ feature: 'ai_inference', usage: result.usage, model: azureConfig.deployment, metadata: { symbol, underlying_symbol, exchange, expiry_date } })
 
     return res.json({
       status: 'SUCCESS',
@@ -639,7 +646,9 @@ app.post('/compare-option-chain-snapshots', async (req, res) => {
         ? buildSummarizedRecommendationsPrompt(latest, previous)
         : buildInstitutionalAnalysisPrompt(latest, previous)
 
-    const result = await analyzeWithAI(promptContent, getAzureConfig())
+    const azureConfig = getAzureConfig()
+    const result = await analyzeWithAI(promptContent, azureConfig)
+    logAiUsage({ feature: 'compare_option_chain_snapshots', usage: result.usage, model: azureConfig.deployment, metadata: { prompt_type } })
 
     return res.json({
       status: 'SUCCESS',
@@ -702,7 +711,9 @@ app.post('/option-chain-snapshots/:id/regenerate-analysis', async (req, res) => 
       resolvedPromptType === 'summarized_recommendations'
         ? buildSummarizedRecommendationsPrompt(snapshot)
         : buildInstitutionalAnalysisPrompt(snapshot, null)
-    const { parsed_analysis, raw_text } = await analyzeWithAI(promptContent, getAzureConfig())
+    const azureConfig = getAzureConfig()
+    const { parsed_analysis, raw_text, usage } = await analyzeWithAI(promptContent, azureConfig)
+    logAiUsage({ feature: 'regenerate_snapshot_analysis', usage, model: azureConfig.deployment, metadata: { snapshot_id: req.params.id, prompt_type: resolvedPromptType } })
     await updateOptionChainSnapshotAnalysis(req.params.id, { parsed_analysis, raw_text, prompt_type: resolvedPromptType })
     res.json({ status: 'SUCCESS', snapshot: { ...snapshot, parsed_analysis, raw_text, prompt_type: resolvedPromptType } })
   } catch (error) {
@@ -920,9 +931,11 @@ app.post('/historical-data/ai-insight', async (req, res) => {
     }
 
     const promptContent = buildHistoricalInsightPrompt({ symbol, exchange, interval, candles, indicatorSeries })
+    const azureConfig = getAzureConfig()
     let result
     try {
-      result = await analyzeWithAI(promptContent, getAzureConfig())
+      result = await analyzeWithAI(promptContent, azureConfig)
+      logAiUsage({ feature: 'historical_ai_insight', usage: result.usage, model: azureConfig.deployment, metadata: { symbol, exchange, interval } })
     } catch (error) {
       // Previously uncaught here, so a raw axios error (e.g. a 404
       // DeploymentNotFound from a misconfigured AZURE_OPENAI_DEPLOYMENT)

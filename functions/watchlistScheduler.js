@@ -9,6 +9,7 @@
 
 import { fetchFilteredOptionChain } from './growwOptionChain.js'
 import { buildInstitutionalAnalysisPrompt, buildSummarizedRecommendationsPrompt, analyzeWithAI } from './aiAnalysisPrompt.js'
+import { logAiUsage } from './aiUsageFirestoreClient.js'
 import {
   listActiveWatchlistEntries,
   saveWatchlistSnapshot,
@@ -142,6 +143,11 @@ async function analyzeTier({ entry, tier, currentSnapshot, currentSnapshotId, no
     analyzeWithAI(buildInstitutionalAnalysisPrompt(current, previous), azureConfig),
     analyzeWithAI(buildSummarizedRecommendationsPrompt(current, previous), azureConfig),
     getLatestWatchlistAnalysis(entry.id, tier),
+  ])
+  const usageMetadata = { watchlist_id: entry.id, tier, underlying_symbol: entry.underlying_symbol }
+  await Promise.all([
+    logAiUsage({ feature: 'watchlist_master_prompt', usage: masterResult.usage, model: azureConfig.deployment, metadata: usageMetadata }),
+    logAiUsage({ feature: 'watchlist_summarized_recommendations', usage: summarizedResult.usage, model: azureConfig.deployment, metadata: usageMetadata }),
   ])
 
   await saveWatchlistAnalysis({

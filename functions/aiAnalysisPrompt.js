@@ -248,12 +248,18 @@ export async function analyzeWithAI(promptContent, azureConfig, { maxTokens = 40
   }
 
   const analysisText = azureResponse.data.choices[0].message.content
+  // Azure returns real token counts on every response - previously read
+  // nowhere in this codebase and silently discarded, so there was no way to
+  // ever know actual usage/cost after the fact. Purely additive: every
+  // existing caller destructures only the fields it already used, so
+  // returning this extra one breaks nothing.
+  const usage = azureResponse.data.usage || null
 
   try {
     const parsed_analysis = JSON.parse(analysisText.trim())
-    return { parsed_analysis, raw_text: '' }
+    return { parsed_analysis, raw_text: '', usage }
   } catch (parseError) {
     console.error('Error parsing AI JSON response:', parseError.message)
-    return { parsed_analysis: null, raw_text: analysisText, warnings: ['json_parse_failed'] }
+    return { parsed_analysis: null, raw_text: analysisText, warnings: ['json_parse_failed'], usage }
   }
 }

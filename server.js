@@ -24,6 +24,7 @@ import {
   analyzeWithAI,
   isSameInstrument,
 } from './functions/aiAnalysisPrompt.js'
+import { logAiUsage } from './functions/aiUsageFirestoreClient.js'
 import { fetchFilteredOptionChain } from './functions/growwOptionChain.js'
 import {
   createWatchlistEntry,
@@ -555,6 +556,11 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
       if (azureResponse.status === 200 && azureResponse.data.choices && azureResponse.data.choices.length > 0) {
         const analysisText = azureResponse.data.choices[0].message.content
         console.log('AI analysis received')
+        // This route predates analyzeWithAI (functions/aiAnalysisPrompt.js)
+        // and was never refactored to use it - calls Azure directly, so
+        // usage is logged directly from this raw response too rather than
+        // via that shared helper.
+        logAiUsage({ feature: 'analyze_option_chain', usage: azureResponse.data.usage, model: AZURE_OPENAI_DEPLOYMENT, metadata: { trading_symbol, underlying_symbol, exchange, expiry_date } })
 
         // Parse JSON from response
         let parsedAnalysis = null
@@ -687,6 +693,7 @@ app.post('/analyze-option-chain-range', async (req, res) => {
       })
       parsed_analysis = result.parsed_analysis
       raw_text = result.raw_text
+      logAiUsage({ feature: 'analyze_option_chain_range', usage: result.usage, model: AZURE_OPENAI_DEPLOYMENT, metadata: { underlying_symbol, exchange, expiry_date, prompt_type } })
     } catch (error) {
       console.error('AI Inference Error:', error.message)
       return res.status(error.response?.status || 500).json({
@@ -807,6 +814,9 @@ Format your response as JSON with keys: sentiment, support_level, resistance_lev
     if (response.status === 200 && response.data.choices && response.data.choices.length > 0) {
       const analysisText = response.data.choices[0].message.content
       console.log('AI analysis:', analysisText)
+      // This route also predates analyzeWithAI - raw axios call, same as
+      // /analyze-option-chain above.
+      logAiUsage({ feature: 'ai_inference', usage: response.data.usage, model: AZURE_OPENAI_DEPLOYMENT, metadata: { symbol, underlying_symbol, exchange, expiry_date } })
 
       // Parse JSON from response
       let parsedAnalysis = null
@@ -898,6 +908,7 @@ app.post('/compare-option-chain-snapshots', async (req, res) => {
       deployment: AZURE_OPENAI_DEPLOYMENT,
       apiVersion: AZURE_OPENAI_API_VERSION,
     })
+    logAiUsage({ feature: 'compare_option_chain_snapshots', usage: result.usage, model: AZURE_OPENAI_DEPLOYMENT, metadata: { prompt_type } })
 
     return res.json({
       status: 'SUCCESS',
@@ -960,12 +971,13 @@ app.post('/option-chain-snapshots/:id/regenerate-analysis', async (req, res) => 
       resolvedPromptType === 'summarized_recommendations'
         ? buildSummarizedRecommendationsPrompt(snapshot)
         : buildInstitutionalAnalysisPrompt(snapshot, null)
-    const { parsed_analysis, raw_text } = await analyzeWithAI(promptContent, {
+    const { parsed_analysis, raw_text, usage } = await analyzeWithAI(promptContent, {
       apiKey: AZURE_OPENAI_API_KEY,
       endpoint: AZURE_OPENAI_ENDPOINT,
       deployment: AZURE_OPENAI_DEPLOYMENT,
       apiVersion: AZURE_OPENAI_API_VERSION,
     })
+    logAiUsage({ feature: 'regenerate_snapshot_analysis', usage, model: AZURE_OPENAI_DEPLOYMENT, metadata: { snapshot_id: req.params.id, prompt_type: resolvedPromptType } })
     await updateOptionChainSnapshotAnalysis(req.params.id, { parsed_analysis, raw_text, prompt_type: resolvedPromptType })
     res.json({ status: 'SUCCESS', snapshot: { ...snapshot, parsed_analysis, raw_text, prompt_type: resolvedPromptType } })
   } catch (error) {
@@ -1196,6 +1208,7 @@ app.post('/historical-data/ai-insight', async (req, res) => {
         deployment: AZURE_OPENAI_DEPLOYMENT,
         apiVersion: AZURE_OPENAI_API_VERSION,
       })
+      logAiUsage({ feature: 'historical_ai_insight', usage: result.usage, model: AZURE_OPENAI_DEPLOYMENT, metadata: { symbol, exchange, interval } })
     } catch (error) {
       // Previously uncaught here, so a raw axios error (e.g. a 404
       // DeploymentNotFound from a misconfigured AZURE_OPENAI_DEPLOYMENT)
