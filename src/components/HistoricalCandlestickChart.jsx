@@ -50,8 +50,85 @@ const INDICATOR_HEIGHT_PX = 170
 const GAP_PX = 24
 const CHROME_PX = 140 // margins + legend + the range slider's own reserved strip
 
+// IST has a fixed +05:30 offset with no DST, so a flat offset add is exact -
+// no need for Intl/timezone-database lookups.
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000
+
+function istDateParts(timestampSeconds) {
+  return new Date(timestampSeconds * 1000 + IST_OFFSET_MS)
+}
+
+// Formats as an IST wall-clock string ("YYYY-MM-DD HH:MM:SS") rather than
+// returning a native JS Date - Plotly's date axis parses string values
+// literally with no further timezone conversion, whereas a Date has its
+// hour/day-of-week read back out in the *viewer's own browser timezone* when
+// Plotly builds tick labels and matches xaxis.rangebreaks bounds below.
+// Every trace in this file funnels through this one function, so this single
+// change keeps everything - including the IST-anchored rangebreaks below -
+// correct regardless of which timezone the browser is in.
 function toPlotlyDate(timestampSeconds) {
-  return new Date(timestampSeconds * 1000)
+  const d = istDateParts(timestampSeconds)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+}
+
+function istDateString(timestampSeconds) {
+  const d = istDateParts(timestampSeconds)
+  const pad = (n) => String(n).padStart(2, '0')
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
+}
+
+// Plotly renders OHLC data on a continuous real-time x-axis by default, so
+// any stretch with no candles - weekends, exchange holidays, and (for
+// intraday intervals) the overnight non-market span - still gets its
+// proportional width reserved with nothing drawn in it, which reads as a
+// blank gap. xaxis.rangebreaks tells Plotly to collapse specific spans
+// instead. Weekends are a fixed rule; whether the data is intraday (and so
+// has an overnight span to collapse) is inferred from the candles' own
+// median spacing rather than threaded down as a prop, since nothing else
+// here needs to know the interval. Real holidays aren't a fixed weekly rule
+// and this app has no hardcoded exchange calendar to maintain - instead, any
+// weekday with zero candles between two directly-adjacent candles is, by
+// definition, a day the market didn't trade, so it's detected straight from
+// the loaded data and added as an explicit single-day rangebreak.
+function computeRangebreaks(candles) {
+  const rangebreaks = [{ bounds: ['sat', 'mon'] }]
+  if (candles.length < 2) return rangebreaks
+
+  const gapsSeconds = []
+  for (let i = 1; i < candles.length; i++) gapsSeconds.push(candles[i].timestamp - candles[i - 1].timestamp)
+  const sortedGaps = [...gapsSeconds].sort((a, b) => a - b)
+  const medianGapSeconds = sortedGaps[Math.floor(sortedGaps.length / 2)]
+  const isIntraday = medianGapSeconds < 20 * 60 * 60
+  if (isIntraday) {
+    rangebreaks.push({ bounds: [15.5, 9.25], pattern: 'hour' })
+  }
+
+  const holidayDates = new Set()
+  for (let i = 1; i < candles.length; i++) {
+    const prevTs = candles[i - 1].timestamp
+    const prevDateStr = istDateString(prevTs)
+    const currDateStr = istDateString(candles[i].timestamp)
+    if (prevDateStr === currDateStr) continue // same trading day, nothing to check
+
+    // Crossed at least one calendar-day boundary - walk each IST calendar
+    // date strictly between prev's day and curr's day and flag any weekday
+    // among them as a holiday (zero candles exist for it, by definition,
+    // since these are two directly adjacent candles).
+    let cursor = prevTs + 24 * 60 * 60
+    let guard = 0
+    while (istDateString(cursor) !== currDateStr && guard < 10) {
+      const dayOfWeek = istDateParts(cursor).getUTCDay()
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) holidayDates.add(istDateString(cursor))
+      cursor += 24 * 60 * 60
+      guard++
+    }
+  }
+  if (holidayDates.size > 0) {
+    rangebreaks.push({ values: [...holidayDates] })
+  }
+
+  return rangebreaks
 }
 
 // Splits [0,1] vertically: price gets the top slice, indicator rows below it
@@ -329,6 +406,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
       // it was redundant with the stacked indicator panels below - it isn't.
       xaxis: {
         rangeslider: { visible: true, bgcolor: COLOR_GRID, bordercolor: COLOR_GRID, thickness: 0.08 },
+        rangebreaks: computeRangebreaks(candles),
         gridcolor: COLOR_GRID,
         color: COLOR_TEXT,
       },
