@@ -27,12 +27,12 @@ function summarizeStrikes(filteredStrikes) {
 
 const RESPONSE_SCHEMA = `{
   "oi_structure": { "market_sentiment": "", "support_levels": [], "resistance_levels": [], "oi_clusters": [], "range_expectation": "", "institutional_defense": "", "observations": [], "confidence": "" },
-  "institutional_positioning": { "overall_bias": "", "institutional_activity": [], "bullish_evidence": [], "bearish_evidence": [], "hedging_activity": [], "important_strikes": [], "summary": "" },
-  "greeks_structure": { "overall_greeks_bias": "", "gamma_walls": [], "high_delta_strikes": [], "theta_decay_strikes": [], "vega_hotspots": [], "iv_skew": "", "key_observations": [], "risk_summary": "" },
-  "oi_migration": { "available": true, "market_shift": "", "support_shift": "", "resistance_shift": "", "fresh_call_writing": [], "fresh_put_writing": [], "short_covering": [], "long_unwinding": [], "important_changes": [], "summary": "" },
-  "iv_analysis": { "volatility_bias": "", "premium_status": "", "iv_skew": "", "atm_analysis": "", "buyer_advantage": "", "seller_advantage": "", "expected_volatility": "", "recommended_strategies": [], "summary": "" },
-  "market_summary": { "sentiment": "Bullish|Bearish|Neutral", "confidence": 0, "support_level": 0, "resistance_level": 0, "expected_range": "", "smart_money_activity": "", "key_risks": [], "narrative": "" },
-  "strategy_recommendations": [ { "strategy": "", "rationale": "", "risk_level": "" } ]
+  "institutional_positioning": { "overall_bias": "", "institutional_activity": [], "bullish_evidence": [], "bearish_evidence": [], "hedging_activity": [], "important_strikes": [], "summary": "(max 100 words)" },
+  "greeks_structure": { "overall_greeks_bias": "", "gamma_walls": [], "high_delta_strikes": [], "theta_decay_strikes": [], "vega_hotspots": [], "iv_skew": "", "key_observations": [], "risk_summary": "(max 100 words)" },
+  "oi_migration": { "available": true, "market_shift": "", "support_shift": "", "resistance_shift": "", "fresh_call_writing": [], "fresh_put_writing": [], "short_covering": [], "long_unwinding": [], "important_changes": [], "summary": "(max 100 words)" },
+  "iv_analysis": { "volatility_bias": "", "premium_status": "", "iv_skew": "", "atm_analysis": "", "buyer_advantage": "", "seller_advantage": "", "expected_volatility": "", "recommended_strategies": [], "summary": "(max 100 words)" },
+  "market_summary": { "sentiment": "Bullish|Bearish|Neutral", "confidence": 0, "support_level": 0, "resistance_level": 0, "expected_range": "", "smart_money_activity": "", "key_risks": [], "narrative": "(max 100 words)" },
+  "strategy_recommendations": [ { "strategy": "", "rationale": "(max 100 words)", "risk_level": "" } ]
 }`
 
 /**
@@ -72,6 +72,8 @@ Your analysis must include:
 
 Base every conclusion strictly on the supplied data - do not assume facts not supported by the option chain. Highlight conflicting signals where applicable, and where a section's schema includes a confidence field, assign Low/Medium/High.
 
+Keep market_summary.narrative, institutional_positioning.summary, greeks_structure.risk_summary, iv_analysis.summary, oi_migration.summary, and each strategy_recommendations[].rationale to no more than 100 words each - concise and direct, not exhaustive. This does not apply to the shorter structured fields (levels, lists, badges, confidence).
+
 market_summary.sentiment must be exactly one of "Bullish", "Bearish", or "Neutral" (this exact wording and casing, nothing else).
 
 Return valid JSON only, matching exactly this structure (fill in every field - use empty strings/arrays/0 where a value is genuinely not supported by the data, but keep every key present):
@@ -82,17 +84,17 @@ const SUMMARIZED_RECOMMENDATIONS_SCHEMA = `{
   "key_elements": [
     {
       "title": "",
-      "observation": "",
-      "reason": ""
+      "observation": "(max 100 words)",
+      "reason": "(max 100 words)"
     }
   ],
   "recommended_trades": [
     {
       "strategy": "",
       "market_bias": "",
-      "reason": "",
+      "reason": "(max 100 words)",
       "suggested_strikes": "",
-      "entry": "",
+      "entry": "(max 100 words)",
       "profit_expectation": "",
       "risk": "",
       "confidence": 0
@@ -203,6 +205,8 @@ For each recommendation provide:
 If market conditions are unclear or conflicting, explicitly recommend "No Trade" rather than forcing a strategy.
 
 Base every conclusion ONLY on the supplied option chain data. Do not invent information.
+
+Keep each key_elements[].observation, key_elements[].reason, recommended_trades[].reason, and recommended_trades[].entry to no more than 100 words each - concise and direct, not exhaustive. This does not apply to the shorter structured fields (title, strategy, market_bias, suggested_strikes, profit_expectation, risk, confidence).
 
 Return valid JSON only.
 
