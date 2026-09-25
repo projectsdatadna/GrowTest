@@ -23,7 +23,6 @@ import {
   createHistoricalWatchlistNotification,
   getLatestHistoricalWatchlistAnalysis,
   saveHistoricalWatchlistAnalysis,
-  createHistoricalWatchlistAnalysisNotification,
 } from './historicalWatchlistFirestoreClient.js'
 
 // A reasonable rolling refresh window per interval - wide enough that a
@@ -83,22 +82,21 @@ export function isEntryDue(entry, now = new Date()) {
 
 /**
  * The actual per-entry work: fetch a rolling window ending now, refresh
- * every configured indicator, run AI inference over the result, and notify
- * only if the latest candle is newer than what this entry already had on
- * its LAST run (never on the very first run - that's just establishing a
- * baseline, not "new data", so it stays silent). Comparing against the
- * stored lastFetchedCandleTimestamp makes this idempotent across Cloud
- * Tasks retries: a retry that re-runs after a partial success (candles/
- * indicators written, but the process crashed before
- * updateHistoricalWatchlistFetchState) simply recomputes the same result
- * and, seeing no timestamp advance beyond what's already stored, creates no
- * duplicate notification.
+ * every configured indicator, and notify only if the latest candle is newer
+ * than what this entry already had on its LAST run (never on the very first
+ * run - that's just establishing a baseline, not "new data", so it stays
+ * silent). Comparing against the stored lastFetchedCandleTimestamp makes
+ * this idempotent across Cloud Tasks retries: a retry that re-runs after a
+ * partial success (candles/indicators written, but the process crashed
+ * before updateHistoricalWatchlistFetchState) simply recomputes the same
+ * result and, seeing no timestamp advance beyond what's already stored,
+ * creates no duplicate notification.
  *
- * `azureConfig` is optional - callers that don't care about AI (there are
- * none today, but nothing here requires one) can omit it and the AI step is
- * simply skipped, same shape as the per-indicator-spec isolation below.
+ * Pure data refresh only - no AI. AI insight generation moved on-demand (see
+ * generateHistoricalWatchlistInsight below), triggered by a button instead
+ * of running automatically on every due-check.
  */
-export async function processDueEntry(entry, { groww_token, azureConfig }) {
+export async function processDueEntry(entry, { groww_token }) {
   const rangeEnd = new Date()
   const lookbackDays = LOOKBACK_DAYS[entry.interval] ?? 30
   const rangeStart = new Date(rangeEnd.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
@@ -118,12 +116,9 @@ export async function processDueEntry(entry, { groww_token, azureConfig }) {
     throw error
   }
 
-  // Captured (not discarded) so the AI insight step below can summarize the
-  // exact same indicator data just refreshed, instead of re-fetching it.
-  const indicatorSeries = {}
   for (const spec of entry.indicatorSpecs || []) {
     try {
-      indicatorSeries[spec] = await ensureIndicatorFresh({ symbol: entry.symbol, exchange: entry.exchange, interval: entry.interval, spec, candles })
+      await ensureIndicatorFresh({ symbol: entry.symbol, exchange: entry.exchange, interval: entry.interval, spec, candles })
     } catch (error) {
       console.error(`Historical watchlist indicator error for entry ${entry.id}, spec "${spec}":`, error.message)
     }
@@ -145,71 +140,81 @@ export async function processDueEntry(entry, { groww_token, azureConfig }) {
     })
   }
 
-  if (azureConfig) {
-    await runAutomatedAiInsight(entry, { candles, indicatorSeries, azureConfig, latestCandleTimestamp })
-  }
-
   await updateHistoricalWatchlistFetchState(entry.id, { lastFetchedCandleTimestamp: latestCandleTimestamp })
 }
 
 /**
- * Runs the same AI insight prompt the Chart tab's manual "AI Insight"
- * button uses (buildHistoricalInsightPrompt, historicalAiInsight.js) -
- * automatically, for this entry, on its own due-check above (no separate
- * AI-specific cadence/floor - the entry's own configured interval already
- * governs this, and 15 minutes is already the finest interval selectable in
- * the UI). Isolated in its own try/catch so an AI failure (rate limit,
- * Azure outage, JSON parse failure) never fails the candle/indicator
- * refresh that already succeeded above, and never throws back to the Cloud
- * Task - which would otherwise retry work that already succeeded.
+ * On-demand AI insight for one Historical Watchlist entry - triggered by a
+ * user's button click instead of running automatically on every background
+ * refresh. Same prompt/call the background job used to run automatically
+ * (buildHistoricalInsightPrompt + analyzeWithAI, with the same
+ * previousAnalysis continuity), but persisted here so it flows through the
+ * existing GET /historical-watchlist/:id/analysis read path with no
+ * frontend display changes needed. Re-runs ensureCandlesFresh/
+ * ensureIndicatorFresh first (same as the manual Chart-tab "AI Insight"
+ * button does) so the insight is never generated from stale data even if
+ * clicked between background fetch ticks - cheap when the background job
+ * already ran recently, since ensureCandlesFresh treats already-fresh data
+ * as a no-op.
+ *
+ * Deliberately never fires the "AI insight changed" notification - that
+ * alert exists to surface a background change the user wasn't watching for;
+ * irrelevant when they just triggered this themselves and are looking right
+ * at the result.
  */
-async function runAutomatedAiInsight(entry, { candles, indicatorSeries, azureConfig, latestCandleTimestamp }) {
-  try {
-    const previousAnalysis = await getLatestHistoricalWatchlistAnalysis(entry.id)
-    const promptContent = buildHistoricalInsightPrompt({
-      symbol: entry.symbol,
-      exchange: entry.exchange,
-      interval: entry.interval,
-      candles,
-      indicatorSeries,
-      previousAnalysis,
-    })
-    const result = await analyzeWithAI(promptContent, azureConfig)
-    await logAiUsage({
-      feature: 'historical_watchlist_ai_insight',
-      usage: result.usage,
-      model: azureConfig.deployment,
-      metadata: { watchlistId: entry.id, symbol: entry.symbol, exchange: entry.exchange, interval: entry.interval },
-    })
-    await saveHistoricalWatchlistAnalysis({
-      watchlistId: entry.id,
-      symbol: entry.symbol,
-      exchange: entry.exchange,
-      interval: entry.interval,
-      parsed_analysis: result.parsed_analysis,
-      raw_text: result.raw_text,
-      usage: result.usage,
-      candleTimestamp: latestCandleTimestamp,
-    })
+export async function generateHistoricalWatchlistInsight(entry, { groww_token, azureConfig }) {
+  const rangeEnd = new Date()
+  const lookbackDays = LOOKBACK_DAYS[entry.interval] ?? 30
+  const rangeStart = new Date(rangeEnd.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
 
-    // Only notify when the outlook actually changed from the entry's own
-    // last automated read - never on the first-ever run (nothing to
-    // compare against yet) and never when the read is unchanged, the same
-    // "only notify on real new information" restraint the candle
-    // notification above already applies.
-    const newOutlook = result.parsed_analysis?.outlook
-    const previousOutlook = previousAnalysis?.parsed_analysis?.outlook
-    if (previousAnalysis && newOutlook && newOutlook !== previousOutlook) {
-      await createHistoricalWatchlistAnalysisNotification({
-        watchlistId: entry.id,
-        symbol: entry.symbol,
-        exchange: entry.exchange,
-        interval: entry.interval,
-        outlook: newOutlook,
-        summary: result.parsed_analysis?.trend_summary || '',
-      })
-    }
-  } catch (error) {
-    console.error(`Historical watchlist AI insight error for entry ${entry.id}:`, error.message)
+  const { candles } = await ensureCandlesFresh({
+    exchange: entry.exchange,
+    symbol: entry.symbol,
+    interval: entry.interval,
+    rangeStart,
+    rangeEnd,
+    groww_token,
+  })
+  if (candles.length === 0) {
+    throw new Error('No candle data available yet for this entry.')
   }
+
+  const indicatorSeries = {}
+  for (const spec of entry.indicatorSpecs || []) {
+    try {
+      indicatorSeries[spec] = await ensureIndicatorFresh({ symbol: entry.symbol, exchange: entry.exchange, interval: entry.interval, spec, candles })
+    } catch (error) {
+      console.error(`Historical watchlist indicator error for entry ${entry.id}, spec "${spec}":`, error.message)
+    }
+  }
+
+  const latestCandleTimestamp = candles[candles.length - 1].timestamp
+  const previousAnalysis = await getLatestHistoricalWatchlistAnalysis(entry.id)
+  const promptContent = buildHistoricalInsightPrompt({
+    symbol: entry.symbol,
+    exchange: entry.exchange,
+    interval: entry.interval,
+    candles,
+    indicatorSeries,
+    previousAnalysis,
+  })
+  const result = await analyzeWithAI(promptContent, azureConfig)
+  await logAiUsage({
+    feature: 'historical_watchlist_ai_insight',
+    usage: result.usage,
+    model: azureConfig.deployment,
+    metadata: { watchlistId: entry.id, symbol: entry.symbol, exchange: entry.exchange, interval: entry.interval },
+  })
+  await saveHistoricalWatchlistAnalysis({
+    watchlistId: entry.id,
+    symbol: entry.symbol,
+    exchange: entry.exchange,
+    interval: entry.interval,
+    parsed_analysis: result.parsed_analysis,
+    raw_text: result.raw_text,
+    usage: result.usage,
+    candleTimestamp: latestCandleTimestamp,
+  })
+
+  return getLatestHistoricalWatchlistAnalysis(entry.id)
 }

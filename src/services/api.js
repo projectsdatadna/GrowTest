@@ -131,8 +131,8 @@ export const regenerateSnapshotAnalysis = async (id, promptType = 'master_prompt
 }
 
 // Watchlist - server-driven tracking (see functions/watchlistScheduler.js).
-// The client only ever manages the tracked-symbol list and reads back
-// whatever the scheduler already computed - it never triggers analysis.
+// The background job only refreshes snapshot data - AI analysis is
+// triggered on demand via generateWatchlistAnalysis below.
 export const addWatchlistEntry = async ({ underlying_symbol, exchange, expiry_date, points_range }) => {
   try {
     const response = await apiClient.post('/watchlist', { underlying_symbol, exchange, expiry_date, points_range })
@@ -169,6 +169,33 @@ export const getLatestWatchlistAnalysis = async (watchlistId, tier) => {
     return response.data
   } catch (error) {
     console.error('Error fetching watchlist analysis:', error)
+    throw error
+  }
+}
+
+// Triggers a fresh AI comparison (current vs ~tier-minutes-ago snapshot) for
+// one entry's tier - the only way this feature calls AI now that the
+// background job is pure data-refresh. promptType is 'master_prompt' or
+// 'summarized_recommendations'; only that one style is computed.
+export const generateWatchlistAnalysis = async (watchlistId, tier, promptType) => {
+  try {
+    const response = await apiClient.post(`/watchlist/${watchlistId}/analysis/${tier}/generate`, { prompt_type: promptType })
+    return response.data
+  } catch (error) {
+    console.error('Error generating watchlist analysis:', error)
+    throw error
+  }
+}
+
+// The automatic Difference-column comparison - refreshed by watchlistTick
+// itself on this tier's own cadence, unlike the full report above which only
+// updates on demand.
+export const getWatchlistDifference = async (watchlistId, tier) => {
+  try {
+    const response = await apiClient.get(`/watchlist/${watchlistId}/difference/${tier}`)
+    return response.data
+  } catch (error) {
+    console.error('Error fetching watchlist difference:', error)
     throw error
   }
 }
@@ -244,8 +271,9 @@ export const getHistoricalAiInsight = async (symbol, { exchange = 'NSE', interva
 
 // Historical Watchlist - tracks (symbol, exchange, interval) combinations
 // for automated background refresh (see functions/historicalWatchlistScheduler.js).
-// The client only ever manages the tracked list and reads notifications -
-// it never triggers a fetch itself (Cloud Tasks does that server-side).
+// The background job (Cloud Tasks) only refreshes candle/indicator data -
+// AI insight is triggered on demand via generateHistoricalWatchlistInsight
+// below.
 export const addHistoricalWatchlistEntry = async ({ symbol, exchange, interval, indicatorSpecs }) => {
   try {
     const response = await apiClient.post('/historical-watchlist', { symbol, exchange, interval, indicatorSpecs })
@@ -285,6 +313,20 @@ export const getHistoricalWatchlistAnalysis = async (id) => {
     return response.data
   } catch (error) {
     console.error('Error fetching historical watchlist analysis:', error)
+    throw error
+  }
+}
+
+// Triggers a fresh AI insight for one Historical Watchlist entry - the only
+// way this feature calls AI now that the background job is pure data-
+// refresh. Persists, so a subsequent getHistoricalWatchlistAnalysis call
+// picks up the fresh result.
+export const generateHistoricalWatchlistInsight = async (id) => {
+  try {
+    const response = await apiClient.post(`/historical-watchlist/${id}/ai-insight`)
+    return response.data
+  } catch (error) {
+    console.error('Error generating historical watchlist insight:', error)
     throw error
   }
 }

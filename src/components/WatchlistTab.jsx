@@ -1,18 +1,27 @@
 /**
- * Renders whatever the server-side watchlist scheduler (functions/
- * watchlistScheduler.js) has already computed - this tab never triggers a
- * fetch or analysis itself, it only reads the latest watchlistAnalyses doc
- * for the selected symbol+tier and polls on that tier's own cadence.
+ * The background watchlist scheduler (functions/watchlistScheduler.js)
+ * refreshes raw option-chain snapshots every 15 minutes, plus one lightweight
+ * AI comparison (the Difference column - what changed vs ~15/75 minutes ago)
+ * per due tier. It no longer runs the full institutional-report AI
+ * automatically - this tab reads back whatever full report was last
+ * generated on demand (if any) via the "Analyze" button, separately from the
+ * automatically-refreshing Difference column.
  *
- * Mirrors Greek Analysis's Current/Previous/Difference 3-column layout,
- * fed from the Watchlist doc's raw snapshots instead of two live auto-refresh
- * runs - see buildSnapshotCardAnalysis in greekAnalysisUtils.js for the
- * adapter between the two shapes.
+ * So two independent data sources feed this tab: `analysis` (on-demand full
+ * report, GET/POST .../analysis/:tier) and `difference` (automatic
+ * Difference-column comparison, GET .../difference/:tier, polled on the
+ * tier's own real cadence since it genuinely does keep refreshing server-
+ * side). Current/Previous full report cards and the AI Final Insight/Overall
+ * Bias/Probability Gauge depend on `analysis`; the Difference panel and its
+ * pure-numeric OI/Greeks/Market Pulse sub-panels depend on `difference`'s own
+ * embedded raw snapshots, via buildSnapshotCardAnalysis in
+ * greekAnalysisUtils.js (same adapter, different source, no parsed_analysis
+ * needed for those pure client-side computations).
  */
 
 import { useEffect, useMemo, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { getWatchlistEntries, getLatestWatchlistAnalysis } from '../services/api'
+import { getWatchlistEntries, getLatestWatchlistAnalysis, generateWatchlistAnalysis, getWatchlistDifference } from '../services/api'
 import { setWatchlistEntries, setSelectedSymbol, setSelectedTier, setSelectedPromptType } from '../store/watchlistSlice'
 import AnalysisSnapshotCard from './AnalysisSnapshotCard'
 import ComparisonPanel from './ComparisonPanel'
@@ -22,6 +31,7 @@ import MarketPulsePanel from './MarketPulsePanel'
 import ProbabilityGauge from './ProbabilityGauge'
 import TimelineChart from './TimelineChart'
 import OiBuildupPanel from './OiBuildupPanel'
+import Spinner from './Spinner'
 import { computeProbabilityGauge, computeOiChanges, computeGreeksDelta, getMarketSummary, buildSnapshotCardAnalysis } from './greekAnalysisUtils'
 import { computeMarketPulse } from './marketPulseEngine'
 
@@ -46,6 +56,10 @@ function WatchlistTab() {
   const [error, setError] = useState('')
   const [growwError, setGrowwError] = useState(null)
   const [ltpHistory, setLtpHistory] = useState([])
+  const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState('')
+  const [difference, setDifference] = useState(null)
+  const [differenceError, setDifferenceError] = useState('')
 
   useEffect(() => {
     const refresh = () =>
@@ -79,53 +93,101 @@ function WatchlistTab() {
     setLtpHistory([])
   }, [selectedEntryId, selectedTier])
 
+  // Accumulates the client-side LTP timeline from whatever analysis result
+  // just came in - shared by the initial load below and the on-demand
+  // Analyze handler, since both produce the same {current_snapshot, ...}
+  // shape and both should extend the same timeline.
+  const applyLtpHistory = (latest) => {
+    const ltp = latest?.current_snapshot?.underlying_ltp
+    const fetchedAt = latest?.current_snapshot?.fetched_at
+    if (ltp != null && fetchedAt) {
+      setLtpHistory((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1].time === fetchedAt) return prev
+        const next = [...prev, { time: fetchedAt, ltp }]
+        return next.length > LTP_HISTORY_LIMIT ? next.slice(next.length - LTP_HISTORY_LIMIT) : next
+      })
+    }
+  }
+
+  // Loads whatever analysis was last generated (automatically or on demand)
+  // for this entry+tier - a single read, not a poll, since a fresh result
+  // only ever appears when the user clicks Analyze below.
   useEffect(() => {
     if (!selectedEntryId) {
       setAnalysis(null)
       return
     }
     let cancelled = false
-    const fetchAnalysis = () => {
-      setLoading(true)
-      setError('')
-      getLatestWatchlistAnalysis(selectedEntryId, selectedTier)
-        .then(({ analysis: latest, groww_error }) => {
-          if (cancelled) return
-          setAnalysis(latest)
-          setGrowwError(groww_error || null)
+    setLoading(true)
+    setError('')
+    getLatestWatchlistAnalysis(selectedEntryId, selectedTier)
+      .then(({ analysis: latest, groww_error }) => {
+        if (cancelled) return
+        setAnalysis(latest)
+        setGrowwError(groww_error || null)
+        applyLtpHistory(latest)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err.response?.data?.error || err.message || 'Failed to load analysis')
+          setGrowwError(null)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedEntryId, selectedTier])
 
-          const ltp = latest?.current_snapshot?.underlying_ltp
-          const fetchedAt = latest?.current_snapshot?.fetched_at
-          if (ltp != null && fetchedAt) {
-            setLtpHistory((prev) => {
-              if (prev.length > 0 && prev[prev.length - 1].time === fetchedAt) return prev
-              const next = [...prev, { time: fetchedAt, ltp }]
-              return next.length > LTP_HISTORY_LIMIT ? next.slice(next.length - LTP_HISTORY_LIMIT) : next
-            })
-          }
+  // Polls the automatic Difference-column comparison on the selected tier's
+  // own real cadence (unlike the single-shot load above) - this one
+  // genuinely does keep refreshing server-side every 15/75 minutes, so
+  // polling here reflects that rather than requiring a manual re-select to
+  // see a newer result.
+  useEffect(() => {
+    if (!selectedEntryId) {
+      setDifference(null)
+      return
+    }
+    let cancelled = false
+    const fetchDifference = () => {
+      getWatchlistDifference(selectedEntryId, selectedTier)
+        .then(({ difference: latest }) => {
+          if (cancelled) return
+          setDifference(latest)
+          setDifferenceError('')
+          applyLtpHistory(latest)
         })
         .catch((err) => {
-          if (!cancelled) {
-            setError(err.response?.data?.error || err.message || 'Failed to load analysis')
-            setGrowwError(null)
-          }
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false)
+          if (!cancelled) setDifferenceError(err.response?.data?.error || err.message || 'Failed to load difference')
         })
     }
-    fetchAnalysis()
-    // Falls back to TIERS[0] for a persisted selectedTier that no longer
-    // exists (e.g. the removed '5m' tier, still sitting in a returning
-    // user's redux-persist storage from before it was dropped) - otherwise
-    // this crashes on tier.pollMs below instead of just picking a valid tier.
+    fetchDifference()
     const tier = TIERS.find((t) => t.key === selectedTier) || TIERS[0]
-    const id = setInterval(fetchAnalysis, tier.pollMs)
+    const id = setInterval(fetchDifference, tier.pollMs)
     return () => {
       cancelled = true
       clearInterval(id)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedEntryId, selectedTier])
+
+  const handleGenerate = () => {
+    if (!selectedEntryId || generating) return
+    setGenerating(true)
+    setGenerateError('')
+    generateWatchlistAnalysis(selectedEntryId, selectedTier, selectedPromptType)
+      .then(({ analysis: latest }) => {
+        setAnalysis(latest)
+        setGrowwError(null)
+        applyLtpHistory(latest)
+      })
+      .catch((err) => setGenerateError(err.response?.data?.error || err.message || 'Failed to generate analysis'))
+      .finally(() => setGenerating(false))
+  }
 
   const selectedEntry = symbolEntries.find((e) => e.id === selectedEntryId)
   const tierLabel = (TIERS.find((t) => t.key === selectedTier) || TIERS[0]).label
@@ -141,24 +203,32 @@ function WatchlistTab() {
       ? buildSnapshotCardAnalysis(analysis.previous_snapshot, selectedEntry, selectedPromptType, analysis[previousAnalysisField])
       : null
 
+  // Raw-only card data (no parsed_analysis) built from the automatically-
+  // refreshing Difference doc rather than the on-demand analysis - feeds
+  // only the pure-numeric diff panels below, which never needed an AI report
+  // to compute in the first place.
+  const diffCurrentCardData = difference && selectedEntry ? buildSnapshotCardAnalysis(difference.current_snapshot, selectedEntry, selectedPromptType, null) : null
+  const diffPreviousCardData =
+    difference && selectedEntry ? buildSnapshotCardAnalysis(difference.previous_snapshot, selectedEntry, selectedPromptType, null) : null
+
   const marketSummary = getMarketSummary(currentCardData?.parsed_analysis)
   const probabilityGauge = marketSummary ? computeProbabilityGauge(marketSummary) : null
-  const oiChanges = previousCardData && currentCardData ? computeOiChanges(previousCardData, currentCardData) : null
-  const greeksDelta = previousCardData && currentCardData ? computeGreeksDelta(previousCardData, currentCardData) : []
+  const oiChanges = diffPreviousCardData && diffCurrentCardData ? computeOiChanges(diffPreviousCardData, diffCurrentCardData) : null
+  const greeksDelta = diffPreviousCardData && diffCurrentCardData ? computeGreeksDelta(diffPreviousCardData, diffCurrentCardData) : []
   const marketPulse = useMemo(
-    () => (currentCardData ? computeMarketPulse(currentCardData, previousCardData) : null),
-    [currentCardData, previousCardData]
+    () => (diffCurrentCardData ? computeMarketPulse(diffCurrentCardData, diffPreviousCardData) : null),
+    [diffCurrentCardData, diffPreviousCardData]
   )
 
   // Distinguishes a real, correctly-computed zero (the two snapshots' saved
   // OI/Greeks are genuinely identical) from a broken result, which otherwise
   // render identically as an all-zero/empty set of cards.
   const hasMeaningfulChange =
-    !previousCardData || !currentCardData
+    !diffPreviousCardData || !diffCurrentCardData
       ? true
       : greeksDelta.some((g) => g.direction !== 'flat') || (oiChanges?.keyStrikeChanges || []).some((r) => r.oiChange !== 0)
 
-  const insightTrend = currentCardData?.parsed_analysis?.oi_migration?.market_shift || marketSummary?.sentiment
+  const insightTrend = difference?.difference_analysis?.market_shift || marketSummary?.sentiment
   const insightConfidence = marketSummary?.confidence
   const insightAction =
     marketSummary?.narrative ||
@@ -170,7 +240,8 @@ function WatchlistTab() {
       <section className="flex flex-col gap-xs">
         <h2 className="text-2xl font-bold text-white">Watchlist</h2>
         <p className="text-on-surface-variant text-sm">
-          Auto-fetched and analyzed server-side every 15 minutes during market hours (9:15 AM - 3:30 PM IST). Data resets each evening.
+          Snapshots refresh automatically every 15 minutes during market hours (9:15 AM - 3:30 PM IST) and reset each evening. Click Analyze
+          to generate an AI comparison for the selected tier and prompt style.
         </p>
       </section>
 
@@ -248,13 +319,26 @@ function WatchlistTab() {
                 <option value="summarized_recommendations">Summarized Recommendations</option>
               </select>
             </div>
+
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={!selectedEntryId || generating}
+              className="self-end px-md py-base rounded-lg text-sm bg-primary text-on-primary disabled:opacity-50 disabled:cursor-default hover:opacity-90 flex items-center gap-xs"
+            >
+              {generating ? <Spinner /> : <span className="material-symbols-outlined text-[18px] leading-none">psychology</span>}
+              Analyze
+            </button>
           </div>
+
+          {generateError && <div className="text-bearish text-sm">{generateError}</div>}
 
           {selectedEntry && (
             <div className="text-xs text-on-surface-variant">
               {selectedEntry.underlying_symbol} · {selectedEntry.exchange} · Expiry {selectedEntry.expiry_date} · ±{selectedEntry.points_range} pts
-              {analysis?.underlying_ltp != null && <> · LTP {analysis.underlying_ltp}</>}
+              {(difference?.underlying_ltp ?? analysis?.underlying_ltp) != null && <> · LTP {difference?.underlying_ltp ?? analysis?.underlying_ltp}</>}
               {analysis?.createdAt && <> · Last analyzed {new Date(analysis.createdAt).toLocaleTimeString()}</>}
+              {difference?.createdAt && <> · Difference updated {new Date(difference.createdAt).toLocaleTimeString()}</>}
             </div>
           )}
 
@@ -276,22 +360,28 @@ function WatchlistTab() {
           {loading && !analysis && <div className="text-on-surface-variant text-sm">Loading...</div>}
           {error && <div className="text-bearish text-sm">{error}</div>}
 
-          {!loading && !error && !analysis && (
+          {!loading && !error && !analysis && !difference && (
             <div className="glass-panel rounded-xl p-lg text-center text-on-surface-variant text-sm">
-              No analysis yet for this tier. It appears once the server-side {tierLabel.toLowerCase()} tick has run during market hours.
+              Nothing to show yet for this tier - wait for the next automatic snapshot, or click Analyze once one exists.
             </div>
           )}
 
-          {currentCardData && (
+          {(currentCardData || diffCurrentCardData) && (
             <section className="grid grid-cols-1 md:grid-cols-3 gap-md items-start">
-              <AnalysisSnapshotCard
-                analysis={currentCardData}
-                label={`Current ${tierLabel}`}
-                variant="latest"
-                timestamp={analysis?.current_snapshot?.fetched_at ? new Date(analysis.current_snapshot.fetched_at) : null}
-              />
+              {currentCardData ? (
+                <AnalysisSnapshotCard
+                  analysis={currentCardData}
+                  label={`Current ${tierLabel}`}
+                  variant="latest"
+                  timestamp={analysis?.current_snapshot?.fetched_at ? new Date(analysis.current_snapshot.fetched_at) : null}
+                />
+              ) : (
+                <div className="glass-panel rounded-xl p-md flex items-center justify-center text-on-surface-variant text-sm text-center min-h-[200px]">
+                  Click Analyze above to generate a full report for this tier.
+                </div>
+              )}
 
-              {previousCardData ? (
+              {currentCardData && previousCardData ? (
                 <AnalysisSnapshotCard
                   analysis={previousCardData}
                   label={`Previous ${tierLabel}`}
@@ -300,23 +390,27 @@ function WatchlistTab() {
                 />
               ) : (
                 <div className="glass-panel rounded-xl p-md flex items-center justify-center text-on-surface-variant text-sm text-center min-h-[200px]">
-                  Waiting for the next auto-refresh cycle to have a prior snapshot to show.
+                  {currentCardData ? 'Waiting for the next auto-refresh cycle to have a prior snapshot to show.' : 'Click Analyze above to generate a full report for this tier.'}
                 </div>
               )}
 
               {/* Every compact/derived card stacked in the 3rd column, filling the
                   height next to the two full institutional reports instead of
-                  leaving empty space below a lone Difference panel. */}
+                  leaving empty space below a lone Difference panel. The
+                  Difference panel and everything through Timeline below it
+                  refresh automatically (fed by `difference`, not `analysis`) -
+                  only Overall Bias/AI Final Insight/Probability Gauge need a
+                  full on-demand report to mean anything, so those stay gated
+                  on currentCardData. */}
               <div className="flex flex-col gap-md">
-                {previousCardData && currentCardData && !hasMeaningfulChange && <NoChangeBanner />}
+                {diffPreviousCardData && diffCurrentCardData && !hasMeaningfulChange && <NoChangeBanner />}
 
                 <ComparisonPanel
                   comparing={false}
-                  comparisonError=""
-                  promptType={selectedPromptType}
-                  oiMigration={currentCardData?.parsed_analysis?.oi_migration}
-                  summarizedSections={currentCardData?.parsed_analysis}
+                  comparisonError={differenceError}
+                  oiMigration={difference?.difference_analysis}
                   greeksDelta={greeksDelta}
+                  emptyMessage="Comparison appears once there are two automatic snapshots to compare (about 15-30 minutes into market hours)."
                 />
 
                 <OiBuildupPanel
@@ -343,65 +437,69 @@ function WatchlistTab() {
                   meta={marketPulse ? { pcr: marketPulse.pcr, maxPainStrike: marketPulse.maxPainStrike } : null}
                 />
 
-                <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
-                  <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
-                  <div
-                    className={`text-4xl font-bold leading-none mb-base ${
-                      marketSummary?.sentiment?.toLowerCase() === 'bullish'
-                        ? 'text-bullish'
-                        : marketSummary?.sentiment?.toLowerCase() === 'bearish'
-                        ? 'text-bearish'
-                        : 'text-tertiary'
-                    }`}
-                  >
-                    {(marketSummary?.sentiment || 'N/A').toUpperCase()}
-                  </div>
-                  <div className="mt-md w-full px-xl">
-                    <div className="h-1 w-full bg-surface-container-high rounded-full">
-                      <div className="h-full bg-bullish rounded-full" style={{ width: `${marketSummary?.confidence || 0}%` }} />
-                    </div>
-                    <div className="text-xs text-on-surface-variant mt-xs">{marketSummary?.confidence ?? 'N/A'}% confidence</div>
-                  </div>
-                </div>
-
                 <TimelineChart history={ltpHistory.map((point) => ({ ...point, time: new Date(point.time) }))} />
 
-                <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
-                  <div className="flex items-center gap-base mb-md">
-                    <span className="material-symbols-outlined text-primary">psychology</span>
-                    <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
-                  </div>
-                  <div className="flex flex-col gap-sm text-sm">
-                    {insightTrend && (
-                      <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                        <span className="text-on-surface-variant">Trend</span>
-                        <span className="font-bold text-on-surface">{insightTrend}</span>
+                {currentCardData && (
+                  <>
+                    <div className="glass-panel p-md rounded-xl flex flex-col justify-center items-center text-center">
+                      <h4 className="text-xs uppercase text-on-surface-variant mb-base">Overall Bias</h4>
+                      <div
+                        className={`text-4xl font-bold leading-none mb-base ${
+                          marketSummary?.sentiment?.toLowerCase() === 'bullish'
+                            ? 'text-bullish'
+                            : marketSummary?.sentiment?.toLowerCase() === 'bearish'
+                            ? 'text-bearish'
+                            : 'text-tertiary'
+                        }`}
+                      >
+                        {(marketSummary?.sentiment || 'N/A').toUpperCase()}
                       </div>
-                    )}
-                    {insightConfidence != null && (
-                      <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                        <span className="text-on-surface-variant">Confidence</span>
-                        <span className="text-on-surface">{insightConfidence}%</span>
+                      <div className="mt-md w-full px-xl">
+                        <div className="h-1 w-full bg-surface-container-high rounded-full">
+                          <div className="h-full bg-bullish rounded-full" style={{ width: `${marketSummary?.confidence || 0}%` }} />
+                        </div>
+                        <div className="text-xs text-on-surface-variant mt-xs">{marketSummary?.confidence ?? 'N/A'}% confidence</div>
                       </div>
-                    )}
-                    {marketSummary?.support_level && marketSummary?.resistance_level && (
-                      <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
-                        <span className="text-on-surface-variant">S/R Zones</span>
-                        <span className="text-on-surface font-mono">
-                          {marketSummary.support_level} / {marketSummary.resistance_level}
-                        </span>
-                      </div>
-                    )}
-                    {insightAction && (
-                      <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
-                        <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
-                        <NarrativeText text={insightAction} className="text-on-surface italic text-sm" />
-                      </div>
-                    )}
-                  </div>
-                </div>
+                    </div>
 
-                {probabilityGauge && <ProbabilityGauge bullishPct={probabilityGauge.bullishPct} bearishPct={probabilityGauge.bearishPct} />}
+                    <div className="glass-panel p-md rounded-xl border-l-4 border-primary">
+                      <div className="flex items-center gap-base mb-md">
+                        <span className="material-symbols-outlined text-primary">psychology</span>
+                        <h4 className="text-xs uppercase text-white">AI Final Insight</h4>
+                      </div>
+                      <div className="flex flex-col gap-sm text-sm">
+                        {insightTrend && (
+                          <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                            <span className="text-on-surface-variant">Trend</span>
+                            <span className="font-bold text-on-surface">{insightTrend}</span>
+                          </div>
+                        )}
+                        {insightConfidence != null && (
+                          <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                            <span className="text-on-surface-variant">Confidence</span>
+                            <span className="text-on-surface">{insightConfidence}%</span>
+                          </div>
+                        )}
+                        {marketSummary?.support_level && marketSummary?.resistance_level && (
+                          <div className="flex justify-between border-b border-terminal-border/30 pb-xs">
+                            <span className="text-on-surface-variant">S/R Zones</span>
+                            <span className="text-on-surface font-mono">
+                              {marketSummary.support_level} / {marketSummary.resistance_level}
+                            </span>
+                          </div>
+                        )}
+                        {insightAction && (
+                          <div className="mt-base p-base bg-primary/10 rounded border border-primary/20">
+                            <div className="text-[11px] text-primary uppercase mb-xs font-bold">Recommended Action</div>
+                            <NarrativeText text={insightAction} className="text-on-surface italic text-sm" />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {probabilityGauge && <ProbabilityGauge bullishPct={probabilityGauge.bullishPct} bearishPct={probabilityGauge.bearishPct} />}
+                  </>
+                )}
               </div>
             </section>
           )}

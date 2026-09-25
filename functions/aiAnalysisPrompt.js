@@ -80,6 +80,59 @@ Return valid JSON only, matching exactly this structure (fill in every field - u
 ${RESPONSE_SCHEMA}`
 }
 
+const DIFFERENCE_RESPONSE_SCHEMA = `{
+  "market_shift": "",
+  "support_shift": "",
+  "resistance_shift": "",
+  "fresh_call_writing": [],
+  "fresh_put_writing": [],
+  "short_covering": [],
+  "long_unwinding": [],
+  "important_changes": [],
+  "summary": "(max 100 words)"
+}`
+
+/**
+ * Builds a lightweight, comparison-only prompt - the same OI/premium
+ * migration content buildInstitutionalAnalysisPrompt's own oi_migration
+ * section covers, standalone, without the full current-instant institutional
+ * report (oi_structure, institutional_positioning, greeks_structure,
+ * iv_analysis, market_summary, strategy_recommendations) that prompt also
+ * always computes alongside it. Meant for automated background use where
+ * only "what changed" is needed on every tick, not a full report - the full
+ * report stays available on demand via buildInstitutionalAnalysisPrompt/
+ * buildSummarizedRecommendationsPrompt.
+ *
+ * Always requires both current AND previous - there is nothing to compare
+ * otherwise, so callers should skip calling this (and Azure OpenAI)
+ * entirely when no previous snapshot exists yet, rather than calling it with
+ * previous: null.
+ */
+export function buildDifferencePrompt(current, previous) {
+  const currentSummary = summarizeStrikes(current.filtered_strikes)
+  const previousSummary = summarizeStrikes(previous.filtered_strikes)
+
+  return `You are an institutional options strategist with expertise in NSE derivatives and OI/premium migration analysis.
+
+Compare the following two option chain snapshots for ${current.underlying_symbol} and describe what changed between them - OI increases/decreases, fresh call/put writing, fresh call/put buying, long unwinding, short covering, migration of support/resistance, and whether the structure has become more bullish or bearish since the previous snapshot. Explain every conclusion using OI movement and premium movement.
+
+Underlying Price: ₹${current.underlying_ltp}
+Expiry: ${current.expiry_date}
+
+Previous Snapshot (+/-${previous.points_range ?? current.points_range} points around LTP):
+${JSON.stringify(previousSummary, null, 2)}
+
+Current Snapshot (+/-${current.points_range} points around LTP):
+${JSON.stringify(currentSummary, null, 2)}
+
+Base every conclusion strictly on the supplied data - do not assume facts not supported by the option chain.
+
+Keep summary to no more than 100 words - concise and direct, not exhaustive. This does not apply to the shorter structured fields (shifts, lists).
+
+Return valid JSON only, matching exactly this structure (fill in every field - use empty strings/arrays where a value is genuinely not supported by the data, but keep every key present):
+${DIFFERENCE_RESPONSE_SCHEMA}`
+}
+
 const SUMMARIZED_RECOMMENDATIONS_SCHEMA = `{
   "key_elements": [
     {

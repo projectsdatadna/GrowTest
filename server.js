@@ -31,6 +31,7 @@ import {
   listActiveWatchlistEntries,
   deactivateWatchlistEntry,
   getLatestWatchlistAnalysis,
+  getLatestWatchlistDifference,
   getWatchlistEntry,
 } from './functions/watchlistFirestoreClient.js'
 import { ensureCandlesFresh, parseIstDateTime } from './functions/growwHistoricalData.js'
@@ -46,7 +47,8 @@ import {
   markAllHistoricalWatchlistNotificationsRead,
   getLatestHistoricalWatchlistAnalysis,
 } from './functions/historicalWatchlistFirestoreClient.js'
-import { processDueEntry } from './functions/historicalWatchlistScheduler.js'
+import { processDueEntry, generateHistoricalWatchlistInsight } from './functions/historicalWatchlistScheduler.js'
+import { generateWatchlistAnalysis } from './functions/watchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './functions/instrumentMasterSync.js'
 
 dotenv.config()
@@ -1057,6 +1059,56 @@ app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
 })
 
 /**
+ * On-demand AI comparison for one watchlist entry's tier - see the same
+ * route in functions/index.js for the full explanation. Runs only the
+ * requested prompt_type, not both.
+ */
+app.post('/watchlist/:id/analysis/:tier/generate', async (req, res) => {
+  try {
+    const { id, tier } = req.params
+    if (!['15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 15m, 75m' })
+    }
+    if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_ENDPOINT || !AZURE_OPENAI_DEPLOYMENT) {
+      return res.status(500).json({ error: 'Azure OpenAI is not configured' })
+    }
+    const promptType = req.body?.prompt_type === 'summarized_recommendations' ? 'summarized_recommendations' : 'master_prompt'
+
+    const entry = await getWatchlistEntry(id)
+    if (!entry) return res.status(404).json({ error: 'Watchlist entry not found' })
+
+    const analysis = await generateWatchlistAnalysis({
+      entry,
+      tier,
+      promptType,
+      azureConfig: { apiKey: AZURE_OPENAI_API_KEY, endpoint: AZURE_OPENAI_ENDPOINT, deployment: AZURE_OPENAI_DEPLOYMENT, apiVersion: AZURE_OPENAI_API_VERSION },
+    })
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    console.error('Error generating watchlist analysis:', error.message)
+    res.status(error.response?.status || 500).json({ error: error.message })
+  }
+})
+
+/**
+ * Latest automatic Difference-column comparison for one watchlist entry's
+ * tier - see the same route in functions/index.js for the full explanation.
+ */
+app.get('/watchlist/:id/difference/:tier', async (req, res) => {
+  try {
+    const { id, tier } = req.params
+    if (!['15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 15m, 75m' })
+    }
+    const difference = await getLatestWatchlistDifference(id, tier)
+    res.json({ status: 'SUCCESS', difference })
+  } catch (error) {
+    console.error('Error fetching watchlist difference:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
  * Historical Chart feature - fetches candles from Groww on demand (storing
  * them in Firestore), and computes+stores indicator series from them. See
  * functions/growwHistoricalData.js/functions/technicalIndicators.js for the
@@ -1314,6 +1366,31 @@ app.get('/historical-watchlist/:id/analysis', async (req, res) => {
   }
 })
 
+/**
+ * On-demand AI insight for one Historical Watchlist entry - see the same
+ * route in functions/index.js for the full explanation.
+ */
+app.post('/historical-watchlist/:id/ai-insight', async (req, res) => {
+  try {
+    const entry = await getHistoricalWatchlistEntry(req.params.id)
+    if (!entry) return res.status(404).json({ error: 'Historical watchlist entry not found' })
+    if (!AZURE_OPENAI_API_KEY || !AZURE_OPENAI_ENDPOINT || !AZURE_OPENAI_DEPLOYMENT) {
+      return res.status(500).json({ error: 'Azure OpenAI is not configured' })
+    }
+
+    const groww_token = await getGrowwAccessToken()
+    const analysis = await generateHistoricalWatchlistInsight(entry, {
+      groww_token,
+      azureConfig: { apiKey: AZURE_OPENAI_API_KEY, endpoint: AZURE_OPENAI_ENDPOINT, deployment: AZURE_OPENAI_DEPLOYMENT, apiVersion: AZURE_OPENAI_API_VERSION },
+    })
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    const azureMessage = error.response?.data?.error?.message
+    console.error('Error generating historical watchlist insight:', azureMessage || error.message)
+    res.status(error.details?.status_code || (azureMessage ? 502 : 500)).json({ error: azureMessage ? `AI insight failed: ${azureMessage}` : error.message })
+  }
+})
+
 app.get('/historical-watchlist/notifications', async (req, res) => {
   try {
     const unreadOnly = req.query.unreadOnly === 'true'
@@ -1354,8 +1431,7 @@ app.post('/historical-watchlist/:id/trigger-fetch', async (req, res) => {
     if (!entry) return res.status(404).json({ error: 'Historical watchlist entry not found' })
 
     const accessToken = await getGrowwAccessToken()
-    const azureConfig = { apiKey: AZURE_OPENAI_API_KEY, endpoint: AZURE_OPENAI_ENDPOINT, deployment: AZURE_OPENAI_DEPLOYMENT, apiVersion: AZURE_OPENAI_API_VERSION }
-    await processDueEntry(entry, { groww_token: accessToken, azureConfig })
+    await processDueEntry(entry, { groww_token: accessToken })
     res.json({ status: 'SUCCESS' })
   } catch (error) {
     console.error('Error triggering historical watchlist fetch:', error.message)

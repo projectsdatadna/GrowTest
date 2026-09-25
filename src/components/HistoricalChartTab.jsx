@@ -29,6 +29,7 @@ import {
   getHistoricalWatchlistEntries,
   removeHistoricalWatchlistEntry,
   getHistoricalWatchlistAnalysis,
+  generateHistoricalWatchlistInsight,
 } from '../services/api'
 import { historicalChartPrimarySlice, historicalChartSecondarySlice } from '../store/index'
 import { setHistoricalWatchlistEntries } from '../store/historicalWatchlistSlice'
@@ -463,6 +464,8 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
 
   const [watchlistBusy, setWatchlistBusy] = useState(false)
   const [watchlistError, setWatchlistError] = useState('')
+  const [insightGeneratingId, setInsightGeneratingId] = useState(null)
+  const [insightGenError, setInsightGenError] = useState('')
 
   const [underlyingSymbolOptions, setUnderlyingSymbolOptions] = useState([])
 
@@ -612,10 +615,10 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
   const watchedEntry = watchlistEntries.find((e) => e.symbol === selectedSymbol && e.exchange === exchange && e.interval === interval)
 
   // The Historical Watchlist automation (functions/historicalWatchlistScheduler.js)
-  // runs AI inference on its own schedule whenever the currently-loaded
-  // symbol/exchange/interval matches an active watchlist entry - shown via
-  // the same AiInsightCard the manual button uses, just fed by whatever
-  // that automation last stored rather than a fresh on-demand call.
+  // only refreshes candle/indicator data now - AI insight for a watched
+  // entry is generated on demand (see the per-chip button below,
+  // handleGenerateInsight) and shown here via the same AiInsightCard the
+  // manual button uses, fed by whatever was last generated for this entry.
   useEffect(() => {
     if (!watchedEntry) {
       setAutomatedInsight(null)
@@ -651,6 +654,22 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
       .then(({ entries }) => dispatch(setHistoricalWatchlistEntries(entries || [])))
       .catch((err) => setWatchlistError(err.response?.data?.error || err.message || 'Failed to remove from watchlist'))
       .finally(() => setWatchlistBusy(false))
+  }
+
+  // Generates a fresh AI insight for one watched entry - the only way this
+  // feature calls AI now that the background job is pure data-refresh. If
+  // the entry being generated for is also the one currently loaded in the
+  // chart, updates automatedInsight directly so the card refreshes without
+  // a second round-trip read.
+  const handleGenerateInsight = (entry) => {
+    setInsightGeneratingId(entry.id)
+    setInsightGenError('')
+    generateHistoricalWatchlistInsight(entry.id)
+      .then(({ analysis }) => {
+        if (watchedEntry?.id === entry.id) setAutomatedInsight(analysis)
+      })
+      .catch((err) => setInsightGenError(err.response?.data?.error || err.message || 'Failed to generate AI insight'))
+      .finally(() => setInsightGeneratingId(null))
   }
 
   // Keeps isFullscreen in sync when the browser exits fullscreen outside our
@@ -822,6 +841,7 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
       </div>
 
       {watchlistError && <div className="text-xs text-error px-xs">{watchlistError}</div>}
+      {insightGenError && <div className="text-xs text-error px-xs">{insightGenError}</div>}
 
       {watchlistEntries.length > 0 && (
         <div className="glass-panel p-md rounded-xl flex flex-col gap-sm">
@@ -833,6 +853,16 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
                   {entry.symbol} · {entry.exchange} · {entry.interval}
                 </span>
                 {entry.lastError && <span className="text-error text-xs" title={entry.lastError.message}>⚠</span>}
+                <button
+                  type="button"
+                  onClick={() => handleGenerateInsight(entry)}
+                  disabled={insightGeneratingId === entry.id}
+                  className="text-on-surface-variant hover:text-primary disabled:opacity-50 flex items-center"
+                  aria-label={`Generate AI insight for ${entry.symbol}`}
+                  title="Generate AI insight"
+                >
+                  {insightGeneratingId === entry.id ? <Spinner /> : <span className="material-symbols-outlined text-[16px] leading-none">psychology</span>}
+                </button>
                 <button
                   type="button"
                   onClick={() => handleRemoveFromWatchlist(entry.id)}
@@ -864,7 +894,7 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
       {aiInsight && <AiInsightCard insight={aiInsight} />}
 
       {watchedEntry && automatedInsight && (
-        <AiInsightCard insight={automatedInsight} title={`Automated Insight · updated ${timeAgo(automatedInsight.createdAt)}`} />
+        <AiInsightCard insight={automatedInsight} title={`Watchlist Insight · updated ${timeAgo(automatedInsight.createdAt)}`} />
       )}
 
       {indicatorConfig.rsiDivergence.enabled && (

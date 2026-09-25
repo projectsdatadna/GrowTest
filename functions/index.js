@@ -13,7 +13,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler'
 import { onTaskDispatched } from 'firebase-functions/v2/tasks'
 import { getFunctions } from 'firebase-admin/functions'
 import { defineSecret } from 'firebase-functions/params'
-import { runWatchlistTick, runWatchlistCleanup, recordGrowwAuthFailure, isWithinMarketHours } from './watchlistScheduler.js'
+import { runWatchlistTick, runWatchlistCleanup, recordGrowwAuthFailure, isWithinMarketHours, generateWatchlistAnalysis } from './watchlistScheduler.js'
 import {
   getUnderlyingSymbols,
   saveOptionChainSnapshot,
@@ -36,6 +36,7 @@ import {
   listActiveWatchlistEntries,
   deactivateWatchlistEntry,
   getLatestWatchlistAnalysis,
+  getLatestWatchlistDifference,
   getWatchlistEntry,
 } from './watchlistFirestoreClient.js'
 import { ensureCandlesFresh, parseIstDateTime } from './growwHistoricalData.js'
@@ -51,7 +52,7 @@ import {
   markAllHistoricalWatchlistNotificationsRead,
   getLatestHistoricalWatchlistAnalysis,
 } from './historicalWatchlistFirestoreClient.js'
-import { isEntryDue, processDueEntry } from './historicalWatchlistScheduler.js'
+import { isEntryDue, processDueEntry, generateHistoricalWatchlistInsight } from './historicalWatchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
@@ -792,6 +793,52 @@ app.get('/watchlist/:id/analysis/:tier', async (req, res) => {
 })
 
 /**
+ * On-demand AI comparison for one watchlist entry's tier - the only place
+ * this feature calls Azure OpenAI now that watchlistTick is pure data-fetch
+ * (see generateWatchlistAnalysis in watchlistScheduler.js). Runs only the
+ * requested prompt_type, not both, which is the actual token saving over the
+ * old always-run-both-automatically behavior.
+ */
+app.post('/watchlist/:id/analysis/:tier/generate', async (req, res) => {
+  try {
+    const { id, tier } = req.params
+    if (!['15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 15m, 75m' })
+    }
+    const promptType = req.body?.prompt_type === 'summarized_recommendations' ? 'summarized_recommendations' : 'master_prompt'
+
+    const entry = await getWatchlistEntry(id)
+    if (!entry) return res.status(404).json({ error: 'Watchlist entry not found' })
+
+    const analysis = await generateWatchlistAnalysis({ entry, tier, promptType, azureConfig: getAzureConfig() })
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    console.error('Error generating watchlist analysis:', error.message)
+    res.status(error.response?.status || 500).json({ error: error.message })
+  }
+})
+
+/**
+ * Latest automatic Difference-column comparison for one watchlist entry's
+ * tier - refreshed by watchlistTick itself (generateDifferenceForTier in
+ * watchlistScheduler.js), unlike the full report above which only updates
+ * when a user clicks Analyze. Pure read, same shape as the analysis GET.
+ */
+app.get('/watchlist/:id/difference/:tier', async (req, res) => {
+  try {
+    const { id, tier } = req.params
+    if (!['15m', '75m'].includes(tier)) {
+      return res.status(400).json({ error: 'tier must be one of 15m, 75m' })
+    }
+    const difference = await getLatestWatchlistDifference(id, tier)
+    res.json({ status: 'SUCCESS', difference })
+  } catch (error) {
+    console.error('Error fetching watchlist difference:', error.message)
+    res.status(500).json({ error: error.message })
+  }
+})
+
+/**
  * Historical Chart feature - fetches candles from Groww on demand (storing
  * them in Firestore), and computes+stores indicator series from them. See
  * growwHistoricalData.js/technicalIndicators.js for the actual logic; these
@@ -1027,6 +1074,28 @@ app.get('/historical-watchlist/:id/analysis', async (req, res) => {
   }
 })
 
+/**
+ * On-demand AI insight for one Historical Watchlist entry - the only place
+ * this feature calls Azure OpenAI now that the background fetch job is pure
+ * data-refresh (see generateHistoricalWatchlistInsight in
+ * historicalWatchlistScheduler.js). Persists the result, so it shows up
+ * through the GET route above immediately after.
+ */
+app.post('/historical-watchlist/:id/ai-insight', async (req, res) => {
+  try {
+    const entry = await getHistoricalWatchlistEntry(req.params.id)
+    if (!entry) return res.status(404).json({ error: 'Historical watchlist entry not found' })
+
+    const groww_token = await getGrowwAccessToken()
+    const analysis = await generateHistoricalWatchlistInsight(entry, { groww_token, azureConfig: getAzureConfig() })
+    res.json({ status: 'SUCCESS', analysis })
+  } catch (error) {
+    const azureMessage = error.response?.data?.error?.message
+    console.error('Error generating historical watchlist insight:', azureMessage || error.message)
+    res.status(error.details?.status_code || (azureMessage ? 502 : 500)).json({ error: azureMessage ? `AI insight failed: ${azureMessage}` : error.message })
+  }
+})
+
 app.get('/historical-watchlist/notifications', async (req, res) => {
   try {
     const unreadOnly = req.query.unreadOnly === 'true'
@@ -1093,6 +1162,12 @@ export const growtestApi = onRequest(
  * (see isWithinMarketHours) rather than trying to encode that window in the
  * cron expression itself, so it's simplest to just schedule "every 15
  * minutes" all day and let the function skip non-market-hours ticks.
+ *
+ * Fetches data and runs one lightweight difference-only AI call per due tier
+ * (see generateDifferenceForTier in watchlistScheduler.js) - the full
+ * institutional reports stay on-demand only (POST
+ * /watchlist/:id/analysis/:tier/generate). Still needs the Azure secrets for
+ * that automatic difference call.
  */
 export const watchlistTick = onSchedule(
   {
@@ -1130,9 +1205,9 @@ export const watchlistTick = onSchedule(
 )
 
 /**
- * Daily cleanup - wipes the day's fetched snapshots/analyses (not the
- * watchlist config itself) shortly after close, so tracking starts fresh
- * the next trading day.
+ * Daily cleanup - wipes the day's fetched snapshots/analyses/differences
+ * (not the watchlist config itself) shortly after close, so tracking starts
+ * fresh the next trading day.
  */
 export const watchlistCleanup = onSchedule(
   { schedule: '35 15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 300 },
@@ -1185,22 +1260,19 @@ export const historicalWatchlistDispatch = onSchedule(
  * queue itself rather than in-process), and `retryConfig` gives each entry
  * independent retries on transient failure - one failing symbol can never
  * block or slow down any other entry's tick, unlike the shared-tick fan-out
- * watchlistTick uses. Declares the same Azure secrets watchlistTick does
- * (needed now that processDueEntry also runs AI inference per entry -
- * previously this task never touched Azure at all) and a longer timeout
- * than the candles/indicators-only 120s used before: one AI call alone
- * regularly takes 80-90s+ (see watchlistScheduler.js's own comment on this),
- * on top of the candle fetch - still well under watchlistTick's 540s, which
- * covers many entries and two AI calls each in one invocation, vs. one
- * entry and one AI call here.
+ * watchlistTick uses.
+ *
+ * Pure data-fetch only (no AI - see generateHistoricalWatchlistInsight,
+ * called on-demand from POST /historical-watchlist/:id/ai-insight instead),
+ * so this no longer needs the Azure secrets or the longer timeout those AI
+ * calls used to require - back to the candles/indicators-only 120s.
  */
 export const historicalWatchlistFetchTask = onTaskDispatched(
   {
     retryConfig: { maxAttempts: 3, minBackoffSeconds: 30 },
     rateLimits: { maxConcurrentDispatches: 4, maxDispatchesPerSecond: 2 },
-    timeoutSeconds: 180,
+    timeoutSeconds: 120,
     memory: '256MiB',
-    secrets: [AZURE_OPENAI_API_KEY_SECRET, AZURE_OPENAI_ENDPOINT_SECRET, AZURE_OPENAI_DEPLOYMENT_SECRET, AZURE_OPENAI_API_VERSION_SECRET],
   },
   async (req) => {
     const entry = await getHistoricalWatchlistEntry(req.data.entryId)
@@ -1214,7 +1286,7 @@ export const historicalWatchlistFetchTask = onTaskDispatched(
       return
     }
 
-    await processDueEntry(entry, { groww_token, azureConfig: getAzureConfig() })
+    await processDueEntry(entry, { groww_token })
   }
 )
 

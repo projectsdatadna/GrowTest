@@ -25,7 +25,24 @@
       ]
     },
     {
+      "collectionGroup": "watchlistSnapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "watchlist_id", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "watchlistAnalyses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "watchlist_id", "order": "ASCENDING" },
+        { "fieldPath": "tier", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "watchlistDifferences",
       "queryScope": "COLLECTION",
       "fields": [
         { "fieldPath": "watchlist_id", "order": "ASCENDING" },

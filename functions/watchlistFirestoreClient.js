@@ -26,6 +26,7 @@ const db = getFirestore(admin.app(), DATABASE_ID)
 const WATCHLIST_COLLECTION = 'watchlist'
 const WATCHLIST_SNAPSHOTS_COLLECTION = 'watchlistSnapshots'
 const WATCHLIST_ANALYSES_COLLECTION = 'watchlistAnalyses'
+const WATCHLIST_DIFFERENCES_COLLECTION = 'watchlistDifferences'
 
 function serializeDoc(doc) {
   const data = doc.data()
@@ -164,6 +165,20 @@ export async function saveWatchlistAnalysis({
   return docRef.id
 }
 
+// The most recent raw snapshot for an entry - what an on-demand "generate
+// analysis" call treats as "current" (the background fetch job's own latest
+// result, not a fresh live Groww call - that's the fetch job's job, not
+// this read's).
+export async function getLatestWatchlistSnapshot(watchlist_id) {
+  const snapshot = await db
+    .collection(WATCHLIST_SNAPSHOTS_COLLECTION)
+    .where('watchlist_id', '==', watchlist_id)
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get()
+  return snapshot.empty ? null : serializeDoc(snapshot.docs[0])
+}
+
 export async function getLatestWatchlistAnalysis(watchlist_id, tier) {
   const snapshot = await db
     .collection(WATCHLIST_ANALYSES_COLLECTION)
@@ -175,10 +190,54 @@ export async function getLatestWatchlistAnalysis(watchlist_id, tier) {
   return snapshot.empty ? null : serializeDoc(snapshot.docs[0])
 }
 
+// One row per tier-tick per watchlist entry, written automatically by the
+// background job (watchlistScheduler.js's generateDifferenceForTier) -
+// separate from watchlistAnalyses (which is now only written by the
+// on-demand /generate route) since these two have different update
+// cadences: this one refreshes automatically every tier tick, the full
+// report only when a user clicks Analyze. Carries the raw current/previous
+// snapshots too (for the client's pure-numeric OI/Greeks diff panels, which
+// don't need any AI report to compute) alongside the lightweight AI
+// difference_analysis.
+export async function saveWatchlistDifference({
+  watchlist_id,
+  tier,
+  current_snapshot_id,
+  previous_snapshot_id,
+  underlying_ltp,
+  difference_analysis,
+  current_snapshot,
+  previous_snapshot,
+}) {
+  const docRef = await db.collection(WATCHLIST_DIFFERENCES_COLLECTION).add({
+    watchlist_id,
+    tier,
+    current_snapshot_id,
+    previous_snapshot_id: previous_snapshot_id || null,
+    underlying_ltp,
+    difference_analysis: difference_analysis || null,
+    current_snapshot: current_snapshot || null,
+    previous_snapshot: previous_snapshot || null,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  })
+  return docRef.id
+}
+
+export async function getLatestWatchlistDifference(watchlist_id, tier) {
+  const snapshot = await db
+    .collection(WATCHLIST_DIFFERENCES_COLLECTION)
+    .where('watchlist_id', '==', watchlist_id)
+    .where('tier', '==', tier)
+    .orderBy('createdAt', 'desc')
+    .limit(1)
+    .get()
+  return snapshot.empty ? null : serializeDoc(snapshot.docs[0])
+}
+
 // Firestore has no single "delete collection" operation - queries and
 // deletes in batches until the collection is empty. Used by the daily
-// cleanup job on watchlistSnapshots/watchlistAnalyses only - watchlist
-// (the tracked-symbol config list) is never passed to this.
+// cleanup job on watchlistSnapshots/watchlistAnalyses/watchlistDifferences
+// only - watchlist (the tracked-symbol config list) is never passed to this.
 export async function deleteAllDocsInCollection(collectionName, batchSize = 300) {
   let deletedTotal = 0
   let hasMore = true
