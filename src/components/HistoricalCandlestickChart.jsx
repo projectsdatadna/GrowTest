@@ -72,60 +72,49 @@ function toPlotlyDate(timestampSeconds) {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
 }
 
-function istDateString(timestampSeconds) {
-  const d = istDateParts(timestampSeconds)
-  const pad = (n) => String(n).padStart(2, '0')
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
-}
-
 // Plotly renders OHLC data on a continuous real-time x-axis by default, so
-// any stretch with no candles - weekends, exchange holidays, and (for
-// intraday intervals) the overnight non-market span - still gets its
+// any stretch with no candles - weekends, exchange holidays, the overnight
+// non-market span, or (for an interval like 4 Hour whose candle buckets are
+// anchored to a fixed clock grid rather than the real 9:15 session open) any
+// other gap between an interval's own candle boundaries - still gets its
 // proportional width reserved with nothing drawn in it, which reads as a
 // blank gap. xaxis.rangebreaks tells Plotly to collapse specific spans
-// instead. Weekends are a fixed rule; whether the data is intraday (and so
-// has an overnight span to collapse) is inferred from the candles' own
-// median spacing rather than threaded down as a prop, since nothing else
-// here needs to know the interval. Real holidays aren't a fixed weekly rule
-// and this app has no hardcoded exchange calendar to maintain - instead, any
-// weekday with zero candles between two directly-adjacent candles is, by
-// definition, a day the market didn't trade, so it's detected straight from
-// the loaded data and added as an explicit single-day rangebreak.
+// instead.
+//
+// Every such gap is detected directly from the loaded candles themselves,
+// rather than assuming a fixed market-hours window (e.g. 9:15-15:30): the
+// smallest gap between any two consecutive candles is taken as the real
+// interval width (however the data provider aligns its buckets - 4h for 4
+// Hour, 900s for 15 Minute, 86400s for 1 Day, etc.), and any gap notably
+// larger than that gets its own explicit collapsed span between the two real
+// timestamps on either side of it. This works uniformly for every interval,
+// with no per-interval special-casing and no hardcoded exchange calendar -
+// confirmed necessary after a fixed [15:30, 9:15] hour-of-day rule (this
+// function's previous approach) corrupted Plotly's rangebreak pixel mapping
+// for the 4 Hour interval specifically: Groww's 4-hour bars are timestamped
+// on a fixed 08:00/12:00 clock grid, not 9:15/13:15, so that assumption put
+// a real candle's own timestamp inside the span being hidden.
 function computeRangebreaks(candles) {
   const rangebreaks = [{ bounds: ['sat', 'mon'] }]
   if (candles.length < 2) return rangebreaks
 
   const gapsSeconds = []
   for (let i = 1; i < candles.length; i++) gapsSeconds.push(candles[i].timestamp - candles[i - 1].timestamp)
-  const sortedGaps = [...gapsSeconds].sort((a, b) => a - b)
-  const medianGapSeconds = sortedGaps[Math.floor(sortedGaps.length / 2)]
-  const isIntraday = medianGapSeconds < 20 * 60 * 60
-  if (isIntraday) {
-    rangebreaks.push({ bounds: [15.5, 9.25], pattern: 'hour' })
-  }
+  const baseIntervalSeconds = Math.min(...gapsSeconds)
 
-  const holidayDates = new Set()
   for (let i = 1; i < candles.length; i++) {
     const prevTs = candles[i - 1].timestamp
-    const prevDateStr = istDateString(prevTs)
-    const currDateStr = istDateString(candles[i].timestamp)
-    if (prevDateStr === currDateStr) continue // same trading day, nothing to check
+    const currTs = candles[i].timestamp
+    const gapSeconds = currTs - prevTs
+    if (gapSeconds <= baseIntervalSeconds * 1.5) continue // normal spacing, nothing to collapse
 
-    // Crossed at least one calendar-day boundary - walk each IST calendar
-    // date strictly between prev's day and curr's day and flag any weekday
-    // among them as a holiday (zero candles exist for it, by definition,
-    // since these are two directly adjacent candles).
-    let cursor = prevTs + 24 * 60 * 60
-    let guard = 0
-    while (istDateString(cursor) !== currDateStr && guard < 10) {
-      const dayOfWeek = istDateParts(cursor).getUTCDay()
-      if (dayOfWeek !== 0 && dayOfWeek !== 6) holidayDates.add(istDateString(cursor))
-      cursor += 24 * 60 * 60
-      guard++
-    }
-  }
-  if (holidayDates.size > 0) {
-    rangebreaks.push({ values: [...holidayDates] })
+    // Leave a small pad on each side so the two real candles bounding this
+    // break keep their own normal-looking width instead of sitting flush
+    // against the break edge (Plotly's bounds are ambiguous about whether
+    // the edge itself is included, and a candle sitting exactly on it is
+    // what corrupted the pixel mapping before).
+    const pad = Math.min(baseIntervalSeconds * 0.4, gapSeconds / 4)
+    rangebreaks.push({ bounds: [toPlotlyDate(prevTs + pad), toPlotlyDate(currTs - pad)] })
   }
 
   return rangebreaks
