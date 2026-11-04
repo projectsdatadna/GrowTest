@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDispatch } from 'react-redux'
 import { getCrossoverEvents, markHistoricalWatchlistNotificationRead } from '../services/api'
 import { markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
@@ -135,7 +136,10 @@ function CrossoverAlertPopup({ onViewScanner }) {
     onViewScanner?.()
   }
 
-  return (
+  // Portaled to <body>: AppShell mounts this inside the header, whose
+  // backdrop-filter makes it the containing block for `fixed` descendants -
+  // without the portal the overlay is clipped to the 48px header strip.
+  return createPortal(
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-md bg-black/60" onClick={dismiss}>
       <div
         role="dialog"
@@ -194,7 +198,8 @@ function CrossoverAlertPopup({ onViewScanner }) {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 
