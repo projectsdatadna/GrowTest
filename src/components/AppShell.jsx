@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
 import { getHistoricalWatchlistNotifications, markHistoricalWatchlistNotificationRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
 import { setHistoricalWatchlistNotifications, markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
+import { formatCandleTime, formatLines } from './crossoverFormat'
+import CrossoverAlertPopup from './CrossoverAlertPopup'
 
 /**
  * Dark "terminal" app shell (sidebar + top header) from the Stitch mockup.
@@ -30,19 +32,6 @@ function ServerTimeClock() {
 
 const NOTIFICATIONS_POLL_MS = 45000
 
-// Shared by the bell dropdown and the Crossover Scanner tab's events table.
-export function formatCandleTime(timestampSeconds) {
-  if (!timestampSeconds) return ''
-  return new Date(timestampSeconds * 1000).toLocaleString('en-IN', {
-    timeZone: 'Asia/Kolkata',
-    day: '2-digit',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-}
-
 function CrossoverNotificationBody({ n }) {
   const bullish = n.direction === 'bullish'
   return (
@@ -53,16 +42,11 @@ function CrossoverNotificationBody({ n }) {
       <div>
         Close ₹{n.closePrice} · {formatCandleTime(n.candleTimestamp)} IST bar
       </div>
-      <div>
-        {Object.entries(n.lines || {})
-          .map(([name, value]) => `${name} ${value}`)
-          .join(' · ')}
-      </div>
+      <div>{formatLines(n.lines)}</div>
       {n.confluence?.length > 0 && <div>Also: {n.confluence.join(', ')}</div>}
     </div>
   )
 }
-
 
 function timeAgo(isoString) {
   if (!isoString) return ''
@@ -218,6 +202,7 @@ function AppShell({ activeTab, onTabChange, children }) {
       <header className="sticky top-0 right-0 z-40 w-[calc(100%-250px)] ml-[250px] bg-surface/60 backdrop-blur-md border-b border-outline-variant flex justify-end items-center h-12 px-xl">
         <div className="flex items-center gap-md">
           <NotificationBell />
+          <CrossoverAlertPopup onViewScanner={() => onTabChange('crossover-scanner')} />
           <div
             className="w-8 h-8 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center text-xs font-bold"
             title="Account"

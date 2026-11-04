@@ -14,7 +14,7 @@ import {
   getCrossoverEvents,
   searchInstruments,
 } from '../services/api'
-import { formatCandleTime } from './AppShell'
+import { formatCandleTime, formatLines, getNotificationPermission, requestNotificationPermission, showBrowserNotification } from './crossoverFormat'
 import Spinner from './Spinner'
 
 const POLL_MS = 60 * 1000
@@ -34,6 +34,7 @@ function CrossoverScannerTab() {
   const [results, setResults] = useState([])
   const [adding, setAdding] = useState(false)
 
+  const [permission, setPermission] = useState(getNotificationPermission())
   const [scanning, setScanning] = useState(false)
   const [scanSummary, setScanSummary] = useState(null)
 
@@ -111,6 +112,14 @@ function CrossoverScannerTab() {
     }
   }
 
+  const handleEnableDesktopAlerts = async () => {
+    const result = await requestNotificationPermission()
+    setPermission(result)
+    if (result === 'granted') {
+      showBrowserNotification({ title: 'Desktop alerts enabled', body: 'You will be notified of new crossovers while this tab is in the background.', tag: 'crossover-test' })
+    }
+  }
+
   const handleScanNow = async () => {
     setScanning(true)
     setScanSummary(null)
@@ -134,15 +143,24 @@ function CrossoverScannerTab() {
             1-hour candles · MACD, TSI, Stoch RSI, ADX, SMA 50/200, EMA 12/26 · scanned after each bar closes (10:00–15:30 IST, Mon–Fri)
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleScanNow}
-          disabled={scanning}
-          className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50 flex items-center gap-sm"
-        >
-          {scanning && <Spinner />}
-          Scan now
-        </button>
+        <div className="flex items-center gap-md">
+          {permission === 'default' && (
+            <button type="button" onClick={handleEnableDesktopAlerts} className="text-sm text-primary hover:underline">
+              Enable desktop alerts
+            </button>
+          )}
+          {permission === 'granted' && <span className="text-xs text-on-surface-variant">Desktop alerts on</span>}
+          {permission === 'denied' && <span className="text-xs text-on-surface-variant">Desktop alerts blocked in browser settings</span>}
+          <button
+            type="button"
+            onClick={handleScanNow}
+            disabled={scanning}
+            className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50 flex items-center gap-sm"
+          >
+            {scanning && <Spinner />}
+            Scan now
+          </button>
+        </div>
       </div>
 
       {error && <div className="text-sm text-bearish">{error}</div>}
@@ -251,11 +269,7 @@ function CrossoverScannerTab() {
                 <td className="py-xs text-on-surface">{e.indicatorLabel}</td>
                 <td className={`py-xs font-semibold ${e.direction === 'bullish' ? 'text-bullish' : 'text-bearish'}`}>{e.direction === 'bullish' ? '▲ Bullish' : '▼ Bearish'}</td>
                 <td className="py-xs text-on-surface">₹{e.closePrice}</td>
-                <td className="py-xs text-on-surface-variant">
-                  {Object.entries(e.lines || {})
-                    .map(([name, value]) => `${name} ${value}`)
-                    .join(' · ')}
-                </td>
+                <td className="py-xs text-on-surface-variant">{formatLines(e.lines)}</td>
                 <td className="py-xs text-on-surface-variant">{e.confluence?.length ? e.confluence.join(', ') : '—'}</td>
               </tr>
             ))}
