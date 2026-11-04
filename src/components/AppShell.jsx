@@ -30,6 +30,40 @@ function ServerTimeClock() {
 
 const NOTIFICATIONS_POLL_MS = 45000
 
+// Shared by the bell dropdown and the Crossover Scanner tab's events table.
+export function formatCandleTime(timestampSeconds) {
+  if (!timestampSeconds) return ''
+  return new Date(timestampSeconds * 1000).toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  })
+}
+
+function CrossoverNotificationBody({ n }) {
+  const bullish = n.direction === 'bullish'
+  return (
+    <div className="flex flex-col gap-[2px]">
+      <div>
+        <span className={bullish ? 'text-bullish font-semibold' : 'text-bearish font-semibold'}>{bullish ? '▲ Bullish' : '▼ Bearish'}</span> {n.indicatorLabel}
+      </div>
+      <div>
+        Close ₹{n.closePrice} · {formatCandleTime(n.candleTimestamp)} IST bar
+      </div>
+      <div>
+        {Object.entries(n.lines || {})
+          .map(([name, value]) => `${name} ${value}`)
+          .join(' · ')}
+      </div>
+      {n.confluence?.length > 0 && <div>Also: {n.confluence.join(', ')}</div>}
+    </div>
+  )
+}
+
+
 function timeAgo(isoString) {
   if (!isoString) return ''
   const diffMs = Date.now() - new Date(isoString).getTime()
@@ -79,7 +113,7 @@ function NotificationBell() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         className="relative material-symbols-outlined text-on-surface-variant hover:text-on-surface cursor-pointer"
-        title="Historical Watchlist notifications"
+        title="Notifications"
       >
         notifications
         {unreadCount > 0 && (
@@ -110,12 +144,16 @@ function NotificationBell() {
               >
                 <div className="flex items-center justify-between gap-sm">
                   <span className="font-medium">
-                    {n.symbol} · {n.interval}
+                    {n.type === 'scanner_warning' ? 'Crossover scanner' : `${n.symbol} · ${n.interval}`}
                   </span>
                   <span className="text-[10px] text-on-surface-variant">{timeAgo(n.createdAt)}</span>
                 </div>
                 <div className="text-xs text-on-surface-variant">
-                  {n.type === 'analysis' ? (
+                  {n.type === 'scanner_warning' ? (
+                    <span className="text-bearish">{n.message}</span>
+                  ) : n.type === 'crossover' ? (
+                    <CrossoverNotificationBody n={n} />
+                  ) : n.type === 'analysis' ? (
                     <>
                       AI insight: <span className={n.outlook === 'bullish' ? 'text-bullish' : n.outlook === 'bearish' ? 'text-bearish' : ''}>{n.outlook}</span>
                       {n.summary ? ` — ${n.summary}` : ''}
@@ -141,6 +179,7 @@ const NAV_ITEMS = [
   { key: 'watchlist', label: 'Watchlist', icon: 'visibility', functional: true },
   { key: 'chart', label: 'Chart', icon: 'candlestick_chart', functional: true },
   { key: 'chart2', label: 'Chart 2', icon: 'show_chart', functional: true },
+  { key: 'crossover-scanner', label: 'Crossover Scanner', icon: 'swap_vert', functional: true },
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {

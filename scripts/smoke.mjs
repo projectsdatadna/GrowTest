@@ -65,6 +65,8 @@ const ROUTES = [
   { method: 'GET', path: '/historical-watchlist' },
   { method: 'GET', path: '/historical-watchlist/notifications' },
   { method: 'GET', path: '/historical-watchlist/notifications?unreadOnly=true' },
+  { method: 'GET', path: '/crossover-scanner/symbols' },
+  { method: 'GET', path: '/crossover-scanner/events?limit=5' },
 
   { method: 'GET', path: '/option-chain-snapshots' },
   { method: 'GET', path: `/option-chain-snapshots/${BOGUS_ID}`, ownNotFound: 'Snapshot not found' },
@@ -93,6 +95,9 @@ const ROUTES = [
   { method: 'DELETE', path: `/historical-watchlist/${BOGUS_ID}`, write: true },
   { method: 'POST', path: `/historical-watchlist/notifications/${BOGUS_ID}/read`, write: true },
   { method: 'POST', path: '/historical-watchlist/notifications/mark-all-read', body: {}, write: true },
+  { method: 'POST', path: '/crossover-scanner/symbols', body: {}, write: true, note: 'missing symbol -> 400' },
+  { method: 'DELETE', path: `/crossover-scanner/symbols/${BOGUS_ID}`, write: true },
+  { method: 'POST', path: '/crossover-scanner/run', body: {}, write: true },
   // /historical-watchlist/:id/trigger-fetch and /instrument-master-sync are
   // LOCAL-ONLY dev conveniences (server.js only, no functions/index.js
   // equivalent - Cloud Tasks/the daily sync schedule cover that server-side)

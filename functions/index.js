@@ -54,6 +54,8 @@ import {
 } from './historicalWatchlistFirestoreClient.js'
 import { isEntryDue, processDueEntry, generateHistoricalWatchlistInsight } from './historicalWatchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
+import { registerCrossoverScannerRoutes } from './crossoverScannerRoutes.js'
+import { runScan, isScanWindow, recordScannerTokenFailure } from './crossoverScanner.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
 const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
@@ -1127,6 +1129,10 @@ app.post('/historical-watchlist/notifications/mark-all-read', async (req, res) =
   }
 })
 
+// Crossover Scanner routes (shared with server.js) - registered before the
+// 404 handler below.
+registerCrossoverScannerRoutes(app, { getGrowwAccessToken })
+
 /**
  * 404 handler for unmatched API routes
  */
@@ -1302,4 +1308,44 @@ export const instrumentMasterSync = onSchedule(
     const result = await syncInstrumentMaster()
     console.log('instrumentMasterSync result:', JSON.stringify(result))
   }
+)
+
+/**
+ * Crossover Scanner - scans the scanner symbol list (crossoverScanner.js) for
+ * crossovers on the just-closed 1-hour candle and raises in-app alerts.
+ *
+ * Groww's 1-hour bars are clock-aligned (09:00 ... 15:00 IST; the first bar
+ * covers 9:15-10:00 and the last 15:00-15:30), so bars close at 10:00,
+ * 11:00 ... 15:00 and 15:30. Two schedules, both a couple of minutes after
+ * the close to give Groww time to publish the bar: hourly at :02 for
+ * 10:02-15:02, and 15:32 for the final partial bar. Same handler; a run that
+ * finds nothing new is cheap and alerts are idempotent. Weekdays only; NSE
+ * holidays just produce runs with no new candles.
+ *
+ * Pure rule-based - no Azure secrets needed.
+ */
+async function crossoverScanHandler() {
+  if (!isScanWindow()) return
+
+  let groww_token
+  try {
+    groww_token = await getGrowwAccessToken()
+  } catch (error) {
+    console.error('crossoverScan: failed to obtain Groww access token:', error.message)
+    await recordScannerTokenFailure(error)
+    return
+  }
+
+  const result = await runScan({ groww_token })
+  console.log('crossoverScan result:', JSON.stringify(result))
+}
+
+export const crossoverScanHourly = onSchedule(
+  { schedule: '2 10-15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 300, memory: '512MiB' },
+  crossoverScanHandler
+)
+
+export const crossoverScanClose = onSchedule(
+  { schedule: '32 15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 300, memory: '512MiB' },
+  crossoverScanHandler
 )

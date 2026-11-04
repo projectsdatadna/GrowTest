@@ -50,6 +50,7 @@ import {
 import { processDueEntry, generateHistoricalWatchlistInsight } from './functions/historicalWatchlistScheduler.js'
 import { generateWatchlistAnalysis } from './functions/watchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './functions/instrumentMasterSync.js'
+import { registerCrossoverScannerRoutes } from './functions/crossoverScannerRoutes.js'
 
 dotenv.config()
 
@@ -1438,6 +1439,10 @@ app.post('/historical-watchlist/:id/trigger-fetch', async (req, res) => {
     res.status(500).json({ error: error.message })
   }
 })
+
+// Crossover Scanner routes (shared with functions/index.js) - registered
+// before the 404 handler below.
+registerCrossoverScannerRoutes(app, { getGrowwAccessToken })
 
 /**
  * Error handlers

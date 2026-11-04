@@ -373,4 +373,58 @@ export const searchInstruments = async (query) => {
   }
 }
 
+// Crossover Scanner - hourly crossover scan over a user-editable symbol list
+// (see functions/crossoverScanner.js). Alerts arrive through the existing
+// notification bell (type 'crossover'); these wrappers manage the list and
+// the recent-alerts table.
+export const getCrossoverScannerSymbols = async () => {
+  try {
+    const response = await apiClient.get('/crossover-scanner/symbols')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching crossover scanner symbols:', error)
+    throw error
+  }
+}
+
+export const addCrossoverScannerSymbol = async ({ symbol, exchange = 'NSE' }) => {
+  try {
+    const response = await apiClient.post('/crossover-scanner/symbols', { symbol, exchange })
+    return response.data
+  } catch (error) {
+    console.error('Error adding crossover scanner symbol:', error)
+    throw error
+  }
+}
+
+export const removeCrossoverScannerSymbol = async (id) => {
+  try {
+    const response = await apiClient.delete(`/crossover-scanner/symbols/${id}`)
+    return response.data
+  } catch (error) {
+    console.error('Error removing crossover scanner symbol:', error)
+    throw error
+  }
+}
+
+export const runCrossoverScan = async () => {
+  try {
+    const response = await apiClient.post('/crossover-scanner/run')
+    return response.data
+  } catch (error) {
+    console.error('Error running crossover scan:', error)
+    throw error
+  }
+}
+
+export const getCrossoverEvents = async (limit = 50) => {
+  try {
+    const response = await apiClient.get('/crossover-scanner/events', { params: { limit } })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching crossover events:', error)
+    throw error
+  }
+}
+
 export default apiClient

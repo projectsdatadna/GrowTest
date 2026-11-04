@@ -355,6 +355,19 @@ function computeRsiDivergence(candles, { rsiPeriod, lookback }) {
 }
 
 /**
+ * Pure variant of ensureIndicatorFresh - parses the spec and computes the
+ * series/events in memory, with no Firestore write. For callers that only
+ * need the result (the Crossover Scanner re-computes 6 specs x every symbol
+ * every hour; caching those into technicalIndicators each time would be
+ * hundreds of pointless writes per run).
+ */
+export function computeIndicatorSpec(spec, candles) {
+  const { indicator, params } = parseIndicatorSpec(spec)
+  if (candles.length === 0) return []
+  return computeIndicator(indicator, params, candles)
+}
+
+/**
  * Computes this indicator spec fresh from the given (already-fetched)
  * candles and upserts it to Firestore, then returns it.
  *

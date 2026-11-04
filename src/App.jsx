@@ -4,6 +4,7 @@ import GreekAnalysis from './components/GreekAnalysis'
 import CompareSnapshots from './components/CompareSnapshots'
 import WatchlistTab from './components/WatchlistTab'
 import HistoricalChartTab from './components/HistoricalChartTab'
+import CrossoverScannerTab from './components/CrossoverScannerTab'
 
 // Two independent Chart tabs sharing one component - see HistoricalChartTab's
 // own `instanceKey` prop and src/store/historicalChartSlice.js's factory for
@@ -19,6 +20,7 @@ const TAB_COMPONENTS = {
   watchlist: WatchlistTab,
   chart: ChartPrimary,
   chart2: ChartSecondary,
+  'crossover-scanner': CrossoverScannerTab,
 }
 
 function App() {
