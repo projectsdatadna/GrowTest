@@ -22,7 +22,6 @@ import {
   candleEnd,
   isCandleClosed,
   latestExpectedBarEnd,
-  DEFAULT_MIN_AGREEMENT,
 } from './crossoverTimeframes.js'
 import {
   listActiveScannerSymbols,
@@ -127,7 +126,6 @@ export async function scanSymbolInterval({
   groww_token,
   now = new Date(),
   state = {},
-  minAgreement = DEFAULT_MIN_AGREEMENT[interval] ?? 1,
   loadCandles = refreshAndLoadWindow,
   persistAlert = createCrossoverNotification,
 }) {
@@ -244,12 +242,8 @@ export async function scanSymbolInterval({
       confluence,
       agreement,
     }
-    // Below the timeframe's minimum agreement the crossover is not alerted
-    // (it still shows on the Overview via `signals`).
-    if (agreement < minAgreement) {
-      found.push({ ...fields, created: false, suppressed: true })
-      continue
-    }
+    // Every crossover is stored; the per-timeframe minimum agreement is applied
+    // by the app (popup / notification filters) using the stored `agreement`.
     const created = await persistAlert(notificationId({ exchange, symbol, interval, spec: def.spec, direction, timestamp: event.timestamp }), fields)
     found.push({ ...fields, created })
   }
@@ -310,7 +304,7 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
 
   const results = await runWithConcurrency(tasks, SYMBOL_CONCURRENCY, startedAt + RUN_BUDGET_MS, async ({ entry, interval, state }) => {
     try {
-      const result = await scanSymbolInterval({ symbol: entry.symbol, exchange: entry.exchange, interval, groww_token, now, state, minAgreement: settings.minAgreement?.[interval] ?? DEFAULT_MIN_AGREEMENT[interval] })
+      const result = await scanSymbolInterval({ symbol: entry.symbol, exchange: entry.exchange, interval, groww_token, now, state })
       if (result.statePatch) await setIntervalState(entry.id, interval, result.statePatch)
       return { interval, symbol: entry.symbol, ok: true, status: result.status, found: result.found }
     } catch (error) {
@@ -332,7 +326,6 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
       scanned: mine.filter((r) => r.ok && r.status === 'scanned').length,
       notPublished: mine.filter((r) => r.ok && r.status === 'not-published').length,
       newAlerts: mine.flatMap((r) => r.found).filter((f) => f.created).length,
-      suppressed: mine.flatMap((r) => r.found).filter((f) => f.suppressed).length,
       errors: mine.filter((r) => !r.ok).length,
     }
   }

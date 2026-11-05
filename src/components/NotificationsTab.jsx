@@ -6,16 +6,18 @@
  * timeframe, crossovers are grouped by the bar they fired on, newest first.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useDispatch } from 'react-redux'
-import { getNotifications, markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
+import { useCallback, useMemo, useState } from 'react'
+import { useDispatch, useSelector } from 'react-redux'
+import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
 import { markNotificationsReadLocally, setUnreadCount } from '../store/historicalWatchlistSlice'
+import { markAllReadLocally } from '../store/liveNotificationsSlice'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
 import { TIMEFRAME_ORDER, timeframeLabel, formatCandleTime, timeAgo } from './crossoverFormat'
 import Spinner from './Spinner'
 
-const POLL_MS = 45000
-const FETCH_LIMIT = 300
+// Crossover indicators, matching the labels the scanner stores in
+// `indicatorLabel` (functions/crossoverScanner.js CROSSOVER_SPECS).
+const INDICATOR_FILTERS = ['MACD 12/26/9', 'TSI 25/13/13', 'Stoch RSI 14/14/3/3', 'ADX 14 (+DI/-DI)', 'SMA 50/200', 'EMA 12/26']
 
 const TYPE_FILTERS = [
   { key: 'all', label: 'All' },
@@ -55,53 +57,32 @@ function sortSectionItems(items) {
 
 function NotificationsTab({ onTabChange }) {
   const dispatch = useDispatch()
-  const [notifications, setNotifications] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  // The shared live feed (useLiveNotifications, mounted in AppShell) - always in
+  // sync, no polling or refresh needed here.
+  const notifications = useSelector((state) => state.liveNotifications.items)
+  const loading = useSelector((state) => !state.liveNotifications.loaded)
   const [typeFilter, setTypeFilter] = useState('all')
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [query, setQuery] = useState('')
+  const [indicator, setIndicator] = useState('all')
+  const [direction, setDirection] = useState('any')
   const [collapsed, setCollapsed] = useState(() => new Set())
-
-  const load = useCallback(async () => {
-    try {
-      const { notifications: fetched } = await getNotifications(FETCH_LIMIT)
-      setNotifications(fetched || [])
-      setError('')
-    } catch (err) {
-      setError(err?.response?.data?.error || err?.message || 'Failed to load notifications')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    load()
-    const id = setInterval(load, POLL_MS)
-    return () => clearInterval(id)
-  }, [load])
 
   const markRead = useCallback(
     (ids) => {
       if (ids.length === 0) return
-      const idSet = new Set(ids)
-      setNotifications((current) => current.map((n) => (idSet.has(n.id) ? { ...n, read: true } : n)))
       dispatch(markNotificationsReadLocally(ids))
-      markNotificationsRead(ids).catch((err) => {
-        console.error('Failed to mark notifications read:', err)
-        load()
-      })
+      for (let i = 0; i < ids.length; i += 500) {
+        markNotificationsRead(ids.slice(i, i + 500)).catch((err) => console.error('Failed to mark notifications read:', err))
+      }
     },
-    [dispatch, load]
+    [dispatch]
   )
 
   const markAllRead = () => {
-    setNotifications((current) => current.map((n) => ({ ...n, read: true })))
+    dispatch(markAllReadLocally())
     dispatch(setUnreadCount(0))
-    markAllHistoricalWatchlistNotificationsRead().catch((err) => {
-      console.error('Failed to mark all notifications read:', err)
-      load()
-    })
+    markAllHistoricalWatchlistNotificationsRead().catch((err) => console.error('Failed to mark all notifications read:', err))
   }
 
   const toggleSection = (key) =>
@@ -122,7 +103,11 @@ function NotificationsTab({ onTabChange }) {
   const sections = useMemo(() => {
     const needle = query.trim().toLowerCase()
     const visible = notifications.filter(
-      (n) => (typeFilter === 'all' || notificationType(n) === typeFilter) && (!unreadOnly || !n.read) && (!needle || (n.symbol || '').toLowerCase().includes(needle))
+      (n) => (typeFilter === 'all' || notificationType(n) === typeFilter) &&
+        (!unreadOnly || !n.read) &&
+        (!needle || (n.symbol || '').toLowerCase().includes(needle)) &&
+        (indicator === 'all' || n.indicatorLabel === indicator) &&
+        (direction === 'any' || n.direction === direction)
     )
     const byKey = new Map()
     for (const n of visible) {
@@ -133,7 +118,7 @@ function NotificationsTab({ onTabChange }) {
     return [...byKey.entries()]
       .sort(([a], [b]) => sectionRank(a) - sectionRank(b) || a.localeCompare(b))
       .map(([key, items]) => ({ key, label: sectionLabel(key), items: sortSectionItems(items), unread: items.filter((n) => !n.read).length }))
-  }, [notifications, typeFilter, unreadOnly, query])
+  }, [notifications, typeFilter, unreadOnly, query, indicator, direction])
 
   return (
     <div className="flex flex-col gap-lg">
@@ -141,7 +126,7 @@ function NotificationsTab({ onTabChange }) {
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Notifications</h2>
           <p className="text-xs text-on-surface-variant">
-            {unreadTotal} unread of the latest {notifications.length} · grouped by timeframe
+            {unreadTotal} unread of {notifications.length} loaded · live · grouped by timeframe
           </p>
         </div>
         <div className="flex items-center gap-md">
@@ -185,9 +170,21 @@ function NotificationsTab({ onTabChange }) {
           placeholder="Filter by symbol…"
           className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface"
         />
+        <select value={indicator} onChange={(e) => setIndicator(e.target.value)} className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface" aria-label="Crossover indicator">
+          <option value="all">All indicators</option>
+          {INDICATOR_FILTERS.map((label) => (
+            <option key={label} value={label}>
+              {label}
+            </option>
+          ))}
+        </select>
+        <select value={direction} onChange={(e) => setDirection(e.target.value)} className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface" aria-label="Crossover direction">
+          <option value="any">Any direction</option>
+          <option value="bullish">Bullish</option>
+          <option value="bearish">Bearish</option>
+        </select>
       </div>
 
-      {error && <div className="text-sm text-bearish">{error}</div>}
       {loading && <Spinner />}
       {!loading && sections.length === 0 && <div className="glass-panel rounded-xl p-lg text-center text-sm text-on-surface-variant">No notifications match.</div>}
 
@@ -247,7 +244,6 @@ function NotificationsTab({ onTabChange }) {
         )
       })}
 
-      {notifications.length >= FETCH_LIMIT && <div className="text-xs text-on-surface-variant text-center">Showing the latest {FETCH_LIMIT} notifications.</div>}
     </div>
   )
 }

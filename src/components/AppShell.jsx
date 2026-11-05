@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { getNotifications, getUnreadNotificationCount, markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
-import { setHistoricalWatchlistNotifications, setUnreadCount, markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
+import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
+import { setUnreadCount, markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
+import { markAllReadLocally } from '../store/liveNotificationsSlice'
+import useLiveNotifications from './useLiveNotifications'
 import { NotificationBody, notificationTitle } from './NotificationContent'
 import { timeAgo } from './crossoverFormat'
 import CrossoverAlertPopup from './CrossoverAlertPopup'
@@ -31,33 +33,18 @@ function ServerTimeClock() {
   )
 }
 
-const NOTIFICATIONS_POLL_MS = 45000
-
 // Bell icon + unread badge + short dropdown of the latest notifications (every
-// type), polled on an interval - same convention WatchlistTab uses for its own
-// polling rather than a live subscription. The badge is the server's exact
-// unread count; the full history lives on the Notifications page.
+// type), fed by the shared live feed (useLiveNotifications, mounted in
+// AppShell). The badge is the server's exact unread count; the full history
+// lives on the Notifications page.
 const BELL_DROPDOWN_LIMIT = 8
 
 function NotificationBell({ onViewAll }) {
   const dispatch = useDispatch()
-  const notifications = useSelector((state) => state.historicalWatchlist.notifications)
+  const allNotifications = useSelector((state) => state.liveNotifications.items)
+  const notifications = useMemo(() => allNotifications.slice(0, BELL_DROPDOWN_LIMIT), [allNotifications])
   const unreadCount = useSelector((state) => state.historicalWatchlist.unreadCount)
   const [open, setOpen] = useState(false)
-
-  useEffect(() => {
-    const fetchNotifications = () => {
-      Promise.all([getNotifications(BELL_DROPDOWN_LIMIT), getUnreadNotificationCount()])
-        .then(([{ notifications: latest }, { count }]) => {
-          dispatch(setHistoricalWatchlistNotifications(latest || []))
-          dispatch(setUnreadCount(count || 0))
-        })
-        .catch((err) => console.error('Failed to load notifications:', err))
-    }
-    fetchNotifications()
-    const id = setInterval(fetchNotifications, NOTIFICATIONS_POLL_MS)
-    return () => clearInterval(id)
-  }, [dispatch])
 
   const handleOpenNotification = (notification) => {
     if (notification.read) return
@@ -66,7 +53,7 @@ function NotificationBell({ onViewAll }) {
   }
 
   const handleMarkAllRead = () => {
-    dispatch(markNotificationsReadLocally(notifications.filter((n) => !n.read).map((n) => n.id)))
+    dispatch(markAllReadLocally())
     dispatch(setUnreadCount(0))
     markAllHistoricalWatchlistNotificationsRead().catch((err) => console.error('Failed to mark all notifications read:', err))
   }
@@ -144,6 +131,7 @@ const NAV_ITEMS = [
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {
+  useLiveNotifications()
   return (
     <div className="min-h-screen bg-background text-on-background">
       <aside className="fixed left-0 top-0 h-full w-[250px] bg-surface-container-low border-r border-outline-variant flex flex-col p-md gap-base z-50">

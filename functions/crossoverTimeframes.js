@@ -37,14 +37,19 @@ export const TIMEFRAMES = {
 export const TIMEFRAME_ORDER = ['15minute', '1hour', '4hour', '1day', '1week']
 
 export const DEFAULT_ENABLED_INTERVALS = [...TIMEFRAME_ORDER]
-// 15-minute alerts go to the Notifications page and bell only, by default.
-export const DEFAULT_POPUP_INTERVALS = ['1hour', '4hour', '1day', '1week']
+// Every crossover pops up instantly on every timeframe by default (the popup
+// updates live, see CrossoverAlertPopup); untick a timeframe on the Scanner
+// page to keep it to the Notifications page and bell only.
+export const DEFAULT_POPUP_INTERVALS = [...TIMEFRAME_ORDER]
+
+// Bump when the defaults above change meaning, so getScannerSettings can reset
+// values saved under the previous defaults (see crossoverScannerFirestoreClient).
+export const SETTINGS_VERSION = 2
 
 // Minimum number of indicators that must agree (cross the same direction
-// within the last few bars) before a crossover raises a popup/bell alert. Every
-// crossover is still stored and shown on the Overview regardless. With ~230
-// symbols, 15-minute bars would otherwise flood the Notifications page.
-export const DEFAULT_MIN_AGREEMENT = { '15minute': 3, '1hour': 2, '4hour': 2, '1day': 2, '1week': 2 }
+// within the last few bars) before a crossover pops up. Every crossover is
+// stored and listed regardless; 1 means every crossover pops up.
+export const DEFAULT_MIN_AGREEMENT = { '15minute': 1, '1hour': 1, '4hour': 1, '1day': 1, '1week': 1 }
 export const MIN_AGREEMENT_RANGE = [1, 6]
 
 // Expected bar-close offsets (seconds after IST midnight) on a trading day.

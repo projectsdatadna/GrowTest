@@ -72,6 +72,7 @@ const ROUTES = [
   { method: 'GET', path: '/crossover-scanner/overview' },
   { method: 'GET', path: '/notifications?limit=5' },
   { method: 'GET', path: '/notifications/unread-count' },
+  { method: 'GET', path: '/notifications/since?cursor=2020-01-01T00:00:00.000Z&limit=1' },
 
   { method: 'GET', path: '/option-chain-snapshots' },
   { method: 'GET', path: `/option-chain-snapshots/${BOGUS_ID}`, ownNotFound: 'Snapshot not found' },

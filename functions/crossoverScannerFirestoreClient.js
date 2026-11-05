@@ -11,7 +11,7 @@
 
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
-import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT } from './crossoverTimeframes.js'
+import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
 const DATABASE_ID = 'groww-dashboard'
@@ -156,7 +156,14 @@ export async function setIntervalState(id, interval, patch) {
 
 export async function getScannerSettings() {
   const doc = await db.collection(APP_CONFIG_COLLECTION).doc(SETTINGS_DOC).get()
-  const data = doc.exists ? doc.data() : {}
+  let data = doc.exists ? doc.data() : {}
+  // One-time reset of popup/agreement values saved under older defaults
+  // (15 min popups off, 3+ agreement) so the new instant-popup defaults apply.
+  if (doc.exists && (data.settingsVersion || 1) < SETTINGS_VERSION) {
+    const reset = { popupIntervals: DEFAULT_POPUP_INTERVALS, minAgreement: DEFAULT_MIN_AGREEMENT, settingsVersion: SETTINGS_VERSION }
+    await db.collection(APP_CONFIG_COLLECTION).doc(SETTINGS_DOC).set(reset, { merge: true })
+    data = { ...data, ...reset }
+  }
   return {
     enabledIntervals: Array.isArray(data.enabledIntervals) ? data.enabledIntervals : DEFAULT_ENABLED_INTERVALS,
     popupIntervals: Array.isArray(data.popupIntervals) ? data.popupIntervals : DEFAULT_POPUP_INTERVALS,
@@ -240,6 +247,22 @@ export async function listCrossoverNotifications({ limit = 50 } = {}) {
 // client.
 export async function listAllNotifications({ limit = 300 } = {}) {
   const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).orderBy('createdAt', 'desc').limit(limit).get()
+  return snapshot.docs.map(serializeNotificationDoc)
+}
+
+// Notifications created after `since` (ISO string), oldest first - the live
+// feed behind the popup / Notifications page. Single-field range + orderBy, so
+// no composite index. The caller passes a cursor slightly in the past: serverTimestamp
+// values from concurrent writers can commit out of order, and ids are de-duplicated
+// client-side.
+export async function listNotificationsSince({ since, limit = 500 } = {}) {
+  const sinceDate = new Date(since)
+  const snapshot = await db
+    .collection(NOTIFICATIONS_COLLECTION)
+    .where('createdAt', '>', admin.firestore.Timestamp.fromDate(sinceDate))
+    .orderBy('createdAt', 'asc')
+    .limit(limit)
+    .get()
   return snapshot.docs.map(serializeNotificationDoc)
 }
 

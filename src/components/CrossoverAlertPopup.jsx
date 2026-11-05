@@ -1,29 +1,28 @@
 /**
- * Popup for new hourly crossover alerts. Mounted once in AppShell so it works
- * on every tab. Polls the Crossover Scanner events route and opens one modal
- * listing every UNREAD crossover, grouped by symbol, with all the details
- * (indicator, bar time, close, line values, confluence).
+ * Popup for new crossover alerts. Mounted once in AppShell so it works on
+ * every tab. It does no fetching of its own: it reads the shared live feed
+ * (useLiveNotifications, polled every few seconds) and opens one modal listing
+ * every UNREAD crossover, grouped by symbol, with all the details (indicator,
+ * bar time, close, line values, confluence). Crossovers are appended to the
+ * open modal the moment they arrive, so it fills up live while a scan runs.
  *
  * "Unread" is the only state: dismissing marks exactly the shown ids read
  * (the same read route the bell uses), so nothing re-opens afterwards, and
- * alerts missed while the app was closed show up on the next load. When the
- * tab is hidden, a new batch also fires a native browser notification (if the
- * user enabled it from the Crossover Scanner tab).
+ * alerts missed while the app was closed show up on the next load. New
+ * arrivals also beep, and fire a native browser notification when the tab is
+ * hidden (if the user enabled it from the Crossover Scanner tab).
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useDispatch } from 'react-redux'
-import { getCrossoverEvents, markNotificationsRead } from '../services/api'
+import { useDispatch, useSelector } from 'react-redux'
+import { markNotificationsRead } from '../services/api'
 import { markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
 import { formatCandleTime, formatLines, showBrowserNotification, playAlertBeep, timeframeLabel, TIMEFRAME_ORDER } from './crossoverFormat'
 
-const POLL_MS = 45000
-const EVENTS_LIMIT = 100
-
-// Fallback until the server says which timeframes should pop up (it returns
-// popupIntervals with the events). Mirrors the server default.
-const DEFAULT_POPUP_INTERVALS = ['1hour', '4hour', '1day', '1week']
+// Fallback until the server says which timeframes should pop up (the live feed
+// returns popupIntervals). Mirrors the server default.
+const DEFAULT_POPUP_INTERVALS = TIMEFRAME_ORDER
 
 const timeframeRank = (interval) => {
   const index = TIMEFRAME_ORDER.indexOf(interval)
@@ -76,51 +75,35 @@ function summarizeForBrowser(items) {
 
 function CrossoverAlertPopup({ onViewNotifications }) {
   const dispatch = useDispatch()
-  const [items, setItems] = useState([])
-  // Ids already dismissed this session - guards against a poll landing before
-  // the mark-read request has been applied server-side.
-  const dismissedRef = useRef(new Set())
+  const feed = useSelector((state) => state.liveNotifications.items)
+  const popupIntervals = useSelector((state) => state.liveNotifications.popupIntervals)
+  const minAgreement = useSelector((state) => state.liveNotifications.minAgreement)
   // Ids already announced via browser notification/beep.
   const announcedRef = useRef(new Set())
 
-  const poll = useCallback(async () => {
-    try {
-      const { events, popupIntervals } = await getCrossoverEvents(EVENTS_LIMIT)
-      // Timeframes switched off for popups (15 min by default) stay unread and
-      // are still listed on the Notifications page and in the bell.
-      const popupSet = new Set(popupIntervals || DEFAULT_POPUP_INTERVALS)
-      const unread = (events || []).filter((e) => !e.read && popupSet.has(e.interval) && !dismissedRef.current.has(e.id))
-      if (unread.length === 0) return
+  // Every unread crossover on a popup timeframe with enough agreeing
+  // indicators. Dismissed ones are marked read in the feed, so they drop out.
+  const items = useMemo(() => {
+    const popupSet = new Set(popupIntervals || DEFAULT_POPUP_INTERVALS)
+    return feed.filter((n) => n.type === 'crossover' && !n.read && popupSet.has(n.interval) && (n.agreement ?? 1) >= (minAgreement?.[n.interval] ?? 1))
+  }, [feed, popupIntervals, minAgreement])
 
-      setItems((current) => {
-        const known = new Set(current.map((i) => i.id))
-        const added = unread.filter((e) => !known.has(e.id))
-        return added.length === 0 ? current : [...current, ...added]
-      })
-
-      const fresh = unread.filter((e) => !announcedRef.current.has(e.id))
-      if (fresh.length > 0) {
-        fresh.forEach((e) => announcedRef.current.add(e.id))
-        if (document.hidden) showBrowserNotification({ ...summarizeForBrowser(fresh), tag: 'crossover-alert' })
-        playAlertBeep()
-      }
-    } catch (error) {
-      console.error('Failed to load crossover alerts:', error)
-    }
-  }, [])
-
+  // One beep / native notification per batch of newly arrived crossovers.
   useEffect(() => {
-    poll()
-    const id = setInterval(poll, POLL_MS)
-    return () => clearInterval(id)
-  }, [poll])
+    const fresh = items.filter((e) => !announcedRef.current.has(e.id))
+    if (fresh.length === 0) return
+    fresh.forEach((e) => announcedRef.current.add(e.id))
+    if (document.hidden) showBrowserNotification({ ...summarizeForBrowser(fresh), tag: 'crossover-alert' })
+    playAlertBeep()
+  }, [items])
 
   const dismiss = useCallback(() => {
     const ids = items.map((i) => i.id)
-    ids.forEach((id) => dismissedRef.current.add(id))
-    setItems([])
     dispatch(markNotificationsReadLocally(ids))
-    markNotificationsRead(ids).catch((error) => console.error('Crossover alerts could not be marked read:', error))
+    // The read route accepts at most 1000 ids per request.
+    for (let i = 0; i < ids.length; i += 500) {
+      markNotificationsRead(ids.slice(i, i + 500)).catch((error) => console.error('Crossover alerts could not be marked read:', error))
+    }
   }, [items, dispatch])
 
   const open = items.length > 0
@@ -161,6 +144,7 @@ function CrossoverAlertPopup({ onViewNotifications }) {
         <div className="p-md border-b border-outline-variant">
           <h2 id="crossover-alert-title" className="text-base font-semibold text-on-surface">
             {items.length} crossover{items.length === 1 ? '' : 's'} detected
+            <span className="ml-sm text-[10px] font-medium uppercase text-primary align-middle">● live</span>
           </h2>
           <p className="text-xs text-on-surface-variant">
             <span className="text-bullish">▲ {bullishCount} bullish</span> · <span className="text-bearish">▼ {bearishCount} bearish</span> · {groups.length} symbol

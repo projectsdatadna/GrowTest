@@ -18,6 +18,7 @@ import {
   saveScannerSettings,
   getRunStatus,
   listAllNotifications,
+  listNotificationsSince,
   countUnreadNotifications,
   markNotificationsRead,
   listOverview,
@@ -29,6 +30,7 @@ import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestEx
 const SYMBOL_PATTERN = /^[A-Z0-9&-]{1,20}$/
 const MAX_BULK_SYMBOLS = 300
 const MAX_MARK_READ_IDS = 1000
+const CURSOR_OVERLAP_MS = 15000
 
 /**
  * Validates one symbol against the NSE/BSE instrument master (so a typo fails
@@ -221,6 +223,24 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       res.json({ status: 'SUCCESS', notifications })
     } catch (error) {
       console.error('Error listing notifications:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Live feed: everything created after `cursor` (ISO), oldest first, plus the
+  // popup settings so the client needs no second request. The server rewinds
+  // the cursor by CURSOR_OVERLAP_MS; clients de-duplicate by id.
+  app.get('/notifications/since', async (req, res) => {
+    try {
+      const cursorMs = Date.parse(req.query.cursor)
+      if (Number.isNaN(cursorMs)) return res.status(400).json({ error: 'cursor must be an ISO timestamp', required: ['cursor'] })
+      const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 500, 1), 500)
+      const since = new Date(cursorMs - CURSOR_OVERLAP_MS)
+      const [notifications, settings] = await Promise.all([listNotificationsSince({ since, limit }), getScannerSettings()])
+      const newest = notifications.at(-1)?.createdAt || null
+      res.json({ status: 'SUCCESS', notifications, cursor: newest, hasMore: notifications.length >= limit, popupIntervals: settings.popupIntervals, minAgreement: settings.minAgreement })
+    } catch (error) {
+      console.error('Error listing new notifications:', error.message)
       res.status(500).json({ error: error.message })
     }
   })

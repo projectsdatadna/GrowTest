@@ -482,6 +482,18 @@ export const getNotifications = async (limit = 300) => {
   }
 }
 
+// Live feed: notifications created after `cursor` (ISO), oldest first, with the
+// popup settings. See functions/crossoverScannerRoutes.js (/notifications/since).
+export const getNotificationsSince = async (cursor, limit = 500) => {
+  try {
+    const response = await apiClient.get('/notifications/since', { params: { cursor, limit } })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching new notifications:', error)
+    throw error
+  }
+}
+
 export const getUnreadNotificationCount = async () => {
   try {
     const response = await apiClient.get('/notifications/unread-count')

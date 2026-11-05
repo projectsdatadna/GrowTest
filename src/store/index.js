@@ -6,6 +6,7 @@ import compareReducer from './compareSlice'
 import watchlistReducer from './watchlistSlice'
 import { createHistoricalChartSlice } from './historicalChartSlice'
 import historicalWatchlistReducer from './historicalWatchlistSlice'
+import liveNotificationsReducer from './liveNotificationsSlice'
 
 // Two independent instances - one per Chart tab (see App.jsx's 'chart' and
 // 'chart2' entries) - so each tab keeps its own symbol/exchange/interval/
@@ -33,6 +34,7 @@ const rootReducer = combineReducers({
   historicalChartPrimary: historicalChartPrimarySlice.reducer,
   historicalChartSecondary: historicalChartSecondarySlice.reducer,
   historicalWatchlist: historicalWatchlistReducer,
+  liveNotifications: liveNotificationsReducer,
 })
 
 const persistedReducer = persistReducer(persistConfig, rootReducer)
