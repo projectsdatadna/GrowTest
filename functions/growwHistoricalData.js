@@ -195,14 +195,30 @@ function buildDateChunks(rangeStart, rangeEnd, interval) {
   return chunks
 }
 
-// Groww answers HTTP 429 when calls come too fast (seen firsthand while
-// diagnosing this endpoint, and when many symbols backfill at once). Wait and
-// retry a couple of times rather than failing the whole fetch; any other
-// error, or a 429 that persists, is thrown to the caller as before.
-const RATE_LIMIT_RETRY_DELAYS_MS = [2000, 4000]
+// Groww answers HTTP 429 ("Rate limit has breached") when calls come too fast -
+// seen firsthand when the scanner backfilled many symbols at once (a 10-chunk
+// weekly backfill across 4 concurrent workers is several hundred calls a
+// minute). Two defenses:
+//  1. every Groww candle call in this process waits for a shared request slot,
+//     MIN_REQUEST_GAP_MS apart (~170/min at the default), regardless of how many
+//     workers are in flight;
+//  2. a 429 that still happens is retried with growing waits instead of failing
+//     the whole fetch. Any other error, or a 429 that persists, is thrown.
+const MIN_REQUEST_GAP_MS = Number(process.env.GROWW_MIN_REQUEST_GAP_MS) || 350
+const RATE_LIMIT_RETRY_DELAYS_MS = [3000, 10000, 30000]
+
+let nextRequestSlot = 0
+
+async function waitForRequestSlot() {
+  const now = Date.now()
+  const slot = Math.max(now, nextRequestSlot)
+  nextRequestSlot = slot + MIN_REQUEST_GAP_MS
+  if (slot > now) await new Promise((resolve) => setTimeout(resolve, slot - now))
+}
 
 async function getWithRateLimitRetry(url, config) {
   for (let attempt = 0; ; attempt++) {
+    await waitForRequestSlot()
     try {
       return await axios.get(url, config)
     } catch (error) {
