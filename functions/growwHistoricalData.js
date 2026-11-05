@@ -195,6 +195,24 @@ function buildDateChunks(rangeStart, rangeEnd, interval) {
   return chunks
 }
 
+// Groww answers HTTP 429 when calls come too fast (seen firsthand while
+// diagnosing this endpoint, and when many symbols backfill at once). Wait and
+// retry a couple of times rather than failing the whole fetch; any other
+// error, or a 429 that persists, is thrown to the caller as before.
+const RATE_LIMIT_RETRY_DELAYS_MS = [2000, 4000]
+
+async function getWithRateLimitRetry(url, config) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await axios.get(url, config)
+    } catch (error) {
+      const delay = RATE_LIMIT_RETRY_DELAYS_MS[attempt]
+      if (error.response?.status !== 429 || delay === undefined) throw error
+      await new Promise((resolve) => setTimeout(resolve, delay))
+    }
+  }
+}
+
 /**
  * Fetches [rangeStart, rangeEnd] from Groww (split into MAX_SPAN_DAYS chunks,
  * made sequentially - not concurrently - to avoid tripping Groww's own rate
@@ -203,7 +221,7 @@ function buildDateChunks(rangeStart, rangeEnd, interval) {
  * write to Firestore - callers decide. Shared by ensureCandlesFresh and
  * refreshRecentCandles below.
  */
-async function fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token }) {
+export async function fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token }) {
   const headers = { Authorization: `Bearer ${groww_token}`, 'X-API-VERSION': GROWW_API_VERSION, Accept: 'application/json' }
   const growwSymbol = buildGrowwSymbol(exchange, symbol)
 
@@ -221,7 +239,7 @@ async function fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, r
 
     let response
     try {
-      response = await axios.get(`${GROWW_API_BASE_URL}/historical/candles`, { headers, params, timeout: 15000 })
+      response = await getWithRateLimitRetry(`${GROWW_API_BASE_URL}/historical/candles`, { headers, params, timeout: 15000 })
     } catch (error) {
       const err = new Error('Failed to fetch historical candles')
       err.details = {

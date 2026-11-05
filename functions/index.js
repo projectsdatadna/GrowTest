@@ -56,6 +56,7 @@ import { isEntryDue, processDueEntry, generateHistoricalWatchlistInsight } from 
 import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
 import { registerCrossoverScannerRoutes } from './crossoverScannerRoutes.js'
 import { runDispatch, recordScannerTokenFailure } from './crossoverScanner.js'
+import { deleteOldReadNotifications } from './crossoverScannerFirestoreClient.js'
 import { isDispatchWindow } from './crossoverTimeframes.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
@@ -1327,7 +1328,7 @@ export const instrumentMasterSync = onSchedule(
  * with no new bars. Replaces the earlier crossoverScanHourly/crossoverScanClose.
  */
 export const crossoverScanDispatch = onSchedule(
-  { schedule: '2,17,32,47 9-18 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 540, memory: '512MiB' },
+  { schedule: '2,17,32,47 9-18 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
   async () => {
     const now = new Date()
     if (!isDispatchWindow(now)) return
@@ -1343,5 +1344,18 @@ export const crossoverScanDispatch = onSchedule(
 
     const result = await runDispatch({ groww_token, now })
     console.log('crossoverScanDispatch result:', JSON.stringify(result))
+  }
+)
+
+/**
+ * Notifications retention - with ~230 scanner symbols a few hundred
+ * notifications accumulate every day. Deletes READ notifications older than 30
+ * days (unread ones are never touched) once a day, well outside market hours.
+ */
+export const notificationsCleanup = onSchedule(
+  { schedule: '30 6 * * *', timeZone: 'Asia/Kolkata', timeoutSeconds: 300, memory: '256MiB' },
+  async () => {
+    const deleted = await deleteOldReadNotifications({ olderThanDays: 30 })
+    console.log(`notificationsCleanup: deleted ${deleted} read notification(s) older than 30 days`)
   }
 )

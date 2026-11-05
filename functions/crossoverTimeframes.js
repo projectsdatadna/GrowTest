@@ -20,17 +20,18 @@ const DAY = 86400
 const MARKET_CLOSE_OFFSET = 15 * 3600 + 30 * 60 // 15:30 IST, seconds after IST midnight
 
 // lookbackDays: window loaded for indicator math - sized so SMA 50/200 (the
-// slowest crossover) has 200+ bars where Groww history allows. Verified live
-// on ULTRACEMCO: 14d 15m ~380 bars, 60d 1h ~295, 179d 4h ~247, 330d 1d ~230,
-// 1650d 1w ~235. Every scan re-reads this whole window from Firestore, so it
-// is kept no wider than that. tailDays: the
-// recent slice re-fetched on every scan so closed bars carry final values.
+// slowest crossover) has 200+ bars where Groww history allows. Measured live on
+// ULTRACEMCO: 14d of 15m ~265 bars, 60d of 1h ~285, 179d of 4h ~247, 330d of
+// 1d ~222, 1650d of 1w ~235. tailDays: the recent slice re-fetched on every
+// scan so closed bars carry final values. maxBars: the stored window is capped
+// at this many bars (one Firestore document per symbol+timeframe, see
+// crossoverCandleWindow.js).
 export const TIMEFRAMES = {
-  '15minute': { label: '15 min', seconds: 900, kind: 'intraday', lookbackDays: 14, tailDays: 2 },
-  '1hour': { label: '1 hour', seconds: 3600, kind: 'intraday', lookbackDays: 60, tailDays: 3 },
-  '4hour': { label: '4 hour', seconds: 14400, kind: 'intraday', lookbackDays: 179, tailDays: 7 },
-  '1day': { label: 'Daily', seconds: DAY, kind: 'day', lookbackDays: 330, tailDays: 10 },
-  '1week': { label: 'Weekly', seconds: 7 * DAY, kind: 'week', lookbackDays: 1650, tailDays: 35 },
+  '15minute': { label: '15 min', seconds: 900, kind: 'intraday', lookbackDays: 14, tailDays: 2, maxBars: 300 },
+  '1hour': { label: '1 hour', seconds: 3600, kind: 'intraday', lookbackDays: 60, tailDays: 3, maxBars: 320 },
+  '4hour': { label: '4 hour', seconds: 14400, kind: 'intraday', lookbackDays: 179, tailDays: 7, maxBars: 270 },
+  '1day': { label: 'Daily', seconds: DAY, kind: 'day', lookbackDays: 330, tailDays: 10, maxBars: 260 },
+  '1week': { label: 'Weekly', seconds: 7 * DAY, kind: 'week', lookbackDays: 1650, tailDays: 35, maxBars: 260 },
 }
 
 export const TIMEFRAME_ORDER = ['15minute', '1hour', '4hour', '1day', '1week']
@@ -38,6 +39,13 @@ export const TIMEFRAME_ORDER = ['15minute', '1hour', '4hour', '1day', '1week']
 export const DEFAULT_ENABLED_INTERVALS = [...TIMEFRAME_ORDER]
 // 15-minute alerts go to the Notifications page and bell only, by default.
 export const DEFAULT_POPUP_INTERVALS = ['1hour', '4hour', '1day', '1week']
+
+// Minimum number of indicators that must agree (cross the same direction
+// within the last few bars) before a crossover raises a popup/bell alert. Every
+// crossover is still stored and shown on the Overview regardless. With ~230
+// symbols, 15-minute bars would otherwise flood the Notifications page.
+export const DEFAULT_MIN_AGREEMENT = { '15minute': 3, '1hour': 2, '4hour': 2, '1day': 2, '1week': 2 }
+export const MIN_AGREEMENT_RANGE = [1, 6]
 
 // Expected bar-close offsets (seconds after IST midnight) on a trading day.
 const EXPECTED_END_OFFSETS = {

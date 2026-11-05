@@ -429,12 +429,24 @@ export const getCrossoverSettings = async () => {
   }
 }
 
-export const saveCrossoverSettings = async ({ enabledIntervals, popupIntervals }) => {
+export const saveCrossoverSettings = async ({ enabledIntervals, popupIntervals, minAgreement }) => {
   try {
-    const response = await apiClient.put('/crossover-scanner/settings', { enabledIntervals, popupIntervals })
+    const response = await apiClient.put('/crossover-scanner/settings', { enabledIntervals, popupIntervals, minAgreement })
     return response.data
   } catch (error) {
     console.error('Error saving crossover scanner settings:', error)
+    throw error
+  }
+}
+
+// Overview page data: every scanner symbol with each timeframe's crossover
+// summary (latest crossover per indicator).
+export const getCrossoverOverview = async () => {
+  try {
+    const response = await apiClient.get('/crossover-scanner/overview')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching crossover overview:', error)
     throw error
   }
 }

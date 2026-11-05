@@ -139,6 +139,7 @@ const NAV_ITEMS = [
   { key: 'chart', label: 'Chart', icon: 'candlestick_chart', functional: true },
   { key: 'chart2', label: 'Chart 2', icon: 'show_chart', functional: true },
   { key: 'crossover-scanner', label: 'Crossover Scanner', icon: 'swap_vert', functional: true },
+  { key: 'overview', label: 'Overview', icon: 'grid_view', functional: true },
   { key: 'notifications', label: 'Notifications', icon: 'notifications_active', functional: true },
 ]
 

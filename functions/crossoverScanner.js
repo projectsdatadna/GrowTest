@@ -14,7 +14,7 @@
  * regular freshness check is not enough).
  */
 
-import { refreshAndLoadCandles } from './growwHistoricalData.js'
+import { refreshAndLoadWindow } from './crossoverCandleWindow.js'
 import { computeIndicatorSpec } from './technicalIndicators.js'
 import {
   TIMEFRAMES,
@@ -22,6 +22,7 @@ import {
   candleEnd,
   isCandleClosed,
   latestExpectedBarEnd,
+  DEFAULT_MIN_AGREEMENT,
 } from './crossoverTimeframes.js'
 import {
   listActiveScannerSymbols,
@@ -49,9 +50,9 @@ const MAX_ATTEMPTS = { intraday: 3, day: 8, week: 8 }
 
 const SYMBOL_CONCURRENCY = 4
 
-// Stop starting new work this long into a run (the function timeout is 540s);
+// Stop starting new work this long into a run (the function timeout is 900s);
 // whatever is left stays due and is picked up on the next tick.
-const RUN_BUDGET_MS = 480000
+const RUN_BUDGET_MS = 780000
 
 // Same default params the Historical Chart tab uses (historicalChartSlice.js).
 export const CROSSOVER_SPECS = [
@@ -126,7 +127,8 @@ export async function scanSymbolInterval({
   groww_token,
   now = new Date(),
   state = {},
-  loadCandles = refreshAndLoadCandles,
+  minAgreement = DEFAULT_MIN_AGREEMENT[interval] ?? 1,
+  loadCandles = refreshAndLoadWindow,
   persistAlert = createCrossoverNotification,
 }) {
   const config = TIMEFRAMES[interval]
@@ -143,6 +145,7 @@ export async function scanSymbolInterval({
     groww_token,
     lookbackDays: config.lookbackDays,
     tailDays: config.tailDays,
+    maxBars: config.maxBars,
     backfilled: Boolean(state.backfilledAt),
     now,
   })
@@ -183,6 +186,8 @@ export async function scanSymbolInterval({
   const confluenceTimestamps = new Set(closed.slice(-CONFLUENCE_BARS).map((c) => c.timestamp))
   const closeByTimestamp = new Map(closed.map((c) => [c.timestamp, c.close]))
 
+  const barIndexByTimestamp = new Map(closed.map((c, i) => [c.timestamp, i]))
+  const signals = []
   const alertEvents = []
   const confluencePool = []
   for (const def of CROSSOVER_SPECS) {
@@ -192,6 +197,22 @@ export async function scanSymbolInterval({
     } catch (error) {
       console.error(`crossoverScanner: ${def.label} failed for ${exchange}:${symbol} ${interval}:`, error.message)
       continue
+    }
+    // The Overview's data: each indicator's most recent crossover on this
+    // timeframe, whether or not it ends up alerting.
+    const lastEvent = events.at(-1)
+    if (lastEvent) {
+      const { type, price, ...values } = lastEvent.value
+      const lines = {}
+      for (const [key, name] of Object.entries(def.lineNames)) lines[name] = round(values[key])
+      signals.push({
+        label: def.label,
+        direction: type,
+        ts: lastEvent.timestamp,
+        barsAgo: closed.length - 1 - (barIndexByTimestamp.get(lastEvent.timestamp) ?? closed.length - 1),
+        close: round(price ?? closeByTimestamp.get(lastEvent.timestamp)),
+        lines,
+      })
     }
     for (const event of events) {
       if (confluenceTimestamps.has(event.timestamp)) {
@@ -208,6 +229,7 @@ export async function scanSymbolInterval({
     for (const [key, name] of Object.entries(def.lineNames)) lines[name] = round(lineValues[key])
 
     const confluence = confluencePool.filter((c) => c.direction === direction && c.label !== def.label).map((c) => c.label)
+    const agreement = 1 + confluence.length
     const fields = {
       symbol,
       exchange,
@@ -220,6 +242,13 @@ export async function scanSymbolInterval({
       closePrice: round(price ?? closeByTimestamp.get(event.timestamp)),
       lines,
       confluence,
+      agreement,
+    }
+    // Below the timeframe's minimum agreement the crossover is not alerted
+    // (it still shows on the Overview via `signals`).
+    if (agreement < minAgreement) {
+      found.push({ ...fields, created: false, suppressed: true })
+      continue
     }
     const created = await persistAlert(notificationId({ exchange, symbol, interval, spec: def.spec, direction, timestamp: event.timestamp }), fields)
     found.push({ ...fields, created })
@@ -235,6 +264,7 @@ export async function scanSymbolInterval({
       backfilledAt,
       pendingEnd: null,
       attempts: 0,
+      summary: { asOf: closed.at(-1).timestamp, lastClose: round(closed.at(-1).close), signals },
     },
   }
 }
@@ -280,7 +310,7 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
 
   const results = await runWithConcurrency(tasks, SYMBOL_CONCURRENCY, startedAt + RUN_BUDGET_MS, async ({ entry, interval, state }) => {
     try {
-      const result = await scanSymbolInterval({ symbol: entry.symbol, exchange: entry.exchange, interval, groww_token, now, state })
+      const result = await scanSymbolInterval({ symbol: entry.symbol, exchange: entry.exchange, interval, groww_token, now, state, minAgreement: settings.minAgreement?.[interval] ?? DEFAULT_MIN_AGREEMENT[interval] })
       if (result.statePatch) await setIntervalState(entry.id, interval, result.statePatch)
       return { interval, symbol: entry.symbol, ok: true, status: result.status, found: result.found }
     } catch (error) {
@@ -302,6 +332,7 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
       scanned: mine.filter((r) => r.ok && r.status === 'scanned').length,
       notPublished: mine.filter((r) => r.ok && r.status === 'not-published').length,
       newAlerts: mine.flatMap((r) => r.found).filter((f) => f.created).length,
+      suppressed: mine.flatMap((r) => r.found).filter((f) => f.suppressed).length,
       errors: mine.filter((r) => !r.ok).length,
     }
   }

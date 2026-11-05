@@ -6,6 +6,7 @@ import WatchlistTab from './components/WatchlistTab'
 import HistoricalChartTab from './components/HistoricalChartTab'
 import CrossoverScannerTab from './components/CrossoverScannerTab'
 import NotificationsTab from './components/NotificationsTab'
+import OverviewTab from './components/OverviewTab'
 
 // Two independent Chart tabs sharing one component - see HistoricalChartTab's
 // own `instanceKey` prop and src/store/historicalChartSlice.js's factory for
@@ -23,6 +24,7 @@ const TAB_COMPONENTS = {
   chart2: ChartSecondary,
   'crossover-scanner': CrossoverScannerTab,
   notifications: NotificationsTab,
+  overview: OverviewTab,
 }
 
 function App() {

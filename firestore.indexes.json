@@ -119,6 +119,14 @@
       ]
     },
     {
+      "collectionGroup": "historicalWatchlistNotifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "read", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "historicalWatchlistAnalyses",
       "queryScope": "COLLECTION",
       "fields": [

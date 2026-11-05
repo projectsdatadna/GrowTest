@@ -20,13 +20,14 @@ import {
   listAllNotifications,
   countUnreadNotifications,
   markNotificationsRead,
+  listOverview,
 } from './crossoverScannerFirestoreClient.js'
 import { runDispatch, isIntervalDue } from './crossoverScanner.js'
 import { searchInstruments } from './instrumentMasterSync.js'
-import { TIMEFRAMES, TIMEFRAME_ORDER, isTimeframe, latestExpectedBarEnd } from './crossoverTimeframes.js'
+import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestExpectedBarEnd } from './crossoverTimeframes.js'
 
 const SYMBOL_PATTERN = /^[A-Z0-9&-]{1,20}$/
-const MAX_BULK_SYMBOLS = 100
+const MAX_BULK_SYMBOLS = 300
 const MAX_MARK_READ_IDS = 1000
 
 /**
@@ -47,6 +48,19 @@ async function addValidatedSymbol(rawSymbol, rawExchange) {
   return { symbol, id, status: created ? 'added' : 'exists' }
 }
 
+// {interval: n} with known intervals and n an integer within MIN_AGREEMENT_RANGE.
+function validMinAgreement(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return Object.entries(value).every(([interval, n]) => isTimeframe(interval) && Number.isInteger(n) && n >= MIN_AGREEMENT_RANGE[0] && n <= MIN_AGREEMENT_RANGE[1])
+}
+
+// The Scanner page polls the symbol list and has no use for the per-timeframe
+// crossover summaries (those are for the Overview page and are bulky).
+function withoutSummaries(entry) {
+  const scanState = Object.fromEntries(Object.entries(entry.scanState || {}).map(([interval, { summary, ...rest }]) => [interval, rest]))
+  return { ...entry, scanState }
+}
+
 function validIntervalList(value) {
   return Array.isArray(value) && value.every((i) => typeof i === 'string' && isTimeframe(i))
 }
@@ -57,7 +71,7 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
   app.get('/crossover-scanner/symbols', async (_req, res) => {
     try {
       await ensureSeeded()
-      const symbols = await listActiveScannerSymbols()
+      const symbols = (await listActiveScannerSymbols()).map(withoutSummaries)
       res.json({ status: 'SUCCESS', symbols })
     } catch (error) {
       console.error('Error listing crossover scanner symbols:', error.message)
@@ -83,7 +97,8 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     try {
       const raw = req.body?.symbols
       const list = Array.isArray(raw) ? raw : String(raw || '').split(/[\s,;]+/)
-      const unique = [...new Set(list.map((s) => String(s).trim().toUpperCase()).filter(Boolean))]
+      // A pasted spreadsheet column usually carries its header ("SYMBOL") - skip it.
+      const unique = [...new Set(list.map((s) => String(s).trim().toUpperCase()).filter((s) => s && s !== 'SYMBOL'))]
       if (unique.length === 0) return res.status(400).json({ error: 'No symbols provided', required: ['symbols'] })
       if (unique.length > MAX_BULK_SYMBOLS) return res.status(400).json({ error: `At most ${MAX_BULK_SYMBOLS} symbols per request` })
 
@@ -120,17 +135,32 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
 
   app.put('/crossover-scanner/settings', async (req, res) => {
     try {
-      const { enabledIntervals, popupIntervals } = req.body || {}
+      const { enabledIntervals, popupIntervals, minAgreement } = req.body || {}
       if (enabledIntervals !== undefined && !validIntervalList(enabledIntervals)) {
         return res.status(400).json({ error: 'enabledIntervals must be a list of known intervals', supported: TIMEFRAME_ORDER })
       }
       if (popupIntervals !== undefined && !validIntervalList(popupIntervals)) {
         return res.status(400).json({ error: 'popupIntervals must be a list of known intervals', supported: TIMEFRAME_ORDER })
       }
-      const settings = await saveScannerSettings({ enabledIntervals, popupIntervals })
+      if (minAgreement !== undefined && !validMinAgreement(minAgreement)) {
+        return res.status(400).json({ error: `minAgreement must map known intervals to integers ${MIN_AGREEMENT_RANGE[0]}-${MIN_AGREEMENT_RANGE[1]}`, supported: TIMEFRAME_ORDER })
+      }
+      const settings = await saveScannerSettings({ enabledIntervals, popupIntervals, minAgreement })
       res.json({ status: 'SUCCESS', settings })
     } catch (error) {
       console.error('Error saving crossover scanner settings:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Overview page: every active symbol with each timeframe's crossover
+  // summary (the most recent crossover per indicator), last processed bar and
+  // any error. Read-only; the data is written on every scan.
+  app.get('/crossover-scanner/overview', async (_req, res) => {
+    try {
+      res.json({ status: 'SUCCESS', symbols: await listOverview() })
+    } catch (error) {
+      console.error('Error reading crossover overview:', error.message)
       res.status(500).json({ error: error.message })
     }
   })

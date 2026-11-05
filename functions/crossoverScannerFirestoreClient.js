@@ -11,7 +11,7 @@
 
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
-import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS } from './crossoverTimeframes.js'
+import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
 const DATABASE_ID = 'groww-dashboard'
@@ -117,6 +117,27 @@ export async function ensureSeeded() {
   return true
 }
 
+// The Overview page's data: per active symbol, each timeframe's last processed
+// bar, error and crossover summary (written on every scan, see
+// scanSymbolInterval). Kept out of the symbols list response, which the
+// Scanner page polls and which has no use for the summaries.
+export async function listOverview() {
+  const symbols = await listActiveScannerSymbols()
+  return symbols
+    .map((entry) => ({
+      id: entry.id,
+      symbol: entry.symbol,
+      exchange: entry.exchange,
+      intervals: Object.fromEntries(
+        Object.entries(entry.scanState || {}).map(([interval, state]) => [
+          interval,
+          { lastBarEnd: state.lastBarEnd ?? null, lastScanAt: state.lastScanAt ?? null, lastError: state.lastError ?? null, summary: state.summary ?? null },
+        ])
+      ),
+    }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol))
+}
+
 // ---------- per-timeframe scan state ----------
 
 // scanState is {[interval]: {lastBarEnd, lastScanAt, lastError, backfilledAt,
@@ -139,13 +160,18 @@ export async function getScannerSettings() {
   return {
     enabledIntervals: Array.isArray(data.enabledIntervals) ? data.enabledIntervals : DEFAULT_ENABLED_INTERVALS,
     popupIntervals: Array.isArray(data.popupIntervals) ? data.popupIntervals : DEFAULT_POPUP_INTERVALS,
+    // Per-timeframe minimum number of agreeing indicators for an alert; any
+    // timeframe not saved yet falls back to its default.
+    minAgreement: { ...DEFAULT_MIN_AGREEMENT, ...(data.minAgreement || {}) },
   }
 }
 
-export async function saveScannerSettings({ enabledIntervals, popupIntervals }) {
+export async function saveScannerSettings({ enabledIntervals, popupIntervals, minAgreement }) {
   const patch = {}
   if (enabledIntervals) patch.enabledIntervals = enabledIntervals
   if (popupIntervals) patch.popupIntervals = popupIntervals
+  // merge:true deep-merges this map, so saving one timeframe keeps the rest.
+  if (minAgreement) patch.minAgreement = minAgreement
   await db.collection(APP_CONFIG_COLLECTION).doc(SETTINGS_DOC).set(patch, { merge: true })
   return getScannerSettings()
 }
@@ -237,4 +263,28 @@ export async function markNotificationsRead(ids) {
     updated += Math.min(BATCH_LIMIT, ids.length - i)
   }
   return updated
+}
+
+// Retention: read notifications older than `olderThanDays` are deleted in
+// batches (a few hundred new notifications a day accumulate with ~230 symbols).
+// Unread ones are never touched. `maxBatches` bounds one run's work.
+export async function deleteOldReadNotifications({ olderThanDays = 30, maxBatches = 20, now = new Date() } = {}) {
+  const cutoff = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000))
+  let deleted = 0
+  for (let i = 0; i < maxBatches; i++) {
+    const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).where('read', '==', true).where('createdAt', '<', cutoff).limit(BATCH_LIMIT).get()
+    if (snapshot.empty) break
+    const batch = db.batch()
+    snapshot.docs.forEach((doc) => batch.delete(doc.ref))
+    await batch.commit()
+    deleted += snapshot.size
+  }
+  return deleted
+}
+
+// Read-only twin of deleteOldReadNotifications, used to preview/verify.
+export async function countOldReadNotifications({ olderThanDays = 30, now = new Date() } = {}) {
+  const cutoff = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000))
+  const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).where('read', '==', true).where('createdAt', '<', cutoff).count().get()
+  return snapshot.data().count
 }

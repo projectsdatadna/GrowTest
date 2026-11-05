@@ -93,6 +93,7 @@ function CrossoverScannerTab({ onTabChange }) {
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkResults, setBulkResults] = useState(null)
 
+  const [filter, setFilter] = useState('')
   const [permission, setPermission] = useState(getNotificationPermission())
 
   const load = useCallback(async () => {
@@ -196,6 +197,20 @@ function CrossoverScannerTab({ onTabChange }) {
     }
   }
 
+  // Minimum number of agreeing indicators before a crossover on this timeframe
+  // raises a popup/bell alert (every crossover still shows on the Overview).
+  const setMinAgreement = async (interval, value) => {
+    if (!settings) return
+    setSettings({ ...settings, minAgreement: { ...settings.minAgreement, [interval]: value } })
+    try {
+      const { settings: saved } = await saveCrossoverSettings({ minAgreement: { [interval]: value } })
+      setSettings(saved)
+    } catch (err) {
+      setError(errorMessage(err))
+      load()
+    }
+  }
+
   const handleEnableDesktopAlerts = async () => {
     const result = await requestNotificationPermission()
     setPermission(result)
@@ -204,6 +219,8 @@ function CrossoverScannerTab({ onTabChange }) {
     }
   }
 
+  const needle = filter.trim().toLowerCase()
+  const shownSymbols = needle ? symbols.filter((s) => s.symbol.toLowerCase().includes(needle)) : symbols
   const visibleTimeframes = TIMEFRAME_ORDER.filter((i) => !settings || settings.enabledIntervals.includes(i))
 
   return (
@@ -253,6 +270,23 @@ function CrossoverScannerTab({ onTabChange }) {
                 <label className="flex items-center gap-xs text-xs text-on-surface-variant">
                   <input type="checkbox" checked={popup} disabled={!settings || !enabled} onChange={() => toggleSetting('popupIntervals', interval)} />
                   Show popup
+                </label>
+                <label className="flex items-center gap-xs text-xs text-on-surface-variant">
+                  Alert when
+                  <select
+                    value={settings?.minAgreement?.[interval] ?? 1}
+                    disabled={!settings || !enabled}
+                    onChange={(e) => setMinAgreement(interval, Number(e.target.value))}
+                    className="bg-surface-container-low border border-terminal-border rounded text-xs px-xs py-[1px] text-on-surface"
+                    aria-label={`Minimum agreeing indicators for ${TIMEFRAME_LABELS[interval]} alerts`}
+                  >
+                    {[1, 2, 3, 4, 5, 6].map((n) => (
+                      <option key={n} value={n}>
+                        {n}+
+                      </option>
+                    ))}
+                  </select>
+                  indicators agree
                 </label>
                 <div className="text-[11px] text-on-surface-variant">
                   {info?.expectedBarEnd ? <>Latest bar close: {formatCandleTime(info.expectedBarEnd)} IST</> : 'No bar yet'}
@@ -341,10 +375,19 @@ function CrossoverScannerTab({ onTabChange }) {
           </div>
         </div>
 
+        <input
+          type="text"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder={`Filter the ${symbols.length} symbols…`}
+          className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface max-w-xs"
+          aria-label="Filter symbols"
+        />
+
         {loading ? (
           <Spinner />
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto max-h-[60vh] overflow-y-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase text-on-surface-variant">
@@ -358,7 +401,7 @@ function CrossoverScannerTab({ onTabChange }) {
                 </tr>
               </thead>
               <tbody>
-                {symbols.map((s) => (
+                {shownSymbols.map((s) => (
                   <tr key={s.id} className="border-t border-outline-variant">
                     <td className="py-xs font-medium text-on-surface whitespace-nowrap">
                       {s.symbol} <span className="text-xs text-on-surface-variant">{s.exchange}</span>
@@ -375,10 +418,10 @@ function CrossoverScannerTab({ onTabChange }) {
                     </td>
                   </tr>
                 ))}
-                {symbols.length === 0 && (
+                {shownSymbols.length === 0 && (
                   <tr>
                     <td colSpan={visibleTimeframes.length + 2} className="py-md text-center text-on-surface-variant">
-                      No symbols yet - search above or paste a list to add some.
+                      {symbols.length === 0 ? 'No symbols yet - search above or paste a list to add some.' : 'No symbols match the filter.'}
                     </td>
                   </tr>
                 )}

@@ -69,6 +69,7 @@ const ROUTES = [
   { method: 'GET', path: '/crossover-scanner/events?limit=5' },
   { method: 'GET', path: '/crossover-scanner/settings' },
   { method: 'GET', path: '/crossover-scanner/status' },
+  { method: 'GET', path: '/crossover-scanner/overview' },
   { method: 'GET', path: '/notifications?limit=5' },
   { method: 'GET', path: '/notifications/unread-count' },
 
