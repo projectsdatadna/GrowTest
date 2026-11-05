@@ -19,6 +19,9 @@ import {
   getRunStatus,
   listAllNotifications,
   listNotificationsSince,
+  queryNotificationsPage,
+  countNotificationsBySection,
+  NOTIFICATION_SECTIONS,
   countUnreadNotifications,
   markNotificationsRead,
   listOverview,
@@ -31,6 +34,26 @@ const SYMBOL_PATTERN = /^[A-Z0-9&-]{1,20}$/
 const MAX_BULK_SYMBOLS = 300
 const MAX_MARK_READ_IDS = 1000
 const CURSOR_OVERLAP_MS = 15000
+const MAX_PAGE_SIZE = 100
+const NOTIFICATION_TYPES = ['crossover', 'candles', 'analysis', 'scanner_warning']
+
+// Filters shared by /notifications/page and /notifications/counts. Returns
+// {error} for an unusable value. Everything is optional; symbol is upper-cased.
+function parseNotificationFilters(query) {
+  const filters = {}
+  if (query.type) {
+    if (!NOTIFICATION_TYPES.includes(query.type)) return { error: `type must be one of ${NOTIFICATION_TYPES.join(', ')}` }
+    filters.type = query.type
+  }
+  if (query.direction) {
+    if (!['bullish', 'bearish'].includes(query.direction)) return { error: 'direction must be bullish or bearish' }
+    filters.direction = query.direction
+  }
+  if (query.indicator) filters.indicator = String(query.indicator).slice(0, 60)
+  if (query.symbol) filters.symbol = String(query.symbol).trim().toUpperCase().slice(0, 30)
+  filters.unreadOnly = query.unreadOnly === 'true'
+  return { filters }
+}
 
 /**
  * Validates one symbol against the NSE/BSE instrument master (so a typo fails
@@ -241,6 +264,35 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       res.json({ status: 'SUCCESS', notifications, cursor: newest, hasMore: notifications.length >= limit, popupIntervals: settings.popupIntervals, minAgreement: settings.minAgreement })
     } catch (error) {
       console.error('Error listing new notifications:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // One numbered page of one section (a timeframe, or 'system'), newest first.
+  app.get('/notifications/page', async (req, res) => {
+    try {
+      const section = String(req.query.section || '')
+      if (!NOTIFICATION_SECTIONS.includes(section)) return res.status(400).json({ error: 'section must be a timeframe or system', supported: NOTIFICATION_SECTIONS })
+      const { filters, error } = parseNotificationFilters(req.query)
+      if (error) return res.status(400).json({ error })
+      const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1)
+      const pageSize = Math.min(Math.max(Number.parseInt(req.query.pageSize, 10) || 25, 1), MAX_PAGE_SIZE)
+      const { items, total } = await queryNotificationsPage(section, filters, { page, pageSize })
+      res.json({ status: 'SUCCESS', section, page, pageSize, total, notifications: items })
+    } catch (error) {
+      console.error('Error listing notifications page:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Per-section totals and unread counts under the same filters.
+  app.get('/notifications/counts', async (req, res) => {
+    try {
+      const { filters, error } = parseNotificationFilters(req.query)
+      if (error) return res.status(400).json({ error })
+      res.json({ status: 'SUCCESS', sections: await countNotificationsBySection(filters) })
+    } catch (error) {
+      console.error('Error counting notifications:', error.message)
       res.status(500).json({ error: error.message })
     }
   })

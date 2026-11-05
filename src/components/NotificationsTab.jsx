@@ -1,14 +1,19 @@
 /**
  * Notifications page - every notification type in one place (crossover
  * alerts, Historical Watchlist "new candles" and AI-insight items, scanner
- * warnings), grouped by timeframe: 15 min, 1 hour, 4 hour, Daily, Weekly, any
- * other interval, then "System" for items with no timeframe. Within a
- * timeframe, crossovers are grouped by the bar they fired on, newest first.
+ * warnings), grouped by timeframe: 15 min, 1 hour, 4 hour, Daily, Weekly, then
+ * "System". Each section is paged on the SERVER (numbered pages of PAGE_SIZE)
+ * so every stored notification is reachable, and loads only when opened.
+ * Filters are sent to the server too, so totals and pages always agree.
+ * Sections start collapsed. The tab stays in sync by itself: whenever the
+ * shared live feed (useLiveNotifications) sees something new, the section
+ * counts and the open sections' first page are re-fetched. Within a page,
+ * crossovers are grouped by the time they happened, newest first.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
+import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead, getNotificationsPage, getNotificationCounts } from '../services/api'
 import { markNotificationsReadLocally, setUnreadCount } from '../store/historicalWatchlistSlice'
 import { markAllReadLocally } from '../store/liveNotificationsSlice'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
@@ -28,21 +33,50 @@ const TYPE_FILTERS = [
 ]
 
 const SYSTEM_KEY = 'system'
-
-function sectionKeyOf(n) {
-  return n.interval || SYSTEM_KEY
-}
+const SECTION_ORDER = [...TIMEFRAME_ORDER, SYSTEM_KEY]
+const PAGE_SIZE = 25
+const SYMBOL_DEBOUNCE_MS = 300
 
 function sectionLabel(key) {
   return key === SYSTEM_KEY ? 'System' : timeframeLabel(key)
 }
 
-// Fixed timeframe order first, then any other interval alphabetically (the
-// Historical Watchlist can use 30minute etc.), then System.
-function sectionRank(key) {
-  if (key === SYSTEM_KEY) return 1000
-  const index = TIMEFRAME_ORDER.indexOf(key)
-  return index === -1 ? 100 : index
+// Page numbers to show: first, last, and a window around the current page, with
+// null marking a gap ("…").
+function pageWindow(page, totalPages) {
+  const wanted = new Set([1, totalPages, page - 1, page, page + 1])
+  const numbers = [...wanted].filter((n) => n >= 1 && n <= totalPages).sort((x, y) => x - y)
+  return numbers.flatMap((n, i) => (i > 0 && n - numbers[i - 1] > 1 ? [null, n] : [n]))
+}
+
+function Pagination({ page, total, onChange }) {
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  if (totalPages <= 1) return null
+  const button = 'min-w-[28px] px-xs py-[2px] rounded text-xs border border-outline-variant'
+  return (
+    <div className="flex items-center gap-xs flex-wrap pt-sm" role="navigation" aria-label="Pages">
+      <button type="button" disabled={page <= 1} onClick={() => onChange(page - 1)} className={`${button} text-on-surface-variant disabled:opacity-40`}>
+        Prev
+      </button>
+      {pageWindow(page, totalPages).map((n, i) =>
+        n == null ? (
+          <span key={`gap-${i}`} className="text-xs text-on-surface-variant">
+            …
+          </span>
+        ) : (
+          <button key={n} type="button" onClick={() => onChange(n)} aria-current={n === page ? 'page' : undefined} className={`${button} ${n === page ? 'bg-primary-container text-on-primary-container border-transparent' : 'text-on-surface-variant hover:text-on-surface'}`}>
+            {n}
+          </button>
+        )
+      )}
+      <button type="button" disabled={page >= totalPages} onClick={() => onChange(page + 1)} className={`${button} text-on-surface-variant disabled:opacity-40`}>
+        Next
+      </button>
+      <span className="text-[11px] text-on-surface-variant ml-sm">
+        Page {page} of {totalPages} · {total} total
+      </span>
+    </div>
+  )
 }
 
 // Crossovers by bar time (newest first) then symbol; everything else after,
@@ -57,22 +91,107 @@ function sortSectionItems(items) {
 
 function NotificationsTab({ onTabChange }) {
   const dispatch = useDispatch()
-  // The shared live feed (useLiveNotifications, mounted in AppShell) - always in
-  // sync, no polling or refresh needed here.
-  const notifications = useSelector((state) => state.liveNotifications.items)
-  const loading = useSelector((state) => !state.liveNotifications.loaded)
+  // Shared live feed: used only as a change signal (newest createdAt) and to
+  // reflect read-state changes made elsewhere (popup, bell).
+  const feed = useSelector((state) => state.liveNotifications.items)
+  const liveCursor = useSelector((state) => state.liveNotifications.cursor)
+  const unreadBadge = useSelector((state) => state.historicalWatchlist.unreadCount)
+  const readIds = useMemo(() => new Set(feed.filter((n) => n.read).map((n) => n.id)), [feed])
+
   const [typeFilter, setTypeFilter] = useState('all')
   const [unreadOnly, setUnreadOnly] = useState(false)
-  const [query, setQuery] = useState('')
+  const [symbolInput, setSymbolInput] = useState('')
+  const [symbol, setSymbol] = useState('')
   const [indicator, setIndicator] = useState('all')
   const [direction, setDirection] = useState('any')
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
+  const [pages, setPages] = useState({}) // section -> current page (default 1)
+  const [counts, setCounts] = useState(null) // section -> {total, unread}
+  const [sectionData, setSectionData] = useState({}) // section -> {key, items, total, loading, error}
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    const id = setTimeout(() => setSymbol(symbolInput.trim().toUpperCase()), SYMBOL_DEBOUNCE_MS)
+    return () => clearTimeout(id)
+  }, [symbolInput])
+
+  // The filters as request params (and a stable key to detect changes).
+  const filters = useMemo(() => {
+    const f = {}
+    if (typeFilter !== 'all') f.type = typeFilter
+    if (unreadOnly) f.unreadOnly = true
+    if (symbol) f.symbol = symbol
+    if (indicator !== 'all') f.indicator = indicator
+    if (direction !== 'any') f.direction = direction
+    return f
+  }, [typeFilter, unreadOnly, symbol, indicator, direction])
+  const filtersKey = JSON.stringify(filters)
+  const filtersRef = useRef(filters)
+  filtersRef.current = filters
+
+  // A filter change goes back to page 1 everywhere.
+  useEffect(() => {
+    setPages({})
+  }, [filtersKey])
+
+  const loadCounts = useCallback(async () => {
+    const key = JSON.stringify(filtersRef.current)
+    try {
+      const { sections } = await getNotificationCounts(filtersRef.current)
+      if (JSON.stringify(filtersRef.current) === key) {
+        setCounts(sections)
+        setError('')
+      }
+    } catch (err) {
+      setError(err?.response?.data?.error || err?.message || 'Failed to load notifications')
+    }
+  }, [])
+
+  const loadSection = useCallback(async (section, page) => {
+    const key = `${JSON.stringify(filtersRef.current)}|${page}`
+    setSectionData((current) => ({ ...current, [section]: { ...current[section], key, loading: true, error: '' } }))
+    try {
+      const data = await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
+      setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { key, items: data.notifications, total: data.total, loading: false, error: '' } } : current))
+    } catch (err) {
+      setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { ...current[section], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } } : current))
+    }
+  }, [])
+
+  // Counts: on mount, when filters change, and whenever the live feed or the
+  // unread badge moves (new crossover arrived / something marked read).
+  useEffect(() => {
+    loadCounts()
+  }, [filtersKey, liveCursor, unreadBadge, loadCounts])
+
+  // Open sections load their current page when opened / paged / re-filtered.
+  useEffect(() => {
+    for (const section of expanded) {
+      const page = pages[section] || 1
+      if (sectionData[section]?.key !== `${filtersKey}|${page}`) loadSection(section, page)
+    }
+  }, [expanded, pages, filtersKey, sectionData, loadSection])
+
+  // Live: a new notification refreshes the open sections that show page 1 (later
+  // pages are left alone so the page does not shift under the reader).
+  const lastCursorRef = useRef(liveCursor)
+  useEffect(() => {
+    if (lastCursorRef.current === liveCursor) return
+    lastCursorRef.current = liveCursor
+    for (const section of expanded) {
+      if ((pages[section] || 1) === 1) loadSection(section, 1)
+    }
+  }, [liveCursor, expanded, pages, loadSection])
 
   const markRead = useCallback(
     (ids) => {
       if (ids.length === 0) return
+      const idSet = new Set(ids)
       dispatch(markNotificationsReadLocally(ids))
+      setSectionData((current) =>
+        Object.fromEntries(Object.entries(current).map(([key, data]) => [key, data.items ? { ...data, items: data.items.map((n) => (idSet.has(n.id) ? { ...n, read: true } : n)) } : data]))
+      )
       for (let i = 0; i < ids.length; i += 500) {
         markNotificationsRead(ids.slice(i, i + 500)).catch((err) => console.error('Failed to mark notifications read:', err))
       }
@@ -83,7 +202,12 @@ function NotificationsTab({ onTabChange }) {
   const markAllRead = () => {
     dispatch(markAllReadLocally())
     dispatch(setUnreadCount(0))
-    markAllHistoricalWatchlistNotificationsRead().catch((err) => console.error('Failed to mark all notifications read:', err))
+    markAllHistoricalWatchlistNotificationsRead()
+      .then(() => {
+        loadCounts()
+        expanded.forEach((section) => loadSection(section, pages[section] || 1))
+      })
+      .catch((err) => console.error('Failed to mark all notifications read:', err))
   }
 
   const toggleSection = (key) =>
@@ -94,32 +218,13 @@ function NotificationsTab({ onTabChange }) {
       return next
     })
 
-  const unreadTotal = notifications.filter((n) => !n.read).length
-  const typeCounts = useMemo(() => {
-    const counts = { all: notifications.length }
-    for (const n of notifications) counts[notificationType(n)] = (counts[notificationType(n)] || 0) + 1
-    return counts
-  }, [notifications])
+  const setSectionPage = (section, page) => setPages((current) => ({ ...current, [section]: page }))
 
-  const sections = useMemo(() => {
-    const needle = query.trim().toLowerCase()
-    const visible = notifications.filter(
-      (n) => (typeFilter === 'all' || notificationType(n) === typeFilter) &&
-        (!unreadOnly || !n.read) &&
-        (!needle || (n.symbol || '').toLowerCase().includes(needle)) &&
-        (indicator === 'all' || n.indicatorLabel === indicator) &&
-        (direction === 'any' || n.direction === direction)
-    )
-    const byKey = new Map()
-    for (const n of visible) {
-      const key = sectionKeyOf(n)
-      if (!byKey.has(key)) byKey.set(key, [])
-      byKey.get(key).push(n)
-    }
-    return [...byKey.entries()]
-      .sort(([a], [b]) => sectionRank(a) - sectionRank(b) || a.localeCompare(b))
-      .map(([key, items]) => ({ key, label: sectionLabel(key), items: sortSectionItems(items), unread: items.filter((n) => !n.read).length }))
-  }, [notifications, typeFilter, unreadOnly, query, indicator, direction])
+  const unreadTotal = counts ? Object.values(counts).reduce((sum, c) => sum + c.unread, 0) : 0
+  const grandTotal = counts ? Object.values(counts).reduce((sum, c) => sum + c.total, 0) : 0
+  const visibleSections = SECTION_ORDER.filter((key) => (counts?.[key]?.total || 0) > 0)
+
+  const selectClass = 'bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface'
 
   return (
     <div className="flex flex-col gap-lg">
@@ -127,7 +232,7 @@ function NotificationsTab({ onTabChange }) {
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Notifications</h2>
           <p className="text-xs text-on-surface-variant">
-            {unreadTotal} unread of {notifications.length} loaded · live · grouped by timeframe
+            {counts ? `${unreadTotal} unread of ${grandTotal} matching` : 'Loading…'} · live · grouped by timeframe · {PAGE_SIZE} per page
           </p>
         </div>
         <div className="flex items-center gap-md">
@@ -139,7 +244,7 @@ function NotificationsTab({ onTabChange }) {
           <button
             type="button"
             onClick={markAllRead}
-            disabled={unreadTotal === 0}
+            disabled={unreadBadge === 0 && unreadTotal === 0}
             className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50"
           >
             Mark all read
@@ -157,21 +262,15 @@ function NotificationsTab({ onTabChange }) {
               typeFilter === f.key ? 'bg-primary-container text-on-primary-container border-transparent' : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
             }`}
           >
-            {f.label} {typeCounts[f.key] ? `(${typeCounts[f.key]})` : ''}
+            {f.label}
           </button>
         ))}
         <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md">
           <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
           Unread only
         </label>
-        <input
-          type="text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter by symbol…"
-          className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface"
-        />
-        <select value={indicator} onChange={(e) => setIndicator(e.target.value)} className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface" aria-label="Crossover indicator">
+        <input type="text" value={symbolInput} onChange={(e) => setSymbolInput(e.target.value)} placeholder="Symbol (exact, e.g. ABB)…" className={selectClass} aria-label="Filter by symbol" />
+        <select value={indicator} onChange={(e) => setIndicator(e.target.value)} className={selectClass} aria-label="Crossover indicator">
           <option value="all">All indicators</option>
           {INDICATOR_FILTERS.map((label) => (
             <option key={label} value={label}>
@@ -179,72 +278,78 @@ function NotificationsTab({ onTabChange }) {
             </option>
           ))}
         </select>
-        <select value={direction} onChange={(e) => setDirection(e.target.value)} className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface" aria-label="Crossover direction">
+        <select value={direction} onChange={(e) => setDirection(e.target.value)} className={selectClass} aria-label="Crossover direction">
           <option value="any">Any direction</option>
           <option value="bullish">Bullish</option>
           <option value="bearish">Bearish</option>
         </select>
       </div>
 
-      {loading && <Spinner />}
-      {!loading && sections.length === 0 && <div className="glass-panel rounded-xl p-lg text-center text-sm text-on-surface-variant">No notifications match.</div>}
+      {error && <div className="text-sm text-bearish">{error}</div>}
+      {!counts && !error && <Spinner />}
+      {counts && visibleSections.length === 0 && <div className="glass-panel rounded-xl p-lg text-center text-sm text-on-surface-variant">No notifications match.</div>}
 
-      {sections.map((section) => {
-        const isCollapsed = !expanded.has(section.key)
+      {visibleSections.map((key) => {
+        const isCollapsed = !expanded.has(key)
+        const page = pages[key] || 1
+        const { total, unread } = counts[key]
+        const data = sectionData[key]
+        const items = data?.items ? sortSectionItems(data.items) : []
         let lastBar = null
         return (
-          <section key={section.key} className="glass-panel rounded-xl">
+          <section key={key} className="glass-panel rounded-xl">
             <div className="flex items-center justify-between gap-md p-md">
-              <button type="button" onClick={() => toggleSection(section.key)} className="flex items-center gap-sm text-left" aria-expanded={!isCollapsed}>
+              <button type="button" onClick={() => toggleSection(key)} className="flex items-center gap-sm text-left" aria-expanded={!isCollapsed}>
                 <span className="material-symbols-outlined text-on-surface-variant">{isCollapsed ? 'chevron_right' : 'expand_more'}</span>
-                <span className="text-sm font-semibold text-on-surface">{section.label}</span>
-                <span className="text-xs text-on-surface-variant">{section.items.length}</span>
-                {section.unread > 0 && <span className="min-w-[18px] h-[18px] px-[5px] rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center">{section.unread}</span>}
+                <span className="text-sm font-semibold text-on-surface">{sectionLabel(key)}</span>
+                <span className="text-xs text-on-surface-variant">{total}</span>
+                {unread > 0 && <span className="min-w-[18px] h-[18px] px-[5px] rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center">{unread}</span>}
               </button>
-              {section.unread > 0 && (
-                <button
-                  type="button"
-                  onClick={() => markRead(section.items.filter((n) => !n.read).map((n) => n.id))}
-                  className="text-xs text-primary hover:underline"
-                >
-                  Mark {section.label} read
+              {!isCollapsed && items.some((n) => !n.read && !readIds.has(n.id)) && (
+                <button type="button" onClick={() => markRead(items.filter((n) => !n.read && !readIds.has(n.id)).map((n) => n.id))} className="text-xs text-primary hover:underline">
+                  Mark this page read
                 </button>
               )}
             </div>
 
             {!isCollapsed && (
-              <ul className="px-md pb-md flex flex-col gap-xs">
-                {section.items.map((n) => {
-                  const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null
-                  const showBarHeader = barKey != null && barKey !== lastBar
-                  lastBar = barKey
-                  return (
-                    <li key={n.id}>
-                      {showBarHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">Crossed {formatCrossoverTime(n)}</div>}
-                      <div
-                        onClick={() => !n.read && markRead([n.id])}
-                        className={`px-sm py-xs rounded-lg text-sm ${n.read ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
-                      >
-                        <div className="flex items-center justify-between gap-sm">
-                          <span className="font-medium flex items-center gap-xs">
-                            {!n.read && <span className="w-2 h-2 rounded-full bg-primary inline-block" aria-label="unread" />}
-                            {notificationTitle(n)}
-                          </span>
-                          <span className="text-[10px] text-on-surface-variant">{notificationType(n) === 'crossover' ? formatCrossoverTime(n) : timeAgo(n.createdAt)}</span>
+              <div className="px-md pb-md">
+                {data?.loading && items.length === 0 && <Spinner />}
+                {data?.error && <div className="text-sm text-bearish">{data.error}</div>}
+                <ul className="flex flex-col gap-xs">
+                  {items.map((n) => {
+                    const isRead = n.read || readIds.has(n.id)
+                    const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null
+                    const showBarHeader = barKey != null && barKey !== lastBar
+                    lastBar = barKey
+                    return (
+                      <li key={n.id}>
+                        {showBarHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">Crossed {formatCrossoverTime(n)}</div>}
+                        <div
+                          onClick={() => !isRead && markRead([n.id])}
+                          className={`px-sm py-xs rounded-lg text-sm ${isRead ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
+                        >
+                          <div className="flex items-center justify-between gap-sm">
+                            <span className="font-medium flex items-center gap-xs">
+                              {!isRead && <span className="w-2 h-2 rounded-full bg-primary inline-block" aria-label="unread" />}
+                              {notificationTitle(n)}
+                            </span>
+                            <span className="text-[10px] text-on-surface-variant">{notificationType(n) === 'crossover' ? formatCrossoverTime(n) : timeAgo(n.createdAt)}</span>
+                          </div>
+                          <div className="text-xs text-on-surface-variant">
+                            <NotificationBody n={n} />
+                          </div>
                         </div>
-                        <div className="text-xs text-on-surface-variant">
-                          <NotificationBody n={n} />
-                        </div>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
+                      </li>
+                    )
+                  })}
+                </ul>
+                <Pagination page={page} total={data?.total ?? total} onChange={(next) => setSectionPage(key, next)} />
+              </div>
             )}
           </section>
         )
       })}
-
     </div>
   )
 }

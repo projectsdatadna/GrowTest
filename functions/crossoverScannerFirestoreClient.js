@@ -266,6 +266,63 @@ export async function listNotificationsSince({ since, limit = 500 } = {}) {
   return snapshot.docs.map(serializeNotificationDoc)
 }
 
+// ---------- paged notification views (the Notifications page) ----------
+
+// Sections the page is grouped into: the five scanner timeframes plus 'system'
+// (scanner warnings, which carry no interval).
+const SYSTEM_SECTION = 'system'
+const SECTION_KEYS = [...DEFAULT_ENABLED_INTERVALS, SYSTEM_SECTION]
+
+// One section's query with the user's filters applied. Only equality filters
+// (Firestore merges the single-field/composite indexes for these, see
+// firestore.indexes.json), so there is no substring search: `symbol` is an exact
+// match. Returns null when the filters can't match anything in this section.
+function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol } = {}) {
+  let query = db.collection(NOTIFICATIONS_COLLECTION)
+  if (section === SYSTEM_SECTION) {
+    if (type && type !== 'scanner_warning') return null
+    query = query.where('type', '==', 'scanner_warning')
+  } else {
+    query = query.where('interval', '==', section)
+    if (type) query = query.where('type', '==', type)
+  }
+  if (unreadOnly) query = query.where('read', '==', false)
+  if (indicator) query = query.where('indicatorLabel', '==', indicator)
+  if (direction) query = query.where('direction', '==', direction)
+  if (symbol) query = query.where('symbol', '==', symbol)
+  return query
+}
+
+// One numbered page of a section, newest first, plus the section's total for
+// these filters. Offset paging: skipped docs are billed as reads, fine at this
+// scale (page 20 of 25 = 500 reads).
+export async function queryNotificationsPage(section, filters = {}, { page = 1, pageSize = 25 } = {}) {
+  const query = sectionQuery(section, filters)
+  if (!query) return { items: [], total: 0 }
+  const [snapshot, count] = await Promise.all([
+    query.orderBy('createdAt', 'desc').offset((page - 1) * pageSize).limit(pageSize).get(),
+    query.count().get(),
+  ])
+  return { items: snapshot.docs.map(serializeNotificationDoc), total: count.data().count }
+}
+
+// {[section]: {total, unread}} for every section under the same filters, so
+// the page can show section headers without loading their items.
+export async function countNotificationsBySection(filters = {}) {
+  const entries = await Promise.all(
+    SECTION_KEYS.map(async (section) => {
+      const all = sectionQuery(section, filters)
+      const unread = sectionQuery(section, { ...filters, unreadOnly: true })
+      if (!all || !unread) return [section, { total: 0, unread: 0 }]
+      const [total, unreadCount] = await Promise.all([all.count().get(), unread.count().get()])
+      return [section, { total: total.data().count, unread: unreadCount.data().count }]
+    })
+  )
+  return Object.fromEntries(entries)
+}
+
+export const NOTIFICATION_SECTIONS = SECTION_KEYS
+
 // Server-side count, so the bell badge is exact rather than "unread among the
 // latest 20".
 export async function countUnreadNotifications() {

@@ -494,6 +494,29 @@ export const getNotificationsSince = async (cursor, limit = 500) => {
   }
 }
 
+// Numbered page of one Notifications section (a timeframe key, or 'system') under
+// the given filters ({type, unreadOnly, indicator, direction, symbol}).
+export const getNotificationsPage = async (section, filters = {}, page = 1, pageSize = 25) => {
+  try {
+    const response = await apiClient.get('/notifications/page', { params: { section, page, pageSize, ...filters } })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching notifications page:', error)
+    throw error
+  }
+}
+
+// {[section]: {total, unread}} for every Notifications section under the same filters.
+export const getNotificationCounts = async (filters = {}) => {
+  try {
+    const response = await apiClient.get('/notifications/counts', { params: filters })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching notification counts:', error)
+    throw error
+  }
+}
+
 export const getUnreadNotificationCount = async () => {
   try {
     const response = await apiClient.get('/notifications/unread-count')

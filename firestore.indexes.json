@@ -127,6 +127,38 @@
       ]
     },
     {
+      "collectionGroup": "historicalWatchlistNotifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "interval", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "historicalWatchlistNotifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "symbol", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "historicalWatchlistNotifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "indicatorLabel", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "historicalWatchlistNotifications",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "direction", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "historicalWatchlistAnalyses",
       "queryScope": "COLLECTION",
       "fields": [
