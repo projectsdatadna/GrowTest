@@ -44,6 +44,36 @@ export function formatCandleTime(timestampSeconds) {
   })
 }
 
+// When a crossover actually happened: the moment the bar that produced it
+// CLOSED, not the bar's start label (Groww labels a 4-hour bar "08:00" and a
+// 1-hour bar "11:00", which are start times) and not when the scanner stored
+// the alert. Mirrors candleEnd() in functions/crossoverTimeframes.js.
+const IST_OFFSET_SECONDS = 5.5 * 3600
+const DAY_SECONDS = 86400
+const MARKET_CLOSE_OFFSET = 15 * 3600 + 30 * 60 // 15:30 IST, seconds after IST midnight
+const INTRADAY_SECONDS = { '15minute': 900, '1hour': 3600, '4hour': 14400 }
+
+export function crossoverTimestamp(n) {
+  const start = n?.candleTimestamp
+  if (!start) return 0
+  const daysSinceEpoch = Math.floor((start + IST_OFFSET_SECONDS) / DAY_SECONDS)
+  const dayStart = daysSinceEpoch * DAY_SECONDS - IST_OFFSET_SECONDS
+  const close = dayStart + MARKET_CLOSE_OFFSET
+  if (INTRADAY_SECONDS[n.interval]) return Math.min(start + INTRADAY_SECONDS[n.interval], close)
+  if (n.interval === '1day') return close
+  if (n.interval === '1week') {
+    const weekday = (daysSinceEpoch + 4) % 7 // 0 = Sunday ... 6 = Saturday (1970-01-01 was a Thursday)
+    return dayStart - ((weekday + 6) % 7) * DAY_SECONDS + 4 * DAY_SECONDS + MARKET_CLOSE_OFFSET
+  }
+  return start
+}
+
+// "05 Nov, 12:00 IST"
+export function formatCrossoverTime(n) {
+  const timestamp = crossoverTimestamp(n)
+  return timestamp ? `${formatCandleTime(timestamp)} IST` : ''
+}
+
 // {MACD: 1.42, Signal: 1.31} -> "MACD 1.42 · Signal 1.31"
 export function formatLines(lines) {
   return Object.entries(lines || {})

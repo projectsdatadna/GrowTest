@@ -12,7 +12,7 @@ import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } fr
 import { markNotificationsReadLocally, setUnreadCount } from '../store/historicalWatchlistSlice'
 import { markAllReadLocally } from '../store/liveNotificationsSlice'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
-import { TIMEFRAME_ORDER, timeframeLabel, formatCandleTime, timeAgo } from './crossoverFormat'
+import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTime, timeAgo } from './crossoverFormat'
 import Spinner from './Spinner'
 
 // Crossover indicators, matching the labels the scanner stores in
@@ -50,7 +50,7 @@ function sectionRank(key) {
 function sortSectionItems(items) {
   const crossovers = items
     .filter((n) => notificationType(n) === 'crossover')
-    .sort((a, b) => b.candleTimestamp - a.candleTimestamp || a.symbol.localeCompare(b.symbol) || a.indicatorLabel.localeCompare(b.indicatorLabel))
+    .sort((a, b) => crossoverTimestamp(b) - crossoverTimestamp(a) || a.symbol.localeCompare(b.symbol) || a.indicatorLabel.localeCompare(b.indicatorLabel))
   const others = items.filter((n) => notificationType(n) !== 'crossover').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   return [...crossovers, ...others]
 }
@@ -214,12 +214,12 @@ function NotificationsTab({ onTabChange }) {
             {!isCollapsed && (
               <ul className="px-md pb-md flex flex-col gap-xs">
                 {section.items.map((n) => {
-                  const barKey = notificationType(n) === 'crossover' ? n.candleTimestamp : null
+                  const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null
                   const showBarHeader = barKey != null && barKey !== lastBar
                   lastBar = barKey
                   return (
                     <li key={n.id}>
-                      {showBarHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">Bar {formatCandleTime(barKey)} IST</div>}
+                      {showBarHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">Crossed {formatCrossoverTime(n)}</div>}
                       <div
                         onClick={() => !n.read && markRead([n.id])}
                         className={`px-sm py-xs rounded-lg text-sm ${n.read ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
@@ -229,7 +229,7 @@ function NotificationsTab({ onTabChange }) {
                             {!n.read && <span className="w-2 h-2 rounded-full bg-primary inline-block" aria-label="unread" />}
                             {notificationTitle(n)}
                           </span>
-                          <span className="text-[10px] text-on-surface-variant">{timeAgo(n.createdAt)}</span>
+                          <span className="text-[10px] text-on-surface-variant">{notificationType(n) === 'crossover' ? formatCrossoverTime(n) : timeAgo(n.createdAt)}</span>
                         </div>
                         <div className="text-xs text-on-surface-variant">
                           <NotificationBody n={n} />

@@ -13,7 +13,7 @@
 
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import { getCrossoverOverview } from '../services/api'
-import { TIMEFRAME_ORDER, TIMEFRAME_LABELS, formatCandleTime, formatLines, timeAgo } from './crossoverFormat'
+import { TIMEFRAME_ORDER, TIMEFRAME_LABELS, formatCrossoverTime, formatLines, timeAgo } from './crossoverFormat'
 import Spinner from './Spinner'
 
 const POLL_MS = 120 * 1000
@@ -88,7 +88,7 @@ function ExpandedRow({ entry, colSpan }) {
                   {signals.map((signal) => (
                     <li key={signal.label} className="text-xs text-on-surface-variant">
                       <span className={signal.direction === 'bullish' ? 'text-bullish font-semibold' : 'text-bearish font-semibold'}>{signal.direction === 'bullish' ? '▲' : '▼'}</span>{' '}
-                      <span className="text-on-surface">{signal.label}</span> · {signal.barsAgo === 0 ? 'latest bar' : `${signal.barsAgo} bar${signal.barsAgo === 1 ? '' : 's'} ago`} · {formatCandleTime(signal.ts)} IST
+                      <span className="text-on-surface">{signal.label}</span> · {signal.barsAgo === 0 ? 'latest bar' : `${signal.barsAgo} bar${signal.barsAgo === 1 ? '' : 's'} ago`} · {formatCrossoverTime({ candleTimestamp: signal.ts, interval })}
                       <div>
                         Close ₹{signal.close} · {formatLines(signal.lines)}
                       </div>

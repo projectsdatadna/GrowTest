@@ -5,7 +5,7 @@
  * 'candles' notification (its original, only shape).
  */
 
-import { formatCandleTime, formatLines, timeframeLabel } from './crossoverFormat'
+import { formatCrossoverTime, formatLines, timeframeLabel } from './crossoverFormat'
 
 export function notificationType(n) {
   return n.type || 'candles'
@@ -35,7 +35,7 @@ export function NotificationBody({ n }) {
           <DirectionBadge direction={n.direction} /> <span className="text-on-surface">{n.indicatorLabel}</span>
         </div>
         <div>
-          Close ₹{n.closePrice} · {formatCandleTime(n.candleTimestamp)} IST bar
+          Close ₹{n.closePrice} · Crossed {formatCrossoverTime(n)}
         </div>
         <div>{formatLines(n.lines)}</div>
         {n.confluence?.length > 0 && <div>Also crossed: {n.confluence.join(', ')}</div>}

@@ -4,8 +4,8 @@ import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } fr
 import { setUnreadCount, markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
 import { markAllReadLocally } from '../store/liveNotificationsSlice'
 import useLiveNotifications from './useLiveNotifications'
-import { NotificationBody, notificationTitle } from './NotificationContent'
-import { timeAgo } from './crossoverFormat'
+import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
+import { timeAgo, formatCrossoverTime } from './crossoverFormat'
 import CrossoverAlertPopup from './CrossoverAlertPopup'
 
 /**
@@ -102,7 +102,7 @@ function NotificationBell({ onViewAll }) {
               >
                 <div className="flex items-center justify-between gap-sm">
                   <span className="font-medium">{notificationTitle(n)}</span>
-                  <span className="text-[10px] text-on-surface-variant">{timeAgo(n.createdAt)}</span>
+                  <span className="text-[10px] text-on-surface-variant">{notificationType(n) === 'crossover' ? formatCrossoverTime(n) : timeAgo(n.createdAt)}</span>
                 </div>
                 <div className="text-xs text-on-surface-variant">
                   <NotificationBody n={n} />
