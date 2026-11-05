@@ -55,7 +55,8 @@ import {
 import { isEntryDue, processDueEntry, generateHistoricalWatchlistInsight } from './historicalWatchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
 import { registerCrossoverScannerRoutes } from './crossoverScannerRoutes.js'
-import { runScan, isScanWindow, recordScannerTokenFailure } from './crossoverScanner.js'
+import { runDispatch, recordScannerTokenFailure } from './crossoverScanner.js'
+import { isDispatchWindow } from './crossoverTimeframes.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
 const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
@@ -1311,41 +1312,36 @@ export const instrumentMasterSync = onSchedule(
 )
 
 /**
- * Crossover Scanner - scans the scanner symbol list (crossoverScanner.js) for
- * crossovers on the just-closed 1-hour candle and raises in-app alerts.
+ * Crossover Scanner dispatcher - the one automatic trigger for every
+ * timeframe (15 min, 1 hour, 4 hour, Daily, Weekly). Ticks every 15 minutes,
+ * a couple of minutes after each quarter-hour so Groww has published the bar
+ * that just closed, 09:30-18:30 IST on weekdays. Each tick scans only what is
+ * due (a symbol/timeframe whose latest expected bar close is newer than the
+ * last one it processed - see isIntervalDue in crossoverScanner.js), so most
+ * ticks do little: 15-minute bars every tick, 1-hour on the hour, 4-hour at
+ * 12:00 and 15:30, Daily/Weekly after the 15:30 close (retried until
+ * published, hence the 18:30 tail). A symbol with no scan state is simply
+ * due, so newly added symbols are picked up automatically.
  *
- * Groww's 1-hour bars are clock-aligned (09:00 ... 15:00 IST; the first bar
- * covers 9:15-10:00 and the last 15:00-15:30), so bars close at 10:00,
- * 11:00 ... 15:00 and 15:30. Two schedules, both a couple of minutes after
- * the close to give Groww time to publish the bar: hourly at :02 for
- * 10:02-15:02, and 15:32 for the final partial bar. Same handler; a run that
- * finds nothing new is cheap and alerts are idempotent. Weekdays only; NSE
- * holidays just produce runs with no new candles.
- *
- * Pure rule-based - no Azure secrets needed.
+ * Pure rule-based - no Azure secrets needed. NSE holidays just produce ticks
+ * with no new bars. Replaces the earlier crossoverScanHourly/crossoverScanClose.
  */
-async function crossoverScanHandler() {
-  if (!isScanWindow()) return
+export const crossoverScanDispatch = onSchedule(
+  { schedule: '2,17,32,47 9-18 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 540, memory: '512MiB' },
+  async () => {
+    const now = new Date()
+    if (!isDispatchWindow(now)) return
 
-  let groww_token
-  try {
-    groww_token = await getGrowwAccessToken()
-  } catch (error) {
-    console.error('crossoverScan: failed to obtain Groww access token:', error.message)
-    await recordScannerTokenFailure(error)
-    return
+    let groww_token
+    try {
+      groww_token = await getGrowwAccessToken()
+    } catch (error) {
+      console.error('crossoverScanDispatch: failed to obtain Groww access token:', error.message)
+      await recordScannerTokenFailure(error, now)
+      return
+    }
+
+    const result = await runDispatch({ groww_token, now })
+    console.log('crossoverScanDispatch result:', JSON.stringify(result))
   }
-
-  const result = await runScan({ groww_token })
-  console.log('crossoverScan result:', JSON.stringify(result))
-}
-
-export const crossoverScanHourly = onSchedule(
-  { schedule: '2 10-15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 300, memory: '512MiB' },
-  crossoverScanHandler
-)
-
-export const crossoverScanClose = onSchedule(
-  { schedule: '32 15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 300, memory: '512MiB' },
-  crossoverScanHandler
 )

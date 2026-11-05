@@ -67,6 +67,10 @@ const ROUTES = [
   { method: 'GET', path: '/historical-watchlist/notifications?unreadOnly=true' },
   { method: 'GET', path: '/crossover-scanner/symbols' },
   { method: 'GET', path: '/crossover-scanner/events?limit=5' },
+  { method: 'GET', path: '/crossover-scanner/settings' },
+  { method: 'GET', path: '/crossover-scanner/status' },
+  { method: 'GET', path: '/notifications?limit=5' },
+  { method: 'GET', path: '/notifications/unread-count' },
 
   { method: 'GET', path: '/option-chain-snapshots' },
   { method: 'GET', path: `/option-chain-snapshots/${BOGUS_ID}`, ownNotFound: 'Snapshot not found' },
@@ -98,6 +102,9 @@ const ROUTES = [
   { method: 'POST', path: '/crossover-scanner/symbols', body: {}, write: true, note: 'missing symbol -> 400' },
   { method: 'DELETE', path: `/crossover-scanner/symbols/${BOGUS_ID}`, write: true },
   { method: 'POST', path: '/crossover-scanner/run', body: {}, write: true },
+  { method: 'POST', path: '/crossover-scanner/symbols/bulk', body: {}, write: true, note: 'missing symbols -> 400' },
+  { method: 'PUT', path: '/crossover-scanner/settings', body: { enabledIntervals: ['bogus'] }, write: true, note: 'invalid interval -> 400' },
+  { method: 'POST', path: '/notifications/mark-read', body: {}, write: true, note: 'missing ids -> 400' },
   // /historical-watchlist/:id/trigger-fetch and /instrument-master-sync are
   // LOCAL-ONLY dev conveniences (server.js only, no functions/index.js
   // equivalent - Cloud Tasks/the daily sync schedule cover that server-side)

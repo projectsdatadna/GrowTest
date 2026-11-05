@@ -196,6 +196,50 @@ function buildDateChunks(rangeStart, rangeEnd, interval) {
 }
 
 /**
+ * Fetches [rangeStart, rangeEnd] from Groww (split into MAX_SPAN_DAYS chunks,
+ * made sequentially - not concurrently - to avoid tripping Groww's own rate
+ * limiting, observed firsthand while diagnosing this endpoint's contract) and
+ * returns clean candles: opens filled, implausible candles dropped. Does NOT
+ * write to Firestore - callers decide. Shared by ensureCandlesFresh and
+ * refreshRecentCandles below.
+ */
+async function fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token }) {
+  const headers = { Authorization: `Bearer ${groww_token}`, 'X-API-VERSION': GROWW_API_VERSION, Accept: 'application/json' }
+  const growwSymbol = buildGrowwSymbol(exchange, symbol)
+
+  const chunks = buildDateChunks(rangeStart, rangeEnd, interval)
+  const fetchedChunks = []
+  for (const [chunkStart, chunkEnd] of chunks) {
+    const params = {
+      exchange,
+      segment: 'CASH',
+      groww_symbol: growwSymbol,
+      start_time: formatGrowwDateTime(chunkStart),
+      end_time: formatGrowwDateTime(chunkEnd),
+      candle_interval: interval,
+    }
+
+    let response
+    try {
+      response = await axios.get(`${GROWW_API_BASE_URL}/historical/candles`, { headers, params, timeout: 15000 })
+    } catch (error) {
+      const err = new Error('Failed to fetch historical candles')
+      err.details = {
+        error: 'Failed to fetch historical candles',
+        message: error.message,
+        groww_error: error.response?.data || null,
+        status_code: error.response?.status || 500,
+      }
+      throw err
+    }
+
+    fetchedChunks.push(...parseGrowwCandles(response.data))
+  }
+
+  return fillMissingOpens(dropImplausibleCandles(fetchedChunks))
+}
+
+/**
  * Ensures Firestore has fresh-enough candles for this symbol/exchange/
  * interval/[rangeStart, rangeEnd], fetching from Groww if needed, then
  * returns every candle in that range (ascending by timestamp). A fetch is
@@ -235,45 +279,7 @@ export async function ensureCandlesFresh({ exchange, symbol, interval, rangeStar
   const needsFetch = coverageInsufficient || staleAtRangeEnd
 
   if (needsFetch) {
-    const headers = { Authorization: `Bearer ${groww_token}`, 'X-API-VERSION': GROWW_API_VERSION, Accept: 'application/json' }
-    const growwSymbol = buildGrowwSymbol(exchange, symbol)
-
-    // Groww caps how many days one call can span (MAX_SPAN_DAYS) and errors
-    // outright rather than truncating - a wide user-picked range (e.g. a
-    // 2-year daily view) has to be split into consecutive sub-range calls,
-    // made sequentially (not concurrent - avoid tripping Groww's own rate
-    // limiting, observed firsthand while diagnosing this endpoint's
-    // contract).
-    const chunks = buildDateChunks(rangeStart, rangeEnd, interval)
-    const fetchedChunks = []
-    for (const [chunkStart, chunkEnd] of chunks) {
-      const params = {
-        exchange,
-        segment: 'CASH',
-        groww_symbol: growwSymbol,
-        start_time: formatGrowwDateTime(chunkStart),
-        end_time: formatGrowwDateTime(chunkEnd),
-        candle_interval: interval,
-      }
-
-      let response
-      try {
-        response = await axios.get(`${GROWW_API_BASE_URL}/historical/candles`, { headers, params, timeout: 15000 })
-      } catch (error) {
-        const err = new Error('Failed to fetch historical candles')
-        err.details = {
-          error: 'Failed to fetch historical candles',
-          message: error.message,
-          groww_error: error.response?.data || null,
-          status_code: error.response?.status || 500,
-        }
-        throw err
-      }
-
-      fetchedChunks.push(...parseGrowwCandles(response.data))
-    }
-
-    const candles = fillMissingOpens(dropImplausibleCandles(fetchedChunks))
+    const candles = await fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token })
     if (candles.length > 0) {
       await saveCandlesBatch(symbol, exchange, interval, candles)
     }
@@ -285,4 +291,54 @@ export async function ensureCandlesFresh({ exchange, symbol, interval, rangeStar
   // candle cached before this check existed gets scrubbed transparently on
   // read, without a separate one-off Firestore cleanup.
   return { candles: dropImplausibleCandles(stored) }
+}
+
+/**
+ * Unconditionally re-fetches the most recent `tailDays` of candles from Groww
+ * and overwrites them in Firestore (saveCandlesBatch is an overwrite keyed by
+ * a deterministic doc id). ensureCandlesFresh deliberately skips a fetch when
+ * the newest cached bar is under 2 intervals old, and never fetches outside
+ * market hours - so a bar cached while it was still forming (e.g. the 10:00
+ * hourly bar fetched at 10:02) would otherwise stay a provisional copy
+ * forever, and Daily/Weekly bars would never refresh after the close. The
+ * Crossover Scanner calls this on every scan so closed bars always carry
+ * their final values.
+ */
+export async function refreshRecentCandles({ exchange, symbol, interval, groww_token, tailDays, now = new Date() }) {
+  if (!SUPPORTED_INTERVALS[interval]) {
+    const err = new Error(`Unsupported interval: ${interval}`)
+    err.details = { error: `Unsupported interval: ${interval}`, supported: Object.keys(SUPPORTED_INTERVALS) }
+    throw err
+  }
+  const rangeStart = new Date(now.getTime() - tailDays * 24 * 60 * 60 * 1000)
+  const candles = await fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, rangeEnd: now, groww_token })
+  if (candles.length > 0) {
+    await saveCandlesBatch(symbol, exchange, interval, candles)
+  }
+  return candles.length
+}
+
+/**
+ * The scanner's candle loader: (optionally) one-time history backfill, then an
+ * always-on fresh tail, then read the whole window back from Firestore.
+ *
+ * `backfilled` is tracked by the caller (per symbol+interval) rather than
+ * re-derived from the stored data: ensureCandlesFresh's coverage check treats
+ * "stored history starts later than rangeStart" as insufficient, which is
+ * permanently true for a stock listed after rangeStart (e.g. a recent IPO on a
+ * 4.5-year weekly window) and would re-fetch every chunk on every scan.
+ */
+export async function refreshAndLoadCandles({ exchange, symbol, interval, groww_token, lookbackDays, tailDays, backfilled, now = new Date() }) {
+  const rangeEnd = now
+  const rangeStart = new Date(now.getTime() - lookbackDays * 24 * 60 * 60 * 1000)
+
+  let didBackfill = false
+  if (!backfilled) {
+    await ensureCandlesFresh({ exchange, symbol, interval, rangeStart, rangeEnd, groww_token })
+    didBackfill = true
+  }
+  await refreshRecentCandles({ exchange, symbol, interval, groww_token, tailDays, now })
+
+  const stored = await listCandlesInRange(symbol, exchange, interval, Math.floor(rangeStart.getTime() / 1000), Math.floor(rangeEnd.getTime() / 1000))
+  return { candles: dropImplausibleCandles(stored), didBackfill }
 }

@@ -5,6 +5,32 @@
  * the popup importing back from AppShell would be a circular import.
  */
 
+// Timeframes the scanner runs on, in display order. Mirrors
+// functions/crossoverTimeframes.js (frontend and functions/ share no code).
+export const TIMEFRAME_ORDER = ['15minute', '1hour', '4hour', '1day', '1week']
+export const TIMEFRAME_LABELS = {
+  '15minute': '15 min',
+  '1hour': '1 hour',
+  '4hour': '4 hour',
+  '1day': 'Daily',
+  '1week': 'Weekly',
+}
+
+export function timeframeLabel(interval) {
+  return TIMEFRAME_LABELS[interval] || interval || 'System'
+}
+
+export function timeAgo(isoString) {
+  if (!isoString) return ''
+  const diffMs = Date.now() - new Date(isoString).getTime()
+  const minutes = Math.floor(diffMs / 60000)
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
+}
+
 // Candle timestamps are epoch seconds; bars are always shown in IST.
 export function formatCandleTime(timestampSeconds) {
   if (!timestampSeconds) return ''

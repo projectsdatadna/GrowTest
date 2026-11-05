@@ -14,12 +14,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useDispatch } from 'react-redux'
-import { getCrossoverEvents, markHistoricalWatchlistNotificationRead } from '../services/api'
+import { getCrossoverEvents, markNotificationsRead } from '../services/api'
 import { markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
-import { formatCandleTime, formatLines, showBrowserNotification, playAlertBeep } from './crossoverFormat'
+import { formatCandleTime, formatLines, showBrowserNotification, playAlertBeep, timeframeLabel, TIMEFRAME_ORDER } from './crossoverFormat'
 
 const POLL_MS = 45000
-const EVENTS_LIMIT = 50
+const EVENTS_LIMIT = 100
+
+// Fallback until the server says which timeframes should pop up (it returns
+// popupIntervals with the events). Mirrors the server default.
+const DEFAULT_POPUP_INTERVALS = ['1hour', '4hour', '1day', '1week']
+
+const timeframeRank = (interval) => {
+  const index = TIMEFRAME_ORDER.indexOf(interval)
+  return index === -1 ? TIMEFRAME_ORDER.length : index
+}
 
 function directionBadge(direction) {
   return direction === 'bullish' ? (
@@ -44,7 +53,7 @@ function groupBySymbol(items) {
     group.bullish = bullish
     group.bearish = group.items.length - bullish
     group.strength = Math.max(group.bullish, group.bearish)
-    group.items.sort((a, b) => b.candleTimestamp - a.candleTimestamp || a.indicatorLabel.localeCompare(b.indicatorLabel))
+    group.items.sort((a, b) => timeframeRank(a.interval) - timeframeRank(b.interval) || b.candleTimestamp - a.candleTimestamp || a.indicatorLabel.localeCompare(b.indicatorLabel))
   }
   return result.sort((a, b) => b.strength - a.strength || a.symbol.localeCompare(b.symbol))
 }
@@ -60,12 +69,12 @@ function summarizeForBrowser(items) {
     title: `${items.length} crossover${items.length === 1 ? '' : 's'}: ${names}${more}`,
     body: items
       .slice(0, 4)
-      .map((i) => `${i.symbol} ${i.indicatorLabel} ${i.direction}`)
+      .map((i) => `${i.symbol} ${timeframeLabel(i.interval)} ${i.indicatorLabel} ${i.direction}`)
       .join('\n'),
   }
 }
 
-function CrossoverAlertPopup({ onViewScanner }) {
+function CrossoverAlertPopup({ onViewNotifications }) {
   const dispatch = useDispatch()
   const [items, setItems] = useState([])
   // Ids already dismissed this session - guards against a poll landing before
@@ -76,8 +85,11 @@ function CrossoverAlertPopup({ onViewScanner }) {
 
   const poll = useCallback(async () => {
     try {
-      const { events } = await getCrossoverEvents(EVENTS_LIMIT)
-      const unread = (events || []).filter((e) => !e.read && !dismissedRef.current.has(e.id))
+      const { events, popupIntervals } = await getCrossoverEvents(EVENTS_LIMIT)
+      // Timeframes switched off for popups (15 min by default) stay unread and
+      // are still listed on the Notifications page and in the bell.
+      const popupSet = new Set(popupIntervals || DEFAULT_POPUP_INTERVALS)
+      const unread = (events || []).filter((e) => !e.read && popupSet.has(e.interval) && !dismissedRef.current.has(e.id))
       if (unread.length === 0) return
 
       setItems((current) => {
@@ -108,9 +120,7 @@ function CrossoverAlertPopup({ onViewScanner }) {
     ids.forEach((id) => dismissedRef.current.add(id))
     setItems([])
     dispatch(markNotificationsReadLocally(ids))
-    Promise.allSettled(ids.map((id) => markHistoricalWatchlistNotificationRead(id))).then((results) => {
-      if (results.some((r) => r.status === 'rejected')) console.error('Some crossover alerts could not be marked read')
-    })
+    markNotificationsRead(ids).catch((error) => console.error('Crossover alerts could not be marked read:', error))
   }, [items, dispatch])
 
   const open = items.length > 0
@@ -131,9 +141,9 @@ function CrossoverAlertPopup({ onViewScanner }) {
 
   if (!open) return null
 
-  const handleViewScanner = () => {
+  const handleViewNotifications = () => {
     dismiss()
-    onViewScanner?.()
+    onViewNotifications?.()
   }
 
   // Portaled to <body>: AppShell mounts this inside the header, whose
@@ -154,7 +164,7 @@ function CrossoverAlertPopup({ onViewScanner }) {
           </h2>
           <p className="text-xs text-on-surface-variant">
             <span className="text-bullish">▲ {bullishCount} bullish</span> · <span className="text-bearish">▼ {bearishCount} bearish</span> · {groups.length} symbol
-            {groups.length === 1 ? '' : 's'} · 1-hour bar up to {formatCandleTime(latestBar)} IST
+            {groups.length === 1 ? '' : 's'} · latest bar {formatCandleTime(latestBar)} IST
           </p>
         </div>
 
@@ -175,6 +185,7 @@ function CrossoverAlertPopup({ onViewScanner }) {
                 {group.items.map((item) => (
                   <li key={item.id} className="text-xs text-on-surface-variant border-t border-outline-variant pt-xs first:border-t-0 first:pt-0">
                     <div className="text-on-surface">
+                      <span className="mr-xs px-[6px] py-[1px] rounded bg-surface-container-highest text-[10px] uppercase text-on-surface-variant">{item.timeframeLabel || timeframeLabel(item.interval)}</span>
                       {directionBadge(item.direction)} <span className="font-medium">{item.indicatorLabel}</span>
                     </div>
                     <div>
@@ -190,8 +201,8 @@ function CrossoverAlertPopup({ onViewScanner }) {
         </div>
 
         <div className="p-md border-t border-outline-variant flex justify-end gap-sm">
-          <button type="button" onClick={handleViewScanner} className="px-md py-sm rounded-lg text-sm text-on-surface-variant hover:text-on-surface">
-            View scanner
+          <button type="button" onClick={handleViewNotifications} className="px-md py-sm rounded-lg text-sm text-on-surface-variant hover:text-on-surface">
+            View notifications
           </button>
           <button type="button" autoFocus onClick={dismiss} className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium">
             Dismiss all

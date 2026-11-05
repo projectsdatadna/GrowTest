@@ -5,6 +5,7 @@ import CompareSnapshots from './components/CompareSnapshots'
 import WatchlistTab from './components/WatchlistTab'
 import HistoricalChartTab from './components/HistoricalChartTab'
 import CrossoverScannerTab from './components/CrossoverScannerTab'
+import NotificationsTab from './components/NotificationsTab'
 
 // Two independent Chart tabs sharing one component - see HistoricalChartTab's
 // own `instanceKey` prop and src/store/historicalChartSlice.js's factory for
@@ -21,6 +22,7 @@ const TAB_COMPONENTS = {
   chart: ChartPrimary,
   chart2: ChartSecondary,
   'crossover-scanner': CrossoverScannerTab,
+  notifications: NotificationsTab,
 }
 
 function App() {
@@ -29,7 +31,7 @@ function App() {
 
   return (
     <AppShell activeTab={activeTab} onTabChange={setActiveTab}>
-      <ActiveTabComponent />
+      <ActiveTabComponent onTabChange={setActiveTab} />
     </AppShell>
   )
 }

@@ -1,16 +1,17 @@
 /**
- * Firestore access for the Crossover Scanner - the list of symbols scanned
- * once per closed 1-hour candle (see crossoverScanner.js), plus the crossover
- * alerts it raises.
+ * Firestore access for the Crossover Scanner - the single symbol list scanned
+ * on every timeframe (see crossoverScanner.js), per-timeframe scan state,
+ * scanner settings / run status, and the unified notifications feed.
  *
  * Alerts are written into the SAME `historicalWatchlistNotifications`
- * collection the AppShell bell already polls (type: 'crossover'), so the bell
- * and the existing read / mark-all-read routes work with no changes beyond a
- * new render branch.
+ * collection the bell and Notifications page read (type: 'crossover'), next
+ * to the Historical Watchlist's candle/AI items. Everything with an
+ * `interval` field is grouped by timeframe for display.
  */
 
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
+import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
 const DATABASE_ID = 'groww-dashboard'
@@ -23,6 +24,9 @@ const db = getFirestore(admin.app(), DATABASE_ID)
 
 const SYMBOLS_COLLECTION = 'crossoverScannerSymbols'
 const NOTIFICATIONS_COLLECTION = 'historicalWatchlistNotifications'
+const APP_CONFIG_COLLECTION = 'appConfig'
+const SETTINGS_DOC = 'crossoverScanner'
+const STATUS_DOC = 'crossoverScannerStatus'
 
 // Seeded on first use (ensureSeeded) - the user can add/remove from here.
 export const DEFAULT_SCANNER_SYMBOLS = [
@@ -42,6 +46,7 @@ export const DEFAULT_SCANNER_SYMBOLS = [
 ]
 
 const ALREADY_EXISTS_CODE = 6
+const BATCH_LIMIT = 400
 
 function serializeSymbolDoc(doc) {
   const data = doc.data()
@@ -63,6 +68,8 @@ function serializeNotificationDoc(doc) {
 export function scannerSymbolId(exchange, symbol) {
   return `${exchange}_${symbol}`
 }
+
+// ---------- symbol list (one list for every timeframe) ----------
 
 // No orderBy on the query (so no composite index needed) - the list is tiny,
 // sort in memory by createdAt.
@@ -86,8 +93,7 @@ export async function addScannerSymbol({ symbol, exchange = 'NSE', source = 'man
     exchange,
     source,
     active: true,
-    lastScanAt: null,
-    lastScannedCandleTs: null,
+    scanState: {},
     lastError: null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   })
@@ -111,23 +117,54 @@ export async function ensureSeeded() {
   return true
 }
 
-export async function updateScanState(id, { lastScannedCandleTs }) {
-  await db.collection(SYMBOLS_COLLECTION).doc(id).update({
-    lastScanAt: admin.firestore.FieldValue.serverTimestamp(),
-    lastScannedCandleTs,
-    lastError: null,
-  })
+// ---------- per-timeframe scan state ----------
+
+// scanState is {[interval]: {lastBarEnd, lastScanAt, lastError, backfilledAt,
+// pendingEnd, attempts, skippedEnd}}. A merge-set with a nested object deep-
+// merges the map, so patching one interval never clobbers another's state
+// (and avoids dotted field paths, which Firestore rejects for segments like
+// "1hour" that start with a digit).
+export async function setIntervalState(id, interval, patch) {
+  await db
+    .collection(SYMBOLS_COLLECTION)
+    .doc(id)
+    .set({ scanState: { [interval]: patch } }, { merge: true })
 }
 
-export async function saveScanError(id, message) {
-  await db.collection(SYMBOLS_COLLECTION).doc(id).update({
-    lastError: { message, at: new Date().toISOString() },
-  })
+// ---------- settings and run status (appConfig) ----------
+
+export async function getScannerSettings() {
+  const doc = await db.collection(APP_CONFIG_COLLECTION).doc(SETTINGS_DOC).get()
+  const data = doc.exists ? doc.data() : {}
+  return {
+    enabledIntervals: Array.isArray(data.enabledIntervals) ? data.enabledIntervals : DEFAULT_ENABLED_INTERVALS,
+    popupIntervals: Array.isArray(data.popupIntervals) ? data.popupIntervals : DEFAULT_POPUP_INTERVALS,
+  }
 }
+
+export async function saveScannerSettings({ enabledIntervals, popupIntervals }) {
+  const patch = {}
+  if (enabledIntervals) patch.enabledIntervals = enabledIntervals
+  if (popupIntervals) patch.popupIntervals = popupIntervals
+  await db.collection(APP_CONFIG_COLLECTION).doc(SETTINGS_DOC).set(patch, { merge: true })
+  return getScannerSettings()
+}
+
+// {lastTickAt, intervals: {[interval]: {...}}, token: {ok, message, at}}
+export async function getRunStatus() {
+  const doc = await db.collection(APP_CONFIG_COLLECTION).doc(STATUS_DOC).get()
+  return doc.exists ? doc.data() : { lastTickAt: null, intervals: {}, token: null }
+}
+
+export async function saveRunStatus(patch) {
+  await db.collection(APP_CONFIG_COLLECTION).doc(STATUS_DOC).set(patch, { merge: true })
+}
+
+// ---------- notifications ----------
 
 // Creates one alert under a caller-supplied deterministic id. create() fails
 // with ALREADY_EXISTS if that id is taken, which is the dedup: a re-run, a
-// retry, or overlapping 2-candle lookback windows can never raise the same
+// retry, or an overlapping catch-up window can never raise the same
 // crossover twice. Returns true only when a NEW alert was written.
 export async function createCrossoverNotification(id, fields) {
   try {
@@ -170,4 +207,34 @@ export async function listCrossoverNotifications({ limit = 50 } = {}) {
     .limit(limit)
     .get()
   return snapshot.docs.map(serializeNotificationDoc)
+}
+
+// Every notification type, newest first. A single orderBy on createdAt needs
+// no composite index; filtering/grouping by type and timeframe happens in the
+// client.
+export async function listAllNotifications({ limit = 300 } = {}) {
+  const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).orderBy('createdAt', 'desc').limit(limit).get()
+  return snapshot.docs.map(serializeNotificationDoc)
+}
+
+// Server-side count, so the bell badge is exact rather than "unread among the
+// latest 20".
+export async function countUnreadNotifications() {
+  const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).where('read', '==', false).count().get()
+  return snapshot.data().count
+}
+
+// Marks many notifications read in batched writes (Firestore batches cap at
+// 500 operations).
+export async function markNotificationsRead(ids) {
+  let updated = 0
+  for (let i = 0; i < ids.length; i += BATCH_LIMIT) {
+    const batch = db.batch()
+    for (const id of ids.slice(i, i + BATCH_LIMIT)) {
+      batch.update(db.collection(NOTIFICATIONS_COLLECTION).doc(id), { read: true })
+    }
+    await batch.commit()
+    updated += Math.min(BATCH_LIMIT, ids.length - i)
+  }
+  return updated
 }

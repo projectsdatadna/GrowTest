@@ -407,22 +407,85 @@ export const removeCrossoverScannerSymbol = async (id) => {
   }
 }
 
-export const runCrossoverScan = async () => {
-  try {
-    const response = await apiClient.post('/crossover-scanner/run')
-    return response.data
-  } catch (error) {
-    console.error('Error running crossover scan:', error)
-    throw error
-  }
-}
-
 export const getCrossoverEvents = async (limit = 50) => {
   try {
     const response = await apiClient.get('/crossover-scanner/events', { params: { limit } })
     return response.data
   } catch (error) {
     console.error('Error fetching crossover events:', error)
+    throw error
+  }
+}
+
+// Settings (which timeframes run / pop up), automatic-scan status, and bulk add
+// for the single scanner symbol list.
+export const getCrossoverSettings = async () => {
+  try {
+    const response = await apiClient.get('/crossover-scanner/settings')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching crossover scanner settings:', error)
+    throw error
+  }
+}
+
+export const saveCrossoverSettings = async ({ enabledIntervals, popupIntervals }) => {
+  try {
+    const response = await apiClient.put('/crossover-scanner/settings', { enabledIntervals, popupIntervals })
+    return response.data
+  } catch (error) {
+    console.error('Error saving crossover scanner settings:', error)
+    throw error
+  }
+}
+
+export const getCrossoverStatus = async () => {
+  try {
+    const response = await apiClient.get('/crossover-scanner/status')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching crossover scanner status:', error)
+    throw error
+  }
+}
+
+export const bulkAddCrossoverScannerSymbols = async (symbols) => {
+  try {
+    const response = await apiClient.post('/crossover-scanner/symbols/bulk', { symbols })
+    return response.data
+  } catch (error) {
+    console.error('Error bulk-adding crossover scanner symbols:', error)
+    throw error
+  }
+}
+
+// Unified notifications (every type) for the Notifications page and the bell.
+export const getNotifications = async (limit = 300) => {
+  try {
+    const response = await apiClient.get('/notifications', { params: { limit } })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching notifications:', error)
+    throw error
+  }
+}
+
+export const getUnreadNotificationCount = async () => {
+  try {
+    const response = await apiClient.get('/notifications/unread-count')
+    return response.data
+  } catch (error) {
+    console.error('Error fetching unread notification count:', error)
+    throw error
+  }
+}
+
+export const markNotificationsRead = async (ids) => {
+  try {
+    const response = await apiClient.post('/notifications/mark-read', { ids })
+    return response.data
+  } catch (error) {
+    console.error('Error marking notifications read:', error)
     throw error
   }
 }

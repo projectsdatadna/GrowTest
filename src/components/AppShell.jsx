@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { getHistoricalWatchlistNotifications, markHistoricalWatchlistNotificationRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
-import { setHistoricalWatchlistNotifications, markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
-import { formatCandleTime, formatLines } from './crossoverFormat'
+import { getNotifications, getUnreadNotificationCount, markNotificationsRead, markAllHistoricalWatchlistNotificationsRead } from '../services/api'
+import { setHistoricalWatchlistNotifications, setUnreadCount, markNotificationsReadLocally } from '../store/historicalWatchlistSlice'
+import { NotificationBody, notificationTitle } from './NotificationContent'
+import { timeAgo } from './crossoverFormat'
 import CrossoverAlertPopup from './CrossoverAlertPopup'
 
 /**
@@ -32,38 +33,13 @@ function ServerTimeClock() {
 
 const NOTIFICATIONS_POLL_MS = 45000
 
-function CrossoverNotificationBody({ n }) {
-  const bullish = n.direction === 'bullish'
-  return (
-    <div className="flex flex-col gap-[2px]">
-      <div>
-        <span className={bullish ? 'text-bullish font-semibold' : 'text-bearish font-semibold'}>{bullish ? '▲ Bullish' : '▼ Bearish'}</span> {n.indicatorLabel}
-      </div>
-      <div>
-        Close ₹{n.closePrice} · {formatCandleTime(n.candleTimestamp)} IST bar
-      </div>
-      <div>{formatLines(n.lines)}</div>
-      {n.confluence?.length > 0 && <div>Also: {n.confluence.join(', ')}</div>}
-    </div>
-  )
-}
+// Bell icon + unread badge + short dropdown of the latest notifications (every
+// type), polled on an interval - same convention WatchlistTab uses for its own
+// polling rather than a live subscription. The badge is the server's exact
+// unread count; the full history lives on the Notifications page.
+const BELL_DROPDOWN_LIMIT = 8
 
-function timeAgo(isoString) {
-  if (!isoString) return ''
-  const diffMs = Date.now() - new Date(isoString).getTime()
-  const minutes = Math.floor(diffMs / 60000)
-  if (minutes < 1) return 'just now'
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
-
-// Bell icon + unread badge + dropdown, backed by the Historical Watchlist's
-// notifications (functions/historicalWatchlistFirestoreClient.js) - polled
-// on an interval, same convention WatchlistTab already uses for its own
-// polling rather than a live subscription.
-function NotificationBell() {
+function NotificationBell({ onViewAll }) {
   const dispatch = useDispatch()
   const notifications = useSelector((state) => state.historicalWatchlist.notifications)
   const unreadCount = useSelector((state) => state.historicalWatchlist.unreadCount)
@@ -71,9 +47,12 @@ function NotificationBell() {
 
   useEffect(() => {
     const fetchNotifications = () => {
-      getHistoricalWatchlistNotifications()
-        .then(({ notifications: fetched }) => dispatch(setHistoricalWatchlistNotifications(fetched || [])))
-        .catch((err) => console.error('Failed to load historical watchlist notifications:', err))
+      Promise.all([getNotifications(BELL_DROPDOWN_LIMIT), getUnreadNotificationCount()])
+        .then(([{ notifications: latest }, { count }]) => {
+          dispatch(setHistoricalWatchlistNotifications(latest || []))
+          dispatch(setUnreadCount(count || 0))
+        })
+        .catch((err) => console.error('Failed to load notifications:', err))
     }
     fetchNotifications()
     const id = setInterval(fetchNotifications, NOTIFICATIONS_POLL_MS)
@@ -83,12 +62,18 @@ function NotificationBell() {
   const handleOpenNotification = (notification) => {
     if (notification.read) return
     dispatch(markNotificationsReadLocally([notification.id]))
-    markHistoricalWatchlistNotificationRead(notification.id).catch((err) => console.error('Failed to mark notification read:', err))
+    markNotificationsRead([notification.id]).catch((err) => console.error('Failed to mark notification read:', err))
   }
 
   const handleMarkAllRead = () => {
-    dispatch(markNotificationsReadLocally(notifications.map((n) => n.id)))
+    dispatch(markNotificationsReadLocally(notifications.filter((n) => !n.read).map((n) => n.id)))
+    dispatch(setUnreadCount(0))
     markAllHistoricalWatchlistNotificationsRead().catch((err) => console.error('Failed to mark all notifications read:', err))
+  }
+
+  const handleViewAll = () => {
+    setOpen(false)
+    onViewAll()
   }
 
   return (
@@ -112,7 +97,9 @@ function NotificationBell() {
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-[calc(100%+8px)] w-80 max-h-96 overflow-y-auto glass-panel rounded-xl p-sm z-50 flex flex-col gap-xs">
             <div className="flex items-center justify-between px-sm py-xs">
-              <span className="text-xs font-medium text-on-surface-variant uppercase">Notifications</span>
+              <span className="text-xs font-medium text-on-surface-variant uppercase">
+                Notifications{unreadCount > 0 ? ` · ${unreadCount} unread` : ''}
+              </span>
               {unreadCount > 0 && (
                 <button type="button" onClick={handleMarkAllRead} className="text-xs text-primary hover:underline">
                   Mark all read
@@ -127,29 +114,17 @@ function NotificationBell() {
                 className={`px-sm py-xs rounded-lg cursor-pointer text-sm ${n.read ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest'}`}
               >
                 <div className="flex items-center justify-between gap-sm">
-                  <span className="font-medium">
-                    {n.type === 'scanner_warning' ? 'Crossover scanner' : `${n.symbol} · ${n.interval}`}
-                  </span>
+                  <span className="font-medium">{notificationTitle(n)}</span>
                   <span className="text-[10px] text-on-surface-variant">{timeAgo(n.createdAt)}</span>
                 </div>
                 <div className="text-xs text-on-surface-variant">
-                  {n.type === 'scanner_warning' ? (
-                    <span className="text-bearish">{n.message}</span>
-                  ) : n.type === 'crossover' ? (
-                    <CrossoverNotificationBody n={n} />
-                  ) : n.type === 'analysis' ? (
-                    <>
-                      AI insight: <span className={n.outlook === 'bullish' ? 'text-bullish' : n.outlook === 'bearish' ? 'text-bearish' : ''}>{n.outlook}</span>
-                      {n.summary ? ` — ${n.summary}` : ''}
-                    </>
-                  ) : (
-                    <>
-                      {n.newCandleCount} new candle{n.newCandleCount === 1 ? '' : 's'}
-                    </>
-                  )}
+                  <NotificationBody n={n} />
                 </div>
               </div>
             ))}
+            <button type="button" onClick={handleViewAll} className="text-xs text-primary hover:underline px-sm py-xs text-center">
+              View all notifications →
+            </button>
           </div>
         </>
       )}
@@ -164,6 +139,7 @@ const NAV_ITEMS = [
   { key: 'chart', label: 'Chart', icon: 'candlestick_chart', functional: true },
   { key: 'chart2', label: 'Chart 2', icon: 'show_chart', functional: true },
   { key: 'crossover-scanner', label: 'Crossover Scanner', icon: 'swap_vert', functional: true },
+  { key: 'notifications', label: 'Notifications', icon: 'notifications_active', functional: true },
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {
@@ -201,8 +177,8 @@ function AppShell({ activeTab, onTabChange, children }) {
 
       <header className="sticky top-0 right-0 z-40 w-[calc(100%-250px)] ml-[250px] bg-surface/60 backdrop-blur-md border-b border-outline-variant flex justify-end items-center h-12 px-xl">
         <div className="flex items-center gap-md">
-          <NotificationBell />
-          <CrossoverAlertPopup onViewScanner={() => onTabChange('crossover-scanner')} />
+          <NotificationBell onViewAll={() => onTabChange('notifications')} />
+          <CrossoverAlertPopup onViewNotifications={() => onTabChange('notifications')} />
           <div
             className="w-8 h-8 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center text-xs font-bold"
             title="Account"
