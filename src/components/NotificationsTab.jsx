@@ -66,7 +66,8 @@ function NotificationsTab({ onTabChange }) {
   const [query, setQuery] = useState('')
   const [indicator, setIndicator] = useState('all')
   const [direction, setDirection] = useState('any')
-  const [collapsed, setCollapsed] = useState(() => new Set())
+  // Sections start collapsed; only the ones the user opens are tracked.
+  const [expanded, setExpanded] = useState(() => new Set())
 
   const markRead = useCallback(
     (ids) => {
@@ -86,7 +87,7 @@ function NotificationsTab({ onTabChange }) {
   }
 
   const toggleSection = (key) =>
-    setCollapsed((current) => {
+    setExpanded((current) => {
       const next = new Set(current)
       if (next.has(key)) next.delete(key)
       else next.add(key)
@@ -189,7 +190,7 @@ function NotificationsTab({ onTabChange }) {
       {!loading && sections.length === 0 && <div className="glass-panel rounded-xl p-lg text-center text-sm text-on-surface-variant">No notifications match.</div>}
 
       {sections.map((section) => {
-        const isCollapsed = collapsed.has(section.key)
+        const isCollapsed = !expanded.has(section.key)
         let lastBar = null
         return (
           <section key={section.key} className="glass-panel rounded-xl">
