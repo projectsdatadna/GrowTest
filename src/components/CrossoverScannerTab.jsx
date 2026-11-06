@@ -178,8 +178,7 @@ function CrossoverScannerTab({ onTabChange }) {
     }
   }
 
-  // kind: 'enabledIntervals' (scan this timeframe) or 'popupIntervals'
-  // (pop up for this timeframe). Optimistic; reloads on failure.
+  // kind: 'enabledIntervals' (scan this timeframe). Optimistic; reloads on failure.
   const toggleSetting = async (kind, interval) => {
     if (!settings) return
     const current = new Set(settings[kind])
@@ -191,20 +190,6 @@ function CrossoverScannerTab({ onTabChange }) {
       const { settings: saved } = await saveCrossoverSettings({ [kind]: next })
       setSettings(saved)
       load()
-    } catch (err) {
-      setError(errorMessage(err))
-      load()
-    }
-  }
-
-  // Minimum number of agreeing indicators before a crossover on this timeframe
-  // raises a popup/bell alert (every crossover still shows on the Overview).
-  const setMinAgreement = async (interval, value) => {
-    if (!settings) return
-    setSettings({ ...settings, minAgreement: { ...settings.minAgreement, [interval]: value } })
-    try {
-      const { settings: saved } = await saveCrossoverSettings({ minAgreement: { [interval]: value } })
-      setSettings(saved)
     } catch (err) {
       setError(errorMessage(err))
       load()
@@ -259,34 +244,12 @@ function CrossoverScannerTab({ onTabChange }) {
           {TIMEFRAME_ORDER.map((interval) => {
             const info = status?.intervals?.find((i) => i.interval === interval)
             const enabled = settings ? settings.enabledIntervals.includes(interval) : true
-            const popup = settings ? settings.popupIntervals.includes(interval) : false
             return (
               <div key={interval} className={`rounded-lg bg-surface-container-low border border-outline-variant p-sm flex flex-col gap-xs ${enabled ? '' : 'opacity-60'}`}>
                 <span className="text-sm font-semibold text-on-surface">{TIMEFRAME_LABELS[interval]}</span>
                 <label className="flex items-center gap-xs text-xs text-on-surface-variant">
                   <input type="checkbox" checked={enabled} disabled={!settings} onChange={() => toggleSetting('enabledIntervals', interval)} />
                   Scan automatically
-                </label>
-                <label className="flex items-center gap-xs text-xs text-on-surface-variant">
-                  <input type="checkbox" checked={popup} disabled={!settings || !enabled} onChange={() => toggleSetting('popupIntervals', interval)} />
-                  Show popup
-                </label>
-                <label className="flex items-center gap-xs text-xs text-on-surface-variant">
-                  Alert when
-                  <select
-                    value={settings?.minAgreement?.[interval] ?? 1}
-                    disabled={!settings || !enabled}
-                    onChange={(e) => setMinAgreement(interval, Number(e.target.value))}
-                    className="bg-surface-container-low border border-terminal-border rounded text-xs px-xs py-[1px] text-on-surface"
-                    aria-label={`Minimum agreeing indicators for ${TIMEFRAME_LABELS[interval]} alerts`}
-                  >
-                    {[1, 2, 3, 4, 5, 6].map((n) => (
-                      <option key={n} value={n}>
-                        {n}+
-                      </option>
-                    ))}
-                  </select>
-                  indicators agree
                 </label>
                 <div className="text-[11px] text-on-surface-variant">
                   {info?.expectedBarEnd ? <>Latest bar close: {formatCandleTime(info.expectedBarEnd)} IST</> : 'No bar yet'}

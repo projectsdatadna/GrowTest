@@ -1,8 +1,6 @@
 /**
  * Shared formatting + browser-alert helpers for crossover alerts - used by the
- * header bell (AppShell), the popup (CrossoverAlertPopup) and the Crossover
- * Scanner tab. Kept out of AppShell.jsx because AppShell mounts the popup;
- * the popup importing back from AppShell would be a circular import.
+ * header bell (AppShell) and the Crossover Scanner tab.
  */
 
 // Timeframes the scanner runs on, in display order. Mirrors

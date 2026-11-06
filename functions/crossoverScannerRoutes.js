@@ -21,6 +21,8 @@ import {
   listNotificationsSince,
   queryNotificationsPage,
   countNotificationsBySection,
+  countNotificationsForDelete,
+  deleteNotificationsInRange,
   NOTIFICATION_SECTIONS,
   countUnreadNotifications,
   markNotificationsRead,
@@ -52,7 +54,25 @@ function parseNotificationFilters(query) {
   if (query.indicator) filters.indicator = String(query.indicator).slice(0, 60)
   if (query.symbol) filters.symbol = String(query.symbol).trim().toUpperCase().slice(0, 30)
   filters.unreadOnly = query.unreadOnly === 'true'
+  const range = parseDateRange(query)
+  if (range.error) return { error: range.error }
+  if (range.from) filters.from = range.from
+  if (range.to) filters.to = range.to
   return { filters }
+}
+
+// Optional ISO `from` / `to` (both inclusive). Returns {error} for an unparsable
+// value or from > to.
+function parseDateRange(source) {
+  const out = {}
+  for (const key of ['from', 'to']) {
+    if (source[key] === undefined || source[key] === '') continue
+    const ms = Date.parse(source[key])
+    if (Number.isNaN(ms)) return { error: `${key} must be an ISO date/time` }
+    out[key] = new Date(ms).toISOString()
+  }
+  if (out.from && out.to && out.from > out.to) return { error: 'from must not be after to' }
+  return out
 }
 
 /**
@@ -302,6 +322,42 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       res.json({ status: 'SUCCESS', count: await countUnreadNotifications() })
     } catch (error) {
       console.error('Error counting unread notifications:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Bulk delete by date range + sections. Everything is required so a request
+  // can never wipe the whole collection by accident.
+  const parseDeleteBody = (body = {}) => {
+    const range = parseDateRange(body)
+    if (range.error) return { error: range.error }
+    if (!range.from || !range.to) return { error: 'from and to are required', required: ['from', 'to', 'intervals'] }
+    const { intervals } = body
+    if (!Array.isArray(intervals) || intervals.length === 0 || intervals.some((i) => !NOTIFICATION_SECTIONS.includes(i))) {
+      return { error: 'intervals must be a non-empty list of timeframes (or system)', supported: NOTIFICATION_SECTIONS, required: ['from', 'to', 'intervals'] }
+    }
+    return { sections: [...new Set(intervals)], from: range.from, to: range.to }
+  }
+
+  app.post('/notifications/delete-preview', async (req, res) => {
+    try {
+      const parsed = parseDeleteBody(req.body)
+      if (parsed.error) return res.status(400).json(parsed)
+      res.json({ status: 'SUCCESS', count: await countNotificationsForDelete(parsed) })
+    } catch (error) {
+      console.error('Error previewing notification delete:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  app.post('/notifications/delete', async (req, res) => {
+    try {
+      const parsed = parseDeleteBody(req.body)
+      if (parsed.error) return res.status(400).json(parsed)
+      const { deleted, hasMore } = await deleteNotificationsInRange(parsed)
+      res.json({ status: 'SUCCESS', deleted, hasMore })
+    } catch (error) {
+      console.error('Error deleting notifications:', error.message)
       res.status(500).json({ error: error.message })
     }
   })

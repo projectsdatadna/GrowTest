@@ -4,7 +4,8 @@
  * warnings), grouped by timeframe: 15 min, 1 hour, 4 hour, Daily, Weekly, then
  * "System". Each section is paged on the SERVER (numbered pages of PAGE_SIZE)
  * so every stored notification is reachable, and loads only when opened.
- * Filters are sent to the server too, so totals and pages always agree.
+ * Each timeframe header carries bullish / bearish overview cards. Filters (incl.
+ * a from/to date range) are sent to the server too, so totals and pages always agree.
  * Sections start collapsed. The tab stays in sync by itself: whenever the
  * shared live feed (useLiveNotifications) sees something new, the section
  * counts and the open sections' first page are re-fetched. Within a page,
@@ -13,9 +14,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead, getNotificationsPage, getNotificationCounts } from '../services/api'
+import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead, getNotificationsPage, getNotificationCounts, getUnreadNotificationCount, previewDeleteNotifications, deleteNotifications } from '../services/api'
 import { markNotificationsReadLocally, setUnreadCount } from '../store/historicalWatchlistSlice'
-import { markAllReadLocally } from '../store/liveNotificationsSlice'
+import { markAllReadLocally, removeNotificationsInRange } from '../store/liveNotificationsSlice'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
 import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTime, timeAgo } from './crossoverFormat'
 import Spinner from './Spinner'
@@ -89,6 +90,108 @@ function sortSectionItems(items) {
   return [...crossovers, ...others]
 }
 
+// Local-time day bounds as ISO strings for the API ('' stays '').
+const startOfDayIso = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : '')
+const endOfDayIso = (value) => (value ? new Date(`${value}T23:59:59.999`).toISOString() : '')
+
+function CountCard({ label, value, tone }) {
+  return (
+    <div className={`flex items-center gap-xs rounded-lg border border-outline-variant px-sm py-[2px] ${tone === 'bullish' ? 'bg-bullish/10' : 'bg-bearish/10'}`}>
+      <span className={`text-[11px] uppercase tracking-wide ${tone === 'bullish' ? 'text-bullish' : 'text-bearish'}`}>{label}</span>
+      <span className="text-sm font-semibold font-mono text-on-surface">{value}</span>
+    </div>
+  )
+}
+
+// Delete notifications by date range + sections, with a live preview count.
+function DeleteDialog({ onClose, onDeleted }) {
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [picked, setPicked] = useState(() => new Set())
+  const [count, setCount] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const ready = from && to && picked.size > 0 && from <= to
+
+  useEffect(() => {
+    setCount(null)
+    if (!ready) return undefined
+    let cancelled = false
+    previewDeleteNotifications({ from: startOfDayIso(from), to: endOfDayIso(to), intervals: [...picked] })
+      .then((data) => !cancelled && setCount(data.count))
+      .catch((err) => !cancelled && setError(err?.response?.data?.error || err?.message || 'Preview failed'))
+    return () => {
+      cancelled = true
+    }
+  }, [from, to, picked, ready])
+
+  const toggle = (key) =>
+    setPicked((current) => {
+      const next = new Set(current)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+
+  const confirm = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const body = { from: startOfDayIso(from), to: endOfDayIso(to), intervals: [...picked] }
+      let deleted = 0
+      for (let i = 0; i < 50; i++) {
+        const result = await deleteNotifications(body)
+        deleted += result.deleted
+        if (!result.hasMore) break
+      }
+      onDeleted({ deleted, ...body })
+    } catch (err) {
+      setError(err?.response?.data?.error || err?.message || 'Delete failed')
+      setBusy(false)
+    }
+  }
+
+  const inputClass = 'bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface'
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-md" role="dialog" aria-modal="true" aria-label="Delete notifications">
+      <div className="glass-panel rounded-xl p-lg w-full max-w-md flex flex-col gap-md bg-surface">
+        <h3 className="text-base font-semibold text-on-surface">Delete notifications</h3>
+        <div className="flex items-center gap-sm flex-wrap">
+          <label className="flex flex-col text-xs text-on-surface-variant gap-xs">
+            From
+            <input type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} className={inputClass} />
+          </label>
+          <label className="flex flex-col text-xs text-on-surface-variant gap-xs">
+            To
+            <input type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} className={inputClass} />
+          </label>
+        </div>
+        <fieldset className="flex flex-wrap gap-sm">
+          <legend className="text-xs text-on-surface-variant pb-xs">Intervals</legend>
+          {SECTION_ORDER.map((key) => (
+            <label key={key} className="flex items-center gap-xs text-sm text-on-surface">
+              <input type="checkbox" checked={picked.has(key)} onChange={() => toggle(key)} />
+              {sectionLabel(key)}
+            </label>
+          ))}
+        </fieldset>
+        <p className="text-sm text-on-surface-variant">
+          {!ready ? 'Pick both dates and at least one interval.' : count == null ? 'Counting…' : `${count} notification${count === 1 ? '' : 's'} will be permanently deleted.`}
+        </p>
+        {error && <div className="text-sm text-bearish">{error}</div>}
+        <div className="flex justify-end gap-sm">
+          <button type="button" onClick={onClose} disabled={busy} className="px-md py-sm rounded-lg text-sm border border-outline-variant text-on-surface-variant">
+            Cancel
+          </button>
+          <button type="button" onClick={confirm} disabled={busy || !ready || !count} className="px-md py-sm rounded-lg text-sm font-medium bg-error text-on-error disabled:opacity-50">
+            {busy ? 'Deleting…' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function NotificationsTab({ onTabChange }) {
   const dispatch = useDispatch()
   // Shared live feed: used only as a change signal (newest createdAt) and to
@@ -104,6 +207,10 @@ function NotificationsTab({ onTabChange }) {
   const [symbol, setSymbol] = useState('')
   const [indicator, setIndicator] = useState('all')
   const [direction, setDirection] = useState('any')
+  const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
+  const [toDate, setToDate] = useState('')
+  const [showDelete, setShowDelete] = useState(false)
+  const [notice, setNotice] = useState('')
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
   const [pages, setPages] = useState({}) // section -> current page (default 1)
@@ -124,8 +231,10 @@ function NotificationsTab({ onTabChange }) {
     if (symbol) f.symbol = symbol
     if (indicator !== 'all') f.indicator = indicator
     if (direction !== 'any') f.direction = direction
+    if (fromDate) f.from = startOfDayIso(fromDate)
+    if (toDate) f.to = endOfDayIso(toDate)
     return f
-  }, [typeFilter, unreadOnly, symbol, indicator, direction])
+  }, [typeFilter, unreadOnly, symbol, indicator, direction, fromDate, toDate])
   const filtersKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
@@ -210,6 +319,18 @@ function NotificationsTab({ onTabChange }) {
       .catch((err) => console.error('Failed to mark all notifications read:', err))
   }
 
+  const handleDeleted = ({ deleted, intervals, from, to }) => {
+    setShowDelete(false)
+    setNotice(`Deleted ${deleted} notification${deleted === 1 ? '' : 's'}.`)
+    dispatch(removeNotificationsInRange({ sections: intervals, from, to }))
+    getUnreadNotificationCount()
+      .then(({ count }) => dispatch(setUnreadCount(count || 0)))
+      .catch((err) => console.error('Failed to refresh unread count:', err))
+    setPages({})
+    setSectionData({})
+    loadCounts()
+  }
+
   const toggleSection = (key) =>
     setExpanded((current) => {
       const next = new Set(current)
@@ -241,6 +362,9 @@ function NotificationsTab({ onTabChange }) {
               Scanner settings →
             </button>
           )}
+          <button type="button" onClick={() => setShowDelete(true)} className="px-md py-sm rounded-lg border border-outline-variant text-sm text-bearish">
+            Delete notifications…
+          </button>
           <button
             type="button"
             onClick={markAllRead}
@@ -283,7 +407,23 @@ function NotificationsTab({ onTabChange }) {
           <option value="bullish">Bullish</option>
           <option value="bearish">Bearish</option>
         </select>
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant">
+          From
+          <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={selectClass} aria-label="From date" />
+        </label>
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant">
+          To
+          <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={selectClass} aria-label="To date" />
+        </label>
+        {(fromDate || toDate) && (
+          <button type="button" onClick={() => { setFromDate(''); setToDate('') }} className="text-xs text-primary hover:underline">
+            Clear dates
+          </button>
+        )}
       </div>
+
+      {notice && <div className="text-sm text-on-surface-variant">{notice}</div>}
+      {showDelete && <DeleteDialog onClose={() => setShowDelete(false)} onDeleted={handleDeleted} />}
 
       {error && <div className="text-sm text-bearish">{error}</div>}
       {!counts && !error && <Spinner />}
@@ -292,7 +432,7 @@ function NotificationsTab({ onTabChange }) {
       {visibleSections.map((key) => {
         const isCollapsed = !expanded.has(key)
         const page = pages[key] || 1
-        const { total, unread } = counts[key]
+        const { total, unread, bullish = 0, bearish = 0 } = counts[key]
         const data = sectionData[key]
         const items = data?.items ? sortSectionItems(data.items) : []
         let lastBar = null
@@ -305,6 +445,12 @@ function NotificationsTab({ onTabChange }) {
                 <span className="text-xs text-on-surface-variant">{total}</span>
                 {unread > 0 && <span className="min-w-[18px] h-[18px] px-[5px] rounded-full bg-error text-on-error text-[10px] font-bold flex items-center justify-center">{unread}</span>}
               </button>
+              {key !== SYSTEM_KEY && (
+                <div className="flex items-center gap-sm ml-auto">
+                  <CountCard label="Bullish" value={bullish} tone="bullish" />
+                  <CountCard label="Bearish" value={bearish} tone="bearish" />
+                </div>
+              )}
               {!isCollapsed && items.some((n) => !n.read && !readIds.has(n.id)) && (
                 <button type="button" onClick={() => markRead(items.filter((n) => !n.read && !readIds.has(n.id)).map((n) => n.id))} className="text-xs text-primary hover:underline">
                   Mark this page read

@@ -74,6 +74,9 @@ const ROUTES = [
   { method: 'GET', path: '/notifications/unread-count' },
   { method: 'GET', path: '/notifications/counts' },
   { method: 'GET', path: '/notifications/page?section=15minute&page=1&pageSize=5' },
+  { method: 'GET', path: '/notifications/counts?from=2020-01-01T00:00:00.000Z&to=2030-01-01T00:00:00.000Z' },
+  { method: 'POST', path: '/notifications/delete-preview', body: { from: '2020-01-01T00:00:00.000Z', to: '2020-01-02T00:00:00.000Z', intervals: ['15minute'] }, write: true },
+  { method: 'POST', path: '/notifications/delete', body: {}, write: true, note: 'missing from/to/intervals -> 400' },
   { method: 'GET', path: '/notifications/since?cursor=2020-01-01T00:00:00.000Z&limit=1' },
 
   { method: 'GET', path: '/option-chain-snapshots' },

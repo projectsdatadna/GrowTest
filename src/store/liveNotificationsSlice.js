@@ -1,8 +1,8 @@
 import { createSlice } from '@reduxjs/toolkit'
 import { markNotificationsReadLocally } from './historicalWatchlistSlice'
 
-// The single live notification feed shared by the bell, the crossover popup and
-// the Notifications page (see useLiveNotifications). Server-owned and never
+// The single live notification feed shared by the bell and the
+// Notifications page (see useLiveNotifications). Server-owned and never
 // persisted (store/index.js whitelist) - always rebuilt from the API on load.
 const MAX_ITEMS = 3000
 
@@ -10,8 +10,6 @@ const initialState = {
   items: [], // newest first
   cursor: null, // createdAt (ISO) of the newest item seen - the next poll asks for anything after it
   loaded: false,
-  popupIntervals: null, // null until the server tells us
-  minAgreement: {},
 }
 
 const byNewest = (a, b) => String(b.createdAt).localeCompare(String(a.createdAt)) || String(b.id).localeCompare(String(a.id))
@@ -23,7 +21,7 @@ const liveNotificationsSlice = createSlice({
     // Merge fetched items into the feed. An id already marked read locally
     // stays read (a poll in flight must not resurrect a dismissed alert).
     mergeNotifications(state, action) {
-      const { items = [], popupIntervals, minAgreement } = action.payload
+      const { items = [] } = action.payload
       const known = new Map(state.items.map((n) => [n.id, n]))
       for (const n of items) {
         const existing = known.get(n.id)
@@ -33,13 +31,20 @@ const liveNotificationsSlice = createSlice({
       const newest = items.reduce((max, n) => (n.createdAt && n.createdAt > max ? n.createdAt : max), state.cursor || '')
       state.cursor = newest || state.cursor
       state.loaded = true
-      if (popupIntervals) state.popupIntervals = popupIntervals
-      if (minAgreement) state.minAgreement = minAgreement
     },
     // Starting point for the live feed when there is nothing stored yet.
     setCursorIfEmpty(state, action) {
       if (!state.cursor) state.cursor = action.payload
       state.loaded = true
+    },
+    // After a bulk delete: drop the feed items the server just deleted.
+    removeNotificationsInRange(state, action) {
+      const { sections, from, to } = action.payload
+      const wanted = new Set(sections)
+      state.items = state.items.filter((n) => {
+        const section = n.type === 'scanner_warning' ? 'system' : n.interval
+        return !(wanted.has(section) && n.createdAt >= from && n.createdAt <= to)
+      })
     },
     markAllReadLocally(state) {
       state.items.forEach((n) => {
@@ -48,7 +53,7 @@ const liveNotificationsSlice = createSlice({
     },
   },
   extraReducers: (builder) => {
-    // Every existing "mark these ids read" dispatch (bell, popup, tab) also
+    // Every existing "mark these ids read" dispatch (bell, tab) also
     // keeps this feed in sync.
     builder.addCase(markNotificationsReadLocally, (state, action) => {
       const ids = new Set(action.payload)
@@ -59,5 +64,5 @@ const liveNotificationsSlice = createSlice({
   },
 })
 
-export const { mergeNotifications, setCursorIfEmpty, markAllReadLocally } = liveNotificationsSlice.actions
+export const { mergeNotifications, setCursorIfEmpty, markAllReadLocally, removeNotificationsInRange } = liveNotificationsSlice.actions
 export default liveNotificationsSlice.reducer

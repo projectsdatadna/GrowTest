@@ -60,7 +60,7 @@ export default function useLiveNotifications() {
             // Overlap re-sends known items; only a genuinely new id changes the badge.
             const known = new Set(store.getState().liveNotifications.items.map((n) => n.id))
             const fresh = items.filter((n) => !known.has(n.id))
-            dispatch(mergeNotifications({ items, popupIntervals: data.popupIntervals, minAgreement: data.minAgreement }))
+            dispatch(mergeNotifications({ items }))
             if (fresh.length > 0) refreshUnreadCount()
             if (!data.hasMore) break
           }

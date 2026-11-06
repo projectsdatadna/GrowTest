@@ -277,7 +277,7 @@ const SECTION_KEYS = [...DEFAULT_ENABLED_INTERVALS, SYSTEM_SECTION]
 // (Firestore merges the single-field/composite indexes for these, see
 // firestore.indexes.json), so there is no substring search: `symbol` is an exact
 // match. Returns null when the filters can't match anything in this section.
-function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol } = {}) {
+function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol, from, to } = {}) {
   let query = db.collection(NOTIFICATIONS_COLLECTION)
   if (section === SYSTEM_SECTION) {
     if (type && type !== 'scanner_warning') return null
@@ -290,6 +290,9 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol 
   if (indicator) query = query.where('indicatorLabel', '==', indicator)
   if (direction) query = query.where('direction', '==', direction)
   if (symbol) query = query.where('symbol', '==', symbol)
+  // Optional date range on createdAt (the field every index is ordered by).
+  if (from) query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(new Date(from)))
+  if (to) query = query.where('createdAt', '<=', admin.firestore.Timestamp.fromDate(new Date(to)))
   return query
 }
 
@@ -306,19 +309,62 @@ export async function queryNotificationsPage(section, filters = {}, { page = 1, 
   return { items: snapshot.docs.map(serializeNotificationDoc), total: count.data().count }
 }
 
-// {[section]: {total, unread}} for every section under the same filters, so
-// the page can show section headers without loading their items.
+// {[section]: {total, unread, bullish, bearish}} for every section under the
+// same filters, so the page can show section headers and overview cards without
+// loading their items. bullish/bearish ignore the direction filter (the cards
+// always show both sides) but honour every other filter; the System section has
+// no direction so both are 0.
 export async function countNotificationsBySection(filters = {}) {
   const entries = await Promise.all(
     SECTION_KEYS.map(async (section) => {
       const all = sectionQuery(section, filters)
       const unread = sectionQuery(section, { ...filters, unreadOnly: true })
-      if (!all || !unread) return [section, { total: 0, unread: 0 }]
-      const [total, unreadCount] = await Promise.all([all.count().get(), unread.count().get()])
-      return [section, { total: total.data().count, unread: unreadCount.data().count }]
+      if (!all || !unread) return [section, { total: 0, unread: 0, bullish: 0, bearish: 0 }]
+      const sideCount = async (direction) => {
+        if (section === SYSTEM_SECTION) return 0
+        const query = sectionQuery(section, { ...filters, direction })
+        return query ? (await query.count().get()).data().count : 0
+      }
+      const [total, unreadCount, bullish, bearish] = await Promise.all([all.count().get(), unread.count().get(), sideCount('bullish'), sideCount('bearish')])
+      return [section, { total: total.data().count, unread: unreadCount.data().count, bullish, bearish }]
     })
   )
   return Object.fromEntries(entries)
+}
+
+// ---------- bulk delete (Notifications page "Delete notifications") ----------
+
+// Notifications in the given sections created within [from, to]. Each section is
+// its own equality + createdAt-range query, so existing (field, createdAt)
+// indexes serve it. `maxDocs` bounds one request's work; `hasMore` tells the
+// caller to repeat.
+function deleteQueries(sections, from, to) {
+  return sections.map((section) => sectionQuery(section, { from, to })).filter(Boolean)
+}
+
+export async function countNotificationsForDelete({ sections, from, to }) {
+  const counts = await Promise.all(deleteQueries(sections, from, to).map(async (q) => (await q.count().get()).data().count))
+  return counts.reduce((sum, n) => sum + n, 0)
+}
+
+export async function deleteNotificationsInRange({ sections, from, to, maxBatches = 20 }) {
+  let deleted = 0
+  let batches = 0
+  for (const query of deleteQueries(sections, from, to)) {
+    while (batches < maxBatches) {
+      const snapshot = await query.limit(BATCH_LIMIT).get()
+      if (snapshot.empty) break
+      const batch = db.batch()
+      snapshot.docs.forEach((doc) => batch.delete(doc.ref))
+      await batch.commit()
+      deleted += snapshot.size
+      batches += 1
+      if (snapshot.size < BATCH_LIMIT) break
+    }
+    if (batches >= maxBatches) break
+  }
+  const remaining = batches >= maxBatches ? await countNotificationsForDelete({ sections, from, to }) : 0
+  return { deleted, hasMore: remaining > 0 }
 }
 
 export const NOTIFICATION_SECTIONS = SECTION_KEYS

@@ -506,13 +506,37 @@ export const getNotificationsPage = async (section, filters = {}, page = 1, page
   }
 }
 
-// {[section]: {total, unread}} for every Notifications section under the same filters.
+// {[section]: {total, unread, bullish, bearish}} for every Notifications section under the same filters
+// (filters may include ISO `from` / `to`).
 export const getNotificationCounts = async (filters = {}) => {
   try {
     const response = await apiClient.get('/notifications/counts', { params: filters })
     return response.data
   } catch (error) {
     console.error('Error fetching notification counts:', error)
+    throw error
+  }
+}
+
+// Bulk delete by date range + sections. `body` = {from, to, intervals} (ISO dates;
+// intervals are timeframe keys and/or 'system'). Preview returns {count}; delete
+// returns {deleted, hasMore} (call again while hasMore).
+export const previewDeleteNotifications = async (body) => {
+  try {
+    const response = await apiClient.post('/notifications/delete-preview', body)
+    return response.data
+  } catch (error) {
+    console.error('Error previewing notification delete:', error)
+    throw error
+  }
+}
+
+export const deleteNotifications = async (body) => {
+  try {
+    const response = await apiClient.post('/notifications/delete', body)
+    return response.data
+  } catch (error) {
+    console.error('Error deleting notifications:', error)
     throw error
   }
 }

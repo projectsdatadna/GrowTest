@@ -6,7 +6,6 @@ import { markAllReadLocally } from '../store/liveNotificationsSlice'
 import useLiveNotifications from './useLiveNotifications'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
 import { timeAgo, formatCrossoverTime } from './crossoverFormat'
-import CrossoverAlertPopup from './CrossoverAlertPopup'
 
 /**
  * Dark "terminal" app shell (sidebar + top header) from the Stitch mockup.
@@ -167,7 +166,6 @@ function AppShell({ activeTab, onTabChange, children }) {
       <header className="sticky top-0 right-0 z-40 w-[calc(100%-250px)] ml-[250px] bg-surface/60 backdrop-blur-md border-b border-outline-variant flex justify-end items-center h-12 px-xl">
         <div className="flex items-center gap-md">
           <NotificationBell onViewAll={() => onTabChange('notifications')} />
-          <CrossoverAlertPopup onViewNotifications={() => onTabChange('notifications')} />
           <div
             className="w-8 h-8 rounded-full bg-primary-container text-on-primary-container flex items-center justify-center text-xs font-bold"
             title="Account"
