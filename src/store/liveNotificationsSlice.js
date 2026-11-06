@@ -41,9 +41,15 @@ const liveNotificationsSlice = createSlice({
     removeNotificationsInRange(state, action) {
       const { sections, from, to } = action.payload
       const wanted = new Set(sections)
+      const fromSec = Date.parse(from) / 1000
+      const toSec = Date.parse(to) / 1000
       state.items = state.items.filter((n) => {
-        const section = n.type === 'scanner_warning' ? 'system' : n.interval
-        return !(wanted.has(section) && n.createdAt >= from && n.createdAt <= to)
+        const isSystem = n.type === 'scanner_warning'
+        const section = isSystem ? 'system' : n.interval
+        if (!wanted.has(section)) return true
+        // Mirrors the server: crossovers by bar time, System warnings by createdAt.
+        const inRange = isSystem ? n.createdAt >= from && n.createdAt <= to : n.candleTimestamp >= fromSec && n.candleTimestamp <= toSec
+        return !inRange
       })
     },
     markAllReadLocally(state) {

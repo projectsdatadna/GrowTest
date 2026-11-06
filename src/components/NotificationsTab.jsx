@@ -231,7 +231,7 @@ function DeleteDialog({ onClose, onDeleted }) {
           ))}
         </fieldset>
         <p className="text-sm text-on-surface-variant">
-          {!ready ? 'Pick both dates and at least one interval.' : count == null ? 'Counting…' : `${count} notification${count === 1 ? '' : 's'} will be permanently deleted.`}
+          {!ready ? 'Pick both dates and at least one interval.' : count == null ? 'Counting…' : `${count} notification${count === 1 ? '' : 's'} will be permanently deleted (by crossover date).`}
         </p>
         {error && <div className="text-sm text-bearish">{error}</div>}
         <div className="flex justify-end gap-sm">
@@ -455,11 +455,11 @@ function NotificationsTab({ onTabChange }) {
           <option value="bullish">Bullish</option>
           <option value="bearish">Bearish</option>
         </select>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant">
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
           From
           <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={selectClass} aria-label="From date" />
         </label>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant">
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
           To
           <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={selectClass} aria-label="To date" />
         </label>

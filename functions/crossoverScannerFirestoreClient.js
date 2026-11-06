@@ -293,11 +293,23 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
   else if (indicator?.length > 1) query = query.where('indicatorLabel', 'in', indicator)
   if (direction) query = query.where('direction', '==', direction)
   if (symbol) query = query.where('symbol', '==', symbol)
-  // Optional date range on createdAt (the field every index is ordered by).
-  if (from) query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(new Date(from)))
-  if (to) query = query.where('createdAt', '<=', admin.firestore.Timestamp.fromDate(new Date(to)))
+  // Optional date range. Timeframe sections filter on the crossover's own bar time
+  // (candleTimestamp, epoch seconds - what the page shows as "Crossed ..."), NOT
+  // createdAt: back-filled/late-scanned crossovers are written long after they
+  // happened. System warnings have no bar, so they use createdAt.
+  if (section === SYSTEM_SECTION) {
+    if (from) query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(new Date(from)))
+    if (to) query = query.where('createdAt', '<=', admin.firestore.Timestamp.fromDate(new Date(to)))
+  } else {
+    if (from) query = query.where('candleTimestamp', '>=', Math.floor(Date.parse(from) / 1000))
+    if (to) query = query.where('candleTimestamp', '<=', Math.floor(Date.parse(to) / 1000))
+  }
   return query
 }
+
+// The field a section is ordered (and range-filtered) by: the crossover bar time
+// for timeframe sections, createdAt for System.
+const orderField = (section) => (section === SYSTEM_SECTION ? 'createdAt' : 'candleTimestamp')
 
 // One numbered page of a section, newest first, plus the section's total for
 // these filters. Offset paging: skipped docs are billed as reads, fine at this
@@ -306,7 +318,7 @@ export async function queryNotificationsPage(section, filters = {}, { page = 1, 
   const query = sectionQuery(section, filters)
   if (!query) return { items: [], total: 0 }
   const [snapshot, count] = await Promise.all([
-    query.orderBy('createdAt', 'desc').offset((page - 1) * pageSize).limit(pageSize).get(),
+    query.orderBy(orderField(section), 'desc').offset((page - 1) * pageSize).limit(pageSize).get(),
     query.count().get(),
   ])
   return { items: snapshot.docs.map(serializeNotificationDoc), total: count.data().count }
@@ -333,7 +345,7 @@ export async function countNotificationsBySection(filters = {}) {
         if (section === SYSTEM_SECTION) return null
         const query = sectionQuery(section, { ...filters, type: filters.type || 'crossover' })
         if (!query) return null
-        const snapshot = await query.orderBy('createdAt', 'desc').limit(1).get()
+        const snapshot = await query.orderBy('candleTimestamp', 'desc').limit(1).get()
         return snapshot.empty ? null : snapshot.docs[0].data().candleTimestamp ?? null
       }
       const [total, unreadCount, bullish, bearish, unreadBullish, unreadBearish, last] = await Promise.all([
@@ -354,8 +366,8 @@ export async function countNotificationsBySection(filters = {}) {
 // ---------- bulk delete (Notifications page "Delete notifications") ----------
 
 // Notifications in the given sections created within [from, to]. Each section is
-// its own equality + createdAt-range query, so existing (field, createdAt)
-// indexes serve it. `maxDocs` bounds one request's work; `hasMore` tells the
+// its own equality + range query (candleTimestamp, or createdAt for System), so
+// the (interval, ..., candleTimestamp) indexes serve it. `maxDocs` bounds one request's work; `hasMore` tells the
 // caller to repeat.
 function deleteQueries(sections, from, to) {
   return sections.map((section) => sectionQuery(section, { from, to })).filter(Boolean)
