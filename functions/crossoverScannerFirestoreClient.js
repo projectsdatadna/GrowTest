@@ -11,7 +11,7 @@
 
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
-import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION } from './crossoverTimeframes.js'
+import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION, candleStartRangeForEndRange } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
 const DATABASE_ID = 'groww-dashboard'
@@ -294,21 +294,23 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
   if (direction) query = query.where('direction', '==', direction)
   if (symbol) query = query.where('symbol', '==', symbol)
   // Optional date range. Timeframe sections filter on the crossover's own bar time
-  // (candleTimestamp, epoch seconds - what the page shows as "Crossed ..."), NOT
-  // createdAt: back-filled/late-scanned crossovers are written long after they
+  // (what the page shows as "Crossed ..."), NOT createdAt: back-filled/late-scanned crossovers are written long after they
   // happened. System warnings have no bar, so they use createdAt.
   if (section === SYSTEM_SECTION) {
     if (from) query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(new Date(from)))
     if (to) query = query.where('createdAt', '<=', admin.firestore.Timestamp.fromDate(new Date(to)))
   } else {
-    if (from) query = query.where('candleTimestamp', '>=', Math.floor(Date.parse(from) / 1000))
-    if (to) query = query.where('candleTimestamp', '<=', Math.floor(Date.parse(to) / 1000))
+    // The user's range is on the DISPLAYED time (bar end); candleTimestamp is the
+    // bar start, so translate the range (see candleStartRangeForEndRange).
+    const { gte, lte } = candleStartRangeForEndRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
+    if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
+    if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
   }
   return query
 }
 
-// The field a section is ordered (and range-filtered) by: the crossover bar time
-// for timeframe sections, createdAt for System.
+// The field a section is ordered (and range-filtered) by: the bar start for
+// timeframe sections (same order as bar end), createdAt for System.
 const orderField = (section) => (section === SYSTEM_SECTION ? 'createdAt' : 'candleTimestamp')
 
 // One numbered page of a section, newest first, plus the section's total for

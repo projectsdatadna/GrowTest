@@ -97,6 +97,43 @@ export function candleEnd(interval, start) {
   return mondayStart + 4 * DAY + MARKET_CLOSE_OFFSET
 }
 
+// Bar end for ANY start second (candleEnd returns null for a start after the
+// close; here such a start maps to that day's close so the function stays
+// non-decreasing in `start`, which the range search below relies on).
+function monotoneBarEnd(interval, start) {
+  return candleEnd(interval, start) ?? istDayStart(start) + MARKET_CLOSE_OFFSET
+}
+
+/**
+ * Converts a range on the time a crossover is DISPLAYED (its bar end, epoch
+ * seconds) into the equivalent range on the stored bar START (`candleTimestamp`),
+ * which is the field Firestore can filter on. Bar end never decreases as the
+ * start increases, so each bound is found by binary search.
+ * `fromEnd` / `toEnd` are optional; returns {gte, lte} (each possibly undefined).
+ */
+export function candleStartRangeForEndRange(interval, fromEnd, toEnd) {
+  const SPAN = 14 * DAY // far beyond any bar's start->end distance (max ~5 days)
+  const bound = (target, wantFirstAtLeast) => {
+    // wantFirstAtLeast: smallest start with end >= target; else largest start with end <= target
+    let lo = target - SPAN
+    let hi = target + SPAN
+    while (lo < hi) {
+      const mid = wantFirstAtLeast ? Math.floor((lo + hi) / 2) : Math.ceil((lo + hi) / 2)
+      const end = monotoneBarEnd(interval, mid)
+      if (wantFirstAtLeast) {
+        if (end >= target) hi = mid
+        else lo = mid + 1
+      } else if (end <= target) lo = mid
+      else hi = mid - 1
+    }
+    return lo
+  }
+  return {
+    gte: fromEnd == null ? undefined : bound(fromEnd, true),
+    lte: toEnd == null ? undefined : bound(toEnd, false),
+  }
+}
+
 export function isCandleClosed(interval, start, nowSeconds) {
   const end = candleEnd(interval, start)
   return end != null && end <= nowSeconds
