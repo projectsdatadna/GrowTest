@@ -311,7 +311,7 @@ export async function queryNotificationsPage(section, filters = {}, { page = 1, 
   return { items: snapshot.docs.map(serializeNotificationDoc), total: count.data().count }
 }
 
-// {[section]: {total, unread, bullish, bearish}} for every section under the
+// {[section]: {total, unread, bullish, bearish, unreadBullish, unreadBearish, lastCrossover}} for every section under the
 // same filters, so the page can show section headers and overview cards without
 // loading their items. bullish/bearish ignore the direction filter (the cards
 // always show both sides) but honour every other filter; the System section has
@@ -321,14 +321,30 @@ export async function countNotificationsBySection(filters = {}) {
     SECTION_KEYS.map(async (section) => {
       const all = sectionQuery(section, filters)
       const unread = sectionQuery(section, { ...filters, unreadOnly: true })
-      if (!all || !unread) return [section, { total: 0, unread: 0, bullish: 0, bearish: 0 }]
-      const sideCount = async (direction) => {
+      if (!all || !unread) return [section, { total: 0, unread: 0, bullish: 0, bearish: 0, unreadBullish: 0, unreadBearish: 0, lastCrossover: null }]
+      const sideCount = async (direction, unreadOnly) => {
         if (section === SYSTEM_SECTION) return 0
-        const query = sectionQuery(section, { ...filters, direction })
+        const query = sectionQuery(section, { ...filters, direction, unreadOnly })
         return query ? (await query.count().get()).data().count : 0
       }
-      const [total, unreadCount, bullish, bearish] = await Promise.all([all.count().get(), unread.count().get(), sideCount('bullish'), sideCount('bearish')])
-      return [section, { total: total.data().count, unread: unreadCount.data().count, bullish, bearish }]
+      // Epoch seconds of the newest crossover bar in this section (same filters).
+      const lastCrossover = async () => {
+        if (section === SYSTEM_SECTION) return null
+        const query = sectionQuery(section, { ...filters, type: filters.type || 'crossover' })
+        if (!query) return null
+        const snapshot = await query.orderBy('createdAt', 'desc').limit(1).get()
+        return snapshot.empty ? null : snapshot.docs[0].data().candleTimestamp ?? null
+      }
+      const [total, unreadCount, bullish, bearish, unreadBullish, unreadBearish, last] = await Promise.all([
+        all.count().get(),
+        unread.count().get(),
+        sideCount('bullish', false),
+        sideCount('bearish', false),
+        sideCount('bullish', true),
+        sideCount('bearish', true),
+        lastCrossover(),
+      ])
+      return [section, { total: total.data().count, unread: unreadCount.data().count, bullish, bearish, unreadBullish, unreadBearish, lastCrossover: last }]
     })
   )
   return Object.fromEntries(entries)

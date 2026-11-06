@@ -94,11 +94,27 @@ function sortSectionItems(items) {
 const startOfDayIso = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : '')
 const endOfDayIso = (value) => (value ? new Date(`${value}T23:59:59.999`).toISOString() : '')
 
-function CountCard({ label, value, tone }) {
+function CountCard({ label, value, unread, tone }) {
   return (
     <div className={`flex items-center gap-xs rounded-lg border border-outline-variant px-sm py-[2px] ${tone === 'bullish' ? 'bg-bullish/10' : 'bg-bearish/10'}`}>
       <span className={`text-[11px] uppercase tracking-wide ${tone === 'bullish' ? 'text-bullish' : 'text-bearish'}`}>{label}</span>
       <span className="text-sm font-semibold font-mono text-on-surface">{value}</span>
+      <span className="text-[10px] text-on-surface-variant">{unread} unread</span>
+    </div>
+  )
+}
+
+// Bullish vs bearish share of a section as a split bar + percentage.
+function BiasBar({ bullish, bearish }) {
+  const sum = bullish + bearish
+  if (sum === 0) return null
+  const bullPct = Math.round((bullish / sum) * 100)
+  return (
+    <div className="flex items-center gap-xs" title={`${bullPct}% bullish / ${100 - bullPct}% bearish`}>
+      <div className="flex w-24 h-2 rounded-full overflow-hidden bg-bearish/60">
+        <div className="bg-bullish" style={{ width: `${bullPct}%` }} />
+      </div>
+      <span className="text-[10px] text-on-surface-variant font-mono">{bullPct}% bull</span>
     </div>
   )
 }
@@ -432,7 +448,7 @@ function NotificationsTab({ onTabChange }) {
       {visibleSections.map((key) => {
         const isCollapsed = !expanded.has(key)
         const page = pages[key] || 1
-        const { total, unread, bullish = 0, bearish = 0 } = counts[key]
+        const { total, unread, bullish = 0, bearish = 0, unreadBullish = 0, unreadBearish = 0, lastCrossover = null } = counts[key]
         const data = sectionData[key]
         const items = data?.items ? sortSectionItems(data.items) : []
         let lastBar = null
@@ -447,8 +463,10 @@ function NotificationsTab({ onTabChange }) {
               </button>
               {key !== SYSTEM_KEY && (
                 <div className="flex items-center gap-sm ml-auto">
-                  <CountCard label="Bullish" value={bullish} tone="bullish" />
-                  <CountCard label="Bearish" value={bearish} tone="bearish" />
+                  <BiasBar bullish={bullish} bearish={bearish} />
+                  {lastCrossover != null && <span className="text-[10px] text-on-surface-variant">Last crossover {timeAgo(new Date(lastCrossover * 1000).toISOString())}</span>}
+                  <CountCard label="Bullish" value={bullish} unread={unreadBullish} tone="bullish" />
+                  <CountCard label="Bearish" value={bearish} unread={unreadBearish} tone="bearish" />
                 </div>
               )}
               {!isCollapsed && items.some((n) => !n.read && !readIds.has(n.id)) && (
