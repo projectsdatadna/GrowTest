@@ -281,6 +281,8 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
   let query = db.collection(NOTIFICATIONS_COLLECTION)
   if (section === SYSTEM_SECTION) {
     if (type && type !== 'scanner_warning') return null
+    // Warnings carry no direction/symbol/indicator, so these filters match nothing.
+    if (direction || symbol || indicator) return null
     query = query.where('type', '==', 'scanner_warning')
   } else {
     query = query.where('interval', '==', section)
