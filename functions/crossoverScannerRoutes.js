@@ -51,7 +51,13 @@ function parseNotificationFilters(query) {
     if (!['bullish', 'bearish'].includes(query.direction)) return { error: 'direction must be bullish or bearish' }
     filters.direction = query.direction
   }
-  if (query.indicator) filters.indicator = String(query.indicator).slice(0, 60)
+  // One label or a comma-separated list (labels contain no commas); several
+  // become an `in` filter.
+  if (query.indicator) {
+    const list = [...new Set(String(query.indicator).split(',').map((s) => s.trim().slice(0, 60)).filter(Boolean))]
+    if (list.length > 10) return { error: 'at most 10 indicators' }
+    if (list.length) filters.indicator = list
+  }
   if (query.symbol) filters.symbol = String(query.symbol).trim().toUpperCase().slice(0, 30)
   filters.unreadOnly = query.unreadOnly === 'true'
   const range = parseDateRange(query)

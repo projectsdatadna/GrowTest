@@ -94,6 +94,45 @@ function sortSectionItems(items) {
 const startOfDayIso = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : '')
 const endOfDayIso = (value) => (value ? new Date(`${value}T23:59:59.999`).toISOString() : '')
 
+// Checkbox dropdown for choosing any number of indicators (none = all).
+function IndicatorMultiSelect({ selected, onChange, className }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    if (!open) return undefined
+    const close = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    return () => document.removeEventListener('mousedown', close)
+  }, [open])
+  const toggle = (label) => onChange(selected.includes(label) ? selected.filter((l) => l !== label) : [...selected, label])
+  const text = selected.length === 0 ? 'All indicators' : selected.length === 1 ? selected[0] : `${selected.length} indicators`
+  return (
+    <div className="relative" ref={ref}>
+      <button type="button" onClick={() => setOpen((o) => !o)} className={`${className} flex items-center gap-xs`} aria-haspopup="listbox" aria-expanded={open} aria-label="Crossover indicators">
+        {text}
+        <span className="material-symbols-outlined text-[16px]">expand_more</span>
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-xs min-w-[220px] glass-panel bg-surface rounded-lg border border-outline-variant p-sm flex flex-col gap-xs shadow-lg">
+          {INDICATOR_FILTERS.map((label) => (
+            <label key={label} className="flex items-center gap-xs text-sm text-on-surface cursor-pointer">
+              <input type="checkbox" checked={selected.includes(label)} onChange={() => toggle(label)} />
+              {label}
+            </label>
+          ))}
+          {selected.length > 0 && (
+            <button type="button" onClick={() => onChange([])} className="text-xs text-primary hover:underline text-left pt-xs">
+              Clear selection
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CountCard({ label, value, unread, tone }) {
   return (
     <div className={`flex items-center gap-xs rounded-lg border border-outline-variant px-sm py-[2px] ${tone === 'bullish' ? 'bg-bullish/10' : 'bg-bearish/10'}`}>
@@ -221,7 +260,7 @@ function NotificationsTab({ onTabChange }) {
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [symbolInput, setSymbolInput] = useState('')
   const [symbol, setSymbol] = useState('')
-  const [indicator, setIndicator] = useState('all')
+  const [indicators, setIndicators] = useState([]) // selected indicator labels, [] = all
   const [direction, setDirection] = useState('any')
   const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
   const [toDate, setToDate] = useState('')
@@ -245,12 +284,12 @@ function NotificationsTab({ onTabChange }) {
     if (typeFilter !== 'all') f.type = typeFilter
     if (unreadOnly) f.unreadOnly = true
     if (symbol) f.symbol = symbol
-    if (indicator !== 'all') f.indicator = indicator
+    if (indicators.length) f.indicator = indicators.join(',')
     if (direction !== 'any') f.direction = direction
     if (fromDate) f.from = startOfDayIso(fromDate)
     if (toDate) f.to = endOfDayIso(toDate)
     return f
-  }, [typeFilter, unreadOnly, symbol, indicator, direction, fromDate, toDate])
+  }, [typeFilter, unreadOnly, symbol, indicators, direction, fromDate, toDate])
   const filtersKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
@@ -410,14 +449,7 @@ function NotificationsTab({ onTabChange }) {
           Unread only
         </label>
         <input type="text" value={symbolInput} onChange={(e) => setSymbolInput(e.target.value)} placeholder="Symbol (exact, e.g. ABB)…" className={selectClass} aria-label="Filter by symbol" />
-        <select value={indicator} onChange={(e) => setIndicator(e.target.value)} className={selectClass} aria-label="Crossover indicator">
-          <option value="all">All indicators</option>
-          {INDICATOR_FILTERS.map((label) => (
-            <option key={label} value={label}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <IndicatorMultiSelect selected={indicators} onChange={setIndicators} className={selectClass} />
         <select value={direction} onChange={(e) => setDirection(e.target.value)} className={selectClass} aria-label="Crossover direction">
           <option value="any">Any direction</option>
           <option value="bullish">Bullish</option>

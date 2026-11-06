@@ -282,14 +282,15 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
   if (section === SYSTEM_SECTION) {
     if (type && type !== 'scanner_warning') return null
     // Warnings carry no direction/symbol/indicator, so these filters match nothing.
-    if (direction || symbol || indicator) return null
+    if (direction || symbol || indicator?.length) return null
     query = query.where('type', '==', 'scanner_warning')
   } else {
     query = query.where('interval', '==', section)
     if (type) query = query.where('type', '==', type)
   }
   if (unreadOnly) query = query.where('read', '==', false)
-  if (indicator) query = query.where('indicatorLabel', '==', indicator)
+  if (indicator?.length === 1) query = query.where('indicatorLabel', '==', indicator[0])
+  else if (indicator?.length > 1) query = query.where('indicatorLabel', 'in', indicator)
   if (direction) query = query.where('direction', '==', direction)
   if (symbol) query = query.where('symbol', '==', symbol)
   // Optional date range on createdAt (the field every index is ordered by).
