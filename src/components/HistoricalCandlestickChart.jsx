@@ -246,7 +246,9 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
     const showTsi = indicatorConfig.tsi.enabled
     const showStochRsi = indicatorConfig.stochRsi.enabled
     const showAdx = indicatorConfig.adx.enabled
-    const showDmi = indicatorConfig.dmi.enabled
+    // The DMI panel also appears when only the DMI crossover is on, so its markers have a chart to sit on.
+    const showDmi = indicatorConfig.dmi.enabled || indicatorConfig.adxCrossover.enabled
+    const dmiPeriod = indicatorConfig.dmi.enabled ? indicatorConfig.dmi.period : indicatorConfig.adxCrossover.period
 
     // SMA/EMA/Bollinger Bands overlay directly on the price panel below (same
     // price units as the candles) rather than getting their own row - only
@@ -518,7 +520,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
       layoutAxes[axisKey] = { domain, range: [0, 100], gridcolor: COLOR_GRID, color: COLOR_TEXT }
       annotations.push(panelLabel('DMI', domain[1]))
 
-      const points = indicatorSeries[`ADX:${indicatorConfig.dmi.period}`] || []
+      const points = indicatorSeries[`ADX:${dmiPeriod}`] || []
       const x = points.map((p) => toPlotlyDate(p.timestamp))
       // +DI/-DI reuse the app's bullish/bearish palette (same as
       // Support/Resistance) - +DI is upward directional strength, -DI is

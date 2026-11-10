@@ -210,7 +210,8 @@ function buildIndicatorSpecs(indicatorConfig) {
     specs.push(`STOCHRSI:${rsiPeriod}:${stochasticPeriod}:${kPeriod}:${dPeriod}`)
   }
   // ADX and DMI panels both read the same ADX:<period> series (adx, +DI, -DI).
-  for (const key of ['adx', 'dmi']) {
+  // (the DMI panel is also drawn for the DMI crossover alone, using its period).
+  for (const key of ['adx', 'dmi', 'adxCrossover']) {
     const spec = `ADX:${indicatorConfig[key].period}`
     if (indicatorConfig[key].enabled && !specs.includes(spec)) specs.push(spec)
   }
