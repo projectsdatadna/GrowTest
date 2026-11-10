@@ -72,6 +72,10 @@ function parseNotificationFilters(query) {
     if (!['bullish', 'bearish'].includes(query.direction)) return { error: 'direction must be bullish or bearish' }
     filters.direction = query.direction
   }
+  if (query.adx) {
+    if (!['increase', 'decrease', 'flat'].includes(query.adx)) return { error: 'adx must be increase, decrease or flat' }
+    filters.adx = query.adx
+  }
   // One label or a comma-separated list (labels contain no commas); several
   // become an `in` filter.
   if (query.indicator) {
@@ -301,9 +305,12 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     try {
       const range = parseDateRange(req.query)
       if (range.error) return res.status(400).json({ error: range.error })
-      const workbook = await buildNotificationWorkbook(range)
+      const { workbook, range: used } = await buildNotificationWorkbook(range)
       const buffer = await workbook.xlsx.writeBuffer()
-      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date())
+      // Default (no dates) = the latest day with crossovers; name the file after it.
+      const day = used.day || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date())
+      res.setHeader('X-Export-Range', `${used.from || ''}|${used.to || ''}${used.day ? `|${used.day}` : ''}`)
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Range')
       res.setHeader('Content-Type', EXPORT_CONTENT_TYPE)
       res.setHeader('Content-Disposition', `attachment; filename="Notification List ${day}.xlsx"`)
       res.send(Buffer.from(buffer))

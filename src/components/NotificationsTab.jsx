@@ -297,6 +297,7 @@ function NotificationsTab({ onTabChange }) {
   const [symbol, setSymbol] = useState('')
   const [indicators, setIndicators] = useState([]) // selected indicator labels, [] = all
   const [direction, setDirection] = useState('any')
+  const [adxStatus, setAdxStatus] = useState('any') // any | increase | decrease | flat
   const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
   const [toDate, setToDate] = useState('')
   const [showDelete, setShowDelete] = useState(false)
@@ -322,10 +323,11 @@ function NotificationsTab({ onTabChange }) {
     if (symbol) f.symbol = symbol
     if (indicators.length) f.indicator = indicators.join(',')
     if (direction !== 'any') f.direction = direction
+    if (adxStatus !== 'any') f.adx = adxStatus
     if (fromDate) f.from = startOfDayIso(fromDate)
     if (toDate) f.to = endOfDayIso(toDate)
     return f
-  }, [typeFilter, unreadOnly, symbol, indicators, direction, fromDate, toDate])
+  }, [typeFilter, unreadOnly, symbol, indicators, direction, adxStatus, fromDate, toDate])
   const filtersKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
@@ -423,7 +425,7 @@ function NotificationsTab({ onTabChange }) {
     try {
       const { blob, filename } = await exportNotificationsExcel({ from: fromDate ? startOfDayIso(fromDate) : undefined, to: toDate ? endOfDayIso(toDate) : undefined })
       downloadBlob(blob, filename)
-      setNotice(`Exported ${fromDate || toDate ? `${fromDate || '…'} to ${toDate || 'now'}` : "today's crossovers"} to ${filename}.`)
+      setNotice(`Exported ${fromDate || toDate ? `${fromDate || '…'} to ${toDate || 'now'}` : `the latest day with crossovers (${filename.replace(/^Notification List |\.xlsx$/g, '')})`} to ${filename}.`)
     } catch (err) {
       setNotice(`Export failed: ${err?.response?.data?.error || err?.message || 'unknown error'}`)
     } finally {
@@ -485,7 +487,7 @@ function NotificationsTab({ onTabChange }) {
             type="button"
             onClick={handleExport}
             disabled={exporting}
-            title={fromDate || toDate ? 'Export the chosen date range' : "Export today's crossovers (pick From/To to change)"}
+            title={fromDate || toDate ? 'Export the chosen date range' : 'Export the latest day with crossovers (pick From/To to change)'}
             className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
           >
             {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}
@@ -533,6 +535,12 @@ function NotificationsTab({ onTabChange }) {
           <option value="any">Any direction</option>
           <option value="bullish">Bullish</option>
           <option value="bearish">Bearish</option>
+        </select>
+        <select value={adxStatus} onChange={(e) => setAdxStatus(e.target.value)} className={selectClass} aria-label="ADX status" title="ADX(14) at the crossover bar vs the bar before">
+          <option value="any">Any ADX status</option>
+          <option value="increase">ADX increased</option>
+          <option value="decrease">ADX decreased</option>
+          <option value="flat">ADX flat</option>
         </select>
         <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
           From

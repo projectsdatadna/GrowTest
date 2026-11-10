@@ -2145,6 +2145,838 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBullish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
+    },
+    {
+      "collectionGroup": "crossoverGroups",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "interval",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "isIndex",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "adxTrend",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "read",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "hasBearish",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "indicatorLabels",
+          "arrayConfig": "CONTAINS"
+        },
+        {
+          "fieldPath": "candleTimestamp",
+          "order": "DESCENDING"
+        },
+        {
+          "fieldPath": "sortOrder",
+          "order": "ASCENDING"
+        }
+      ]
     }
   ],
   "fieldOverrides": []

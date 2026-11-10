@@ -376,9 +376,10 @@ export function expandIndicatorLabels(labels) {
 // One timeframe's groups for either the index symbols or the rest, with the
 // page filters. Ordered newest bar first, then list order (sortOrder).
 // Indexes: crossoverGroups composites in firestore.indexes.json.
-function groupQuery(section, isIndex, { type, unreadOnly, indicator, direction, symbol, from, to } = {}) {
+function groupQuery(section, isIndex, { type, unreadOnly, indicator, direction, symbol, adx, from, to } = {}) {
   if (type && type !== 'crossover') return null
   let query = db.collection(GROUPS_COLLECTION).where('interval', '==', section).where('isIndex', '==', isIndex)
+  if (adx) query = query.where('adxTrend', '==', adx)
   if (unreadOnly) query = query.where('read', '==', false)
   if (symbol) query = query.where('symbol', '==', symbol)
   if (direction === 'bullish') query = query.where('hasBullish', '==', true)
@@ -699,6 +700,38 @@ export async function listCrossoversForExport({ from, to }) {
     })
   )
   return perInterval.flat()
+}
+
+// Newest crossover card: {interval, candleTimestamp} or null. Lets the export
+// default to the latest day that has data instead of an empty "today".
+export async function latestCrossoverGroup() {
+  const snapshot = await db.collection(GROUPS_COLLECTION).orderBy('candleTimestamp', 'desc').limit(1).get()
+  if (snapshot.empty) return null
+  const { interval, candleTimestamp } = snapshot.docs[0].data()
+  return { interval, candleTimestamp }
+}
+
+// Latest crossover card per symbol + timeframe in the range, for the export's
+// ADX Trend / price fallback (the scanner's per-symbol summary only fills in
+// after a live scan). Map key: `${exchange}_${symbol}_${interval}`.
+export async function listGroupAdxForExport({ from, to }) {
+  const fromSec = from ? Math.floor(Date.parse(from) / 1000) : null
+  const toSec = to ? Math.floor(Date.parse(to) / 1000) : null
+  const perInterval = await Promise.all(
+    DEFAULT_ENABLED_INTERVALS.map(async (interval) => {
+      const { gte, lte } = candleStartRangeForEndRange(interval, fromSec, toSec)
+      let query = db.collection(GROUPS_COLLECTION).where('interval', '==', interval)
+      if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
+      if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
+      return (await query.get()).docs.map((d) => d.data())
+    })
+  )
+  const latest = new Map()
+  for (const g of perInterval.flat()) {
+    const key = `${g.exchange}_${g.symbol}_${g.interval}`
+    if (!latest.has(key) || g.candleTimestamp > latest.get(key).candleTimestamp) latest.set(key, { adx: g.adx ?? null, closePrice: g.closePrice ?? null, candleTimestamp: g.candleTimestamp })
+  }
+  return latest
 }
 
 // For the one-off maintenance scripts in functions/scripts (migration/backfill).

@@ -19,7 +19,7 @@
 
 import ExcelJS from 'exceljs'
 import { TIMEFRAME_ORDER, candleEnd } from './crossoverTimeframes.js'
-import { listActiveScannerSymbols, listCrossoversForExport } from './crossoverScannerFirestoreClient.js'
+import { latestCrossoverGroup, listActiveScannerSymbols, listCrossoversForExport, listGroupAdxForExport } from './crossoverScannerFirestoreClient.js'
 
 const TIMEFRAME_HEADERS = { '15minute': '15 Mins ', '1hour': '1 Hour', '4hour': '4 Hour', '1day': 'Daily', '1week': 'Weekly' }
 
@@ -53,17 +53,29 @@ const istFormatter = new Intl.DateTimeFormat('en-GB', {
 })
 const formatIst = (epochSeconds) => istFormatter.format(new Date(epochSeconds * 1000)).replace(',', '')
 
-// Today 00:00 IST -> now, when the page has no date filter.
-export function defaultExportRange(now = new Date()) {
-  const istDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(now)
-  return { from: new Date(`${istDate}T00:00:00+05:30`).toISOString(), to: now.toISOString() }
+const istDay = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date)
+const istDayRange = (day) => ({ from: new Date(`${day}T00:00:00+05:30`).toISOString(), to: new Date(`${day}T23:59:59+05:30`).toISOString() })
+
+// No date filter on the page: the most recent IST day that has crossovers (the
+// page lists the newest cards, so "today" would export an empty sheet whenever
+// no scan has run today). Falls back to today when nothing is stored yet.
+export async function defaultExportRange(now = new Date()) {
+  const latest = await latestCrossoverGroup()
+  const end = latest ? candleEnd(latest.interval, latest.candleTimestamp) ?? latest.candleTimestamp : null
+  const day = istDay(end ? new Date(Math.min(end * 1000, now.getTime())) : now)
+  return { ...istDayRange(day), day }
+}
+
+// {from, to} the page asked for, or the default day. `day` is set only for the default.
+export async function resolveExportRange({ from, to } = {}) {
+  return from || to ? { from, to } : defaultExportRange()
 }
 
 /**
  * Pure: symbols (ordered) + crossover notifications -> row value arrays.
  * Each row: {values: [...35 cells], colors: {colIndex: argb}}.
  */
-export function buildExportRows(symbols, crossovers) {
+export function buildExportRows(symbols, crossovers, groupAdx = new Map()) {
   const bySymbol = new Map()
   for (const n of crossovers) {
     if (!COLUMN_BY_LABEL.has(n.indicatorLabel)) continue
@@ -78,12 +90,14 @@ export function buildExportRows(symbols, crossovers) {
     const bullish = events.filter((e) => e.direction === 'bullish').length
     const bearish = events.length - bullish
     const bias = events.length === 0 ? '' : bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Neutral'
-    const lastClose = TIMEFRAME_ORDER.map((i) => entry.scanState?.[i]?.summary?.lastClose).find((v) => v != null) ?? ''
+    const groupFor = (interval) => groupAdx.get(`${entry.exchange}_${entry.symbol}_${interval}`)
+    const lastClose =
+      TIMEFRAME_ORDER.map((i) => entry.scanState?.[i]?.summary?.lastClose).find((v) => v != null) ?? TIMEFRAME_ORDER.map((i) => groupFor(i)?.closePrice).find((v) => v != null) ?? ''
 
     const values = [entry.symbol, bias, lastClose, latest?.closePrice ?? '', latest ? formatIst(latest.barEnd) : '']
     const colors = {}
     for (const interval of TIMEFRAME_ORDER) {
-      const adx = entry.scanState?.[interval]?.summary?.adx
+      const adx = entry.scanState?.[interval]?.summary?.adx ?? groupFor(interval)?.adx
       values.push(adx ? ADX_TEXT[adx.trend] : '')
       INDICATOR_COLUMNS.forEach((col, i) => {
         const hits = events.filter((e) => e.interval === interval && COLUMN_BY_LABEL.get(e.indicatorLabel) === i)
@@ -121,9 +135,9 @@ function writeHeader(sheet) {
 }
 
 export async function buildNotificationWorkbook({ from, to } = {}) {
-  const range = from || to ? { from, to } : defaultExportRange()
-  const [symbols, crossovers] = await Promise.all([listActiveScannerSymbols(), listCrossoversForExport(range)])
-  return renderWorkbook(buildExportRows(symbols, crossovers), range)
+  const range = await resolveExportRange({ from, to })
+  const [symbols, crossovers, groupAdx] = await Promise.all([listActiveScannerSymbols(), listCrossoversForExport(range), listGroupAdxForExport(range)])
+  return { workbook: renderWorkbook(buildExportRows(symbols, crossovers, groupAdx), range), range }
 }
 
 export function renderWorkbook(rows, range = {}) {

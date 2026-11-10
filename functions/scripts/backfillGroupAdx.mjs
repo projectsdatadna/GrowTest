@@ -20,10 +20,12 @@ async function main() {
   const groups = await db.collection(SCANNER_COLLECTIONS.groups).get()
   const pending = new Map() // window id -> [{ref, candleTimestamp}]
   let alreadyHave = 0
+  const trendOnly = [] // groups with adx but no top-level adxTrend yet (ADX-status filter)
   for (const doc of groups.docs) {
     const g = doc.data()
     if (g.adx) {
       alreadyHave++
+      if (g.adx.trend && g.adxTrend !== g.adx.trend) trendOnly.push({ ref: doc.ref, adxTrend: g.adx.trend })
       continue
     }
     const key = `${g.exchange}_${g.symbol}_${g.interval}`
@@ -44,16 +46,21 @@ async function main() {
     const indexOf = new Map(window.t.map((t, i) => [t, i]))
     for (const { ref, candleTimestamp } of items) {
       const adx = trend.get(candleTimestamp)
-      if (adx && indexOf.get(candleTimestamp) >= WARMUP_BARS) updates.push({ ref, adx })
+      if (adx && indexOf.get(candleTimestamp) >= WARMUP_BARS) updates.push({ ref, adx, adxTrend: adx.trend })
       else missing++
     }
   }
 
-  console.log(`${groups.size} groups: ${alreadyHave} already have ADX, ${APPLY ? 'writing' : 'would write'} ${updates.length}, ${missing} stay without (bar older than cached candles).`)
+  console.log(`${groups.size} groups: ${alreadyHave} already have ADX, ${APPLY ? 'writing' : 'would write'} ${updates.length}, ${missing} stay without (bar older than cached candles); ${APPLY ? 'setting' : 'would set'} adxTrend on ${trendOnly.length} more.`)
   if (!APPLY) return console.log('Dry run - re-run with --apply to write.')
   for (let i = 0; i < updates.length; i += BATCH) {
     const batch = db.batch()
-    updates.slice(i, i + BATCH).forEach(({ ref, adx }) => batch.update(ref, { adx }))
+    updates.slice(i, i + BATCH).forEach(({ ref, adx, adxTrend }) => batch.update(ref, { adx, adxTrend }))
+    await batch.commit()
+  }
+  for (let i = 0; i < trendOnly.length; i += BATCH) {
+    const batch = db.batch()
+    trendOnly.slice(i, i + BATCH).forEach(({ ref, adxTrend }) => batch.update(ref, { adxTrend }))
     await batch.commit()
   }
   console.log('Done.')

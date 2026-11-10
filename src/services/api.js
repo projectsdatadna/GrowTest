@@ -499,7 +499,7 @@ export const runCrossoverScan = async ({ force = false } = {}) => {
 }
 
 // Excel export (Notification List template). {from, to} = ISO bounds on the
-// crossover time; none = today. Resolves to {blob, filename}.
+// crossover time; none = the latest day with crossovers. Resolves to {blob, filename}.
 export const exportNotificationsExcel = async ({ from, to } = {}) => {
   try {
     const response = await apiClient.get('/crossover-scanner/export.xlsx', { params: { from, to }, responseType: 'blob', timeout: 120000 })

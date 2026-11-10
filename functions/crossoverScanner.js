@@ -329,6 +329,8 @@ export function buildCrossoverGroups(found, { isIndex = false, sortOrder = UNLIS
       hasBearish: bearishCount > 0,
       bias: bullishCount > bearishCount ? 'bullish' : bearishCount > bullishCount ? 'bearish' : 'mixed',
       adx: first.adx ?? null,
+      // Top-level copy of adx.trend so the Notifications ADX-status filter can index it.
+      ...(first.adx?.trend ? { adxTrend: first.adx.trend } : {}),
     }
   })
 }
