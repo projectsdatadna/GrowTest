@@ -8,22 +8,42 @@
  * a from/to date range) are sent to the server too, so totals and pages always agree.
  * Sections start collapsed. The tab stays in sync by itself: whenever the
  * shared live feed (useLiveNotifications) sees something new, the section
- * counts and the open sections' first page are re-fetched. Within a page,
- * crossovers are grouped by the time they happened, newest first.
+ * counts and the open sections' first page are re-fetched.
+ *
+ * Timeframe sections show crossovers MERGED: one card per symbol + bar with
+ * every indicator that crossed, a star per indicator, and the ADX at that bar
+ * (CrossoverGroupCard). Index symbols (NIFTY, BANKNIFTY, ...) are pinned first
+ * in every section; the rest follow newest bar first, then the uploaded list
+ * order. "Run now" scans immediately; "Export to Excel" downloads the
+ * Notification List template filled for the chosen dates (default today).
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
-import { markNotificationsRead, markAllHistoricalWatchlistNotificationsRead, getNotificationsPage, getNotificationCounts, getUnreadNotificationCount, previewDeleteNotifications, deleteNotifications } from '../services/api'
+import {
+  markNotificationsRead,
+  markAllNotificationsRead,
+  getNotificationsPage,
+  getNotificationGroups,
+  getNotificationCounts,
+  getUnreadNotificationCount,
+  previewDeleteNotifications,
+  deleteNotifications,
+  exportNotificationsExcel,
+} from '../services/api'
 import { markNotificationsReadLocally, setUnreadCount } from '../store/historicalWatchlistSlice'
 import { markAllReadLocally, removeNotificationsInRange } from '../store/liveNotificationsSlice'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
 import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTime, timeAgo } from './crossoverFormat'
 import Spinner from './Spinner'
+import CrossoverGroupCard from './CrossoverGroupCard'
+import RunScanButton from './RunScanButton'
 
 // Crossover indicators, matching the labels the scanner stores in
 // `indicatorLabel` (functions/crossoverScanner.js CROSSOVER_SPECS).
-const INDICATOR_FILTERS = ['MACD 12/26/9', 'TSI 25/13/13', 'Stoch RSI 14/14/3/3', 'ADX 14 (+DI/-DI)', 'SMA 50/200', 'EMA 12/26']
+// DMI = the +DI/-DI crossover (formerly labelled "ADX"; the server also matches
+// the old label). The ADX line itself is shown on every card, not filtered.
+const INDICATOR_FILTERS = ['MACD 12/26/9', 'TSI 25/13/13', 'Stoch RSI 14/14/3/3', 'DMI 14 (+DI/-DI)', 'RSI 14/14', 'SMA 50/200', 'EMA 12/26']
 
 const TYPE_FILTERS = [
   { key: 'all', label: 'All' },
@@ -88,6 +108,21 @@ function sortSectionItems(items) {
     .sort((a, b) => crossoverTimestamp(b) - crossoverTimestamp(a) || a.symbol.localeCompare(b.symbol) || a.indicatorLabel.localeCompare(b.indicatorLabel))
   const others = items.filter((n) => notificationType(n) !== 'crossover').sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
   return [...crossovers, ...others]
+}
+
+// Timeframe sections list merged crossover groups unless the type filter asks
+// for a non-crossover type (new candles / AI insights), which keep the per-item list.
+const isGroupedSection = (section, typeFilter) => section !== SYSTEM_KEY && (typeFilter === 'all' || typeFilter === 'crossover')
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(url)
 }
 
 // Local-time day bounds as ISO strings for the API ('' stays '').
@@ -266,6 +301,7 @@ function NotificationsTab({ onTabChange }) {
   const [toDate, setToDate] = useState('')
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
+  const [exporting, setExporting] = useState(false)
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
   const [pages, setPages] = useState({}) // section -> current page (default 1)
@@ -293,6 +329,8 @@ function NotificationsTab({ onTabChange }) {
   const filtersKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
+  const typeFilterRef = useRef(typeFilter)
+  typeFilterRef.current = typeFilter
 
   // A filter change goes back to page 1 everywhere.
   useEffect(() => {
@@ -316,8 +354,10 @@ function NotificationsTab({ onTabChange }) {
     const key = `${JSON.stringify(filtersRef.current)}|${page}`
     setSectionData((current) => ({ ...current, [section]: { ...current[section], key, loading: true, error: '' } }))
     try {
-      const data = await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
-      setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { key, items: data.notifications, total: data.total, loading: false, error: '' } } : current))
+      const grouped = isGroupedSection(section, typeFilterRef.current)
+      const data = grouped ? await getNotificationGroups(section, filtersRef.current, page, PAGE_SIZE) : await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
+      const items = grouped ? data.groups : data.notifications
+      setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { key, grouped, items, total: data.total, loading: false, error: '' } } : current))
     } catch (err) {
       setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { ...current[section], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } } : current))
     }
@@ -348,25 +388,53 @@ function NotificationsTab({ onTabChange }) {
     }
   }, [liveCursor, expanded, pages, loadSection])
 
+  // ids = notification ids, groupIds = merged-card ids (a card's notifications
+  // are marked read with it, so the bell count stays right).
   const markRead = useCallback(
-    (ids) => {
-      if (ids.length === 0) return
-      const idSet = new Set(ids)
+    (ids, groupIds = []) => {
+      if (ids.length === 0 && groupIds.length === 0) return
+      const idSet = new Set([...ids, ...groupIds])
       dispatch(markNotificationsReadLocally(ids))
       setSectionData((current) =>
         Object.fromEntries(Object.entries(current).map(([key, data]) => [key, data.items ? { ...data, items: data.items.map((n) => (idSet.has(n.id) ? { ...n, read: true } : n)) } : data]))
       )
-      for (let i = 0; i < ids.length; i += 500) {
-        markNotificationsRead(ids.slice(i, i + 500)).catch((err) => console.error('Failed to mark notifications read:', err))
+      for (let i = 0; i < Math.max(ids.length, groupIds.length); i += 450) {
+        markNotificationsRead(ids.slice(i, i + 450), groupIds.slice(i, i + 450)).catch((err) => console.error('Failed to mark notifications read:', err))
       }
     },
     [dispatch]
   )
 
+  const groupIsRead = useCallback((g) => g.read || (g.notificationIds?.length > 0 && g.notificationIds.every((id) => readIds.has(id))), [readIds])
+  const openGroup = useCallback((g) => markRead(g.notificationIds || [], [g.id]), [markRead])
+
+  const refreshAll = useCallback(() => {
+    loadCounts()
+    setSectionData({})
+  }, [loadCounts])
+
+  const handleRunDone = ({ ok, message }) => {
+    setNotice(ok ? `Scan finished: ${message}` : `Scan failed: ${message}`)
+    if (ok) refreshAll()
+  }
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const { blob, filename } = await exportNotificationsExcel({ from: fromDate ? startOfDayIso(fromDate) : undefined, to: toDate ? endOfDayIso(toDate) : undefined })
+      downloadBlob(blob, filename)
+      setNotice(`Exported ${fromDate || toDate ? `${fromDate || '…'} to ${toDate || 'now'}` : "today's crossovers"} to ${filename}.`)
+    } catch (err) {
+      setNotice(`Export failed: ${err?.response?.data?.error || err?.message || 'unknown error'}`)
+    } finally {
+      setExporting(false)
+    }
+  }
+
   const markAllRead = () => {
     dispatch(markAllReadLocally())
     dispatch(setUnreadCount(0))
-    markAllHistoricalWatchlistNotificationsRead()
+    markAllNotificationsRead()
       .then(() => {
         loadCounts()
         expanded.forEach((section) => loadSection(section, pages[section] || 1))
@@ -411,7 +479,18 @@ function NotificationsTab({ onTabChange }) {
             {counts ? `${unreadTotal} unread of ${grandTotal} matching` : 'Loading…'} · live · grouped by timeframe · {PAGE_SIZE} per page
           </p>
         </div>
-        <div className="flex items-center gap-md">
+        <div className="flex items-center gap-md flex-wrap">
+          <RunScanButton onDone={handleRunDone} />
+          <button
+            type="button"
+            onClick={handleExport}
+            disabled={exporting}
+            title={fromDate || toDate ? 'Export the chosen date range' : "Export today's crossovers (pick From/To to change)"}
+            className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
+          >
+            {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}
+            Export to Excel
+          </button>
           {onTabChange && (
             <button type="button" onClick={() => onTabChange('crossover-scanner')} className="text-sm text-primary hover:underline">
               Scanner settings →
@@ -482,8 +561,12 @@ function NotificationsTab({ onTabChange }) {
         const page = pages[key] || 1
         const { total, unread, bullish = 0, bearish = 0, unreadBullish = 0, unreadBearish = 0, lastCrossover = null } = counts[key]
         const data = sectionData[key]
-        const items = data?.items ? sortSectionItems(data.items) : []
+        const grouped = Boolean(data?.grouped)
+        // Groups arrive in server order (indices first); single items are sorted here.
+        const items = data?.items ? (grouped ? data.items : sortSectionItems(data.items)) : []
+        const unreadGroups = grouped ? items.filter((g) => !groupIsRead(g)) : []
         let lastBar = null
+        let lastHeader = null
         return (
           <section key={key} className="glass-panel rounded-xl">
             <div className="flex items-center justify-between gap-md p-md">
@@ -501,7 +584,12 @@ function NotificationsTab({ onTabChange }) {
                   <CountCard label="Bearish" value={bearish} unread={unreadBearish} tone="bearish" />
                 </div>
               )}
-              {!isCollapsed && items.some((n) => !n.read && !readIds.has(n.id)) && (
+              {!isCollapsed && grouped && unreadGroups.length > 0 && (
+                <button type="button" onClick={() => markRead(unreadGroups.flatMap((g) => g.notificationIds || []), unreadGroups.map((g) => g.id))} className="text-xs text-primary hover:underline">
+                  Mark this page read
+                </button>
+              )}
+              {!isCollapsed && !grouped && items.some((n) => !n.read && !readIds.has(n.id)) && (
                 <button type="button" onClick={() => markRead(items.filter((n) => !n.read && !readIds.has(n.id)).map((n) => n.id))} className="text-xs text-primary hover:underline">
                   Mark this page read
                 </button>
@@ -512,8 +600,22 @@ function NotificationsTab({ onTabChange }) {
               <div className="px-md pb-md">
                 {data?.loading && items.length === 0 && <Spinner />}
                 {data?.error && <div className="text-sm text-bearish">{data.error}</div>}
+                {grouped && !data?.loading && items.length === 0 && <div className="text-sm text-on-surface-variant">No crossovers match on this page.</div>}
                 <ul className="flex flex-col gap-xs">
-                  {items.map((n) => {
+                  {grouped &&
+                    items.map((g) => {
+                      // Sub-headers: "Indices" once for the pinned index cards, then one per bar time.
+                      const header = g.isIndex ? 'Indices' : `Crossed ${formatCrossoverTime(g)}`
+                      const showHeader = header !== lastHeader
+                      lastHeader = header
+                      return (
+                        <li key={g.id}>
+                          {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
+                          <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} />
+                        </li>
+                      )
+                    })}
+                  {!grouped && items.map((n) => {
                     const isRead = n.read || readIds.has(n.id)
                     const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null
                     const showBarHeader = barKey != null && barKey !== lastBar
@@ -541,6 +643,7 @@ function NotificationsTab({ onTabChange }) {
                   })}
                 </ul>
                 <Pagination page={page} total={data?.total ?? total} onChange={(next) => setSectionPage(key, next)} />
+                {grouped && data?.total != null && <div className="text-[10px] text-on-surface-variant pt-xs">{data.total} card{data.total === 1 ? '' : 's'} ({total} crossovers) · ★ = indicators that crossed on the same bar</div>}
               </div>
             )}
           </section>

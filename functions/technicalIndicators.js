@@ -10,7 +10,8 @@ import { saveIndicatorSeriesBatch } from './historicalDataFirestoreClient.js'
 import { computeMacdCrossover } from './macdCrossoverIndicator.js'
 import { computeTsiCrossover } from './tsiCrossoverIndicator.js'
 import { computeStochRsiCrossover } from './stochRsiCrossoverIndicator.js'
-import { computeAdxCrossover } from './adxCrossoverIndicator.js'
+import { computeDmiCrossover } from './dmiCrossoverIndicator.js'
+import { computeRsiCrossover } from './rsiCrossoverIndicator.js'
 import { computeSmaCrossover, computeEmaCrossover } from './maCrossoverIndicator.js'
 
 // "SMA:20" -> {indicator:'SMA', params:{period:20}, paramsKey:'20'}
@@ -61,9 +62,15 @@ export function parseIndicatorSpec(spec) {
     case 'STOCHRSICROSS':
       if (nums.length !== 4) throw new Error(`STOCHRSICROSS expects four params (rsiPeriod:stochasticPeriod:kPeriod:dPeriod), got "${spec}"`)
       return { indicator, params: { rsiPeriod: nums[0], stochasticPeriod: nums[1], kPeriod: nums[2], dPeriod: nums[3] }, paramsKey }
+    // DMI +DI/-DI crossover. ADXCROSS is the legacy name (kept for stored
+    // historical-watchlist specs and the Historical Chart).
+    case 'DMICROSS':
     case 'ADXCROSS':
-      if (nums.length !== 1) throw new Error(`ADXCROSS expects one param (period), got "${spec}"`)
+      if (nums.length !== 1) throw new Error(`${indicator} expects one param (period), got "${spec}"`)
       return { indicator, params: { period: nums[0] }, paramsKey }
+    case 'RSICROSS':
+      if (nums.length !== 2) throw new Error(`RSICROSS expects two params (rsiPeriod:maPeriod), got "${spec}"`)
+      return { indicator, params: { rsiPeriod: nums[0], maPeriod: nums[1] }, paramsKey }
     case 'SMACROSS':
     case 'EMACROSS':
       if (nums.length !== 2) throw new Error(`${indicator} expects two params (fastPeriod:slowPeriod), got "${spec}"`)
@@ -168,8 +175,11 @@ function computeIndicator(indicator, params, candles) {
         kPeriod: params.kPeriod,
         dPeriod: params.dPeriod,
       })
+    case 'DMICROSS':
     case 'ADXCROSS':
-      return computeAdxCrossover(candles, { period: params.period })
+      return computeDmiCrossover(candles, { period: params.period })
+    case 'RSICROSS':
+      return computeRsiCrossover(candles, { rsiPeriod: params.rsiPeriod, maPeriod: params.maPeriod })
     case 'SMACROSS':
       return computeSmaCrossover(candles, { fastPeriod: params.fastPeriod, slowPeriod: params.slowPeriod })
     case 'EMACROSS':
@@ -357,7 +367,7 @@ function computeRsiDivergence(candles, { rsiPeriod, lookback }) {
 /**
  * Pure variant of ensureIndicatorFresh - parses the spec and computes the
  * series/events in memory, with no Firestore write. For callers that only
- * need the result (the Crossover Scanner re-computes 6 specs x every symbol
+ * need the result (the Crossover Scanner re-computes 7 specs x every symbol
  * every hour; caching those into technicalIndicators each time would be
  * hundreds of pointless writes per run).
  */

@@ -50,7 +50,7 @@ export const SETTINGS_VERSION = 2
 // within the last few bars) before a crossover pops up. Every crossover is
 // stored and listed regardless; 1 means every crossover pops up.
 export const DEFAULT_MIN_AGREEMENT = { '15minute': 1, '1hour': 1, '4hour': 1, '1day': 1, '1week': 1 }
-export const MIN_AGREEMENT_RANGE = [1, 6]
+export const MIN_AGREEMENT_RANGE = [1, 7]
 
 // Expected bar-close offsets (seconds after IST midnight) on a trading day.
 const EXPECTED_END_OFFSETS = {

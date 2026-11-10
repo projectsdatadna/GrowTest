@@ -22,6 +22,9 @@ const RECENT_BARS = 3
 const INDEX_PATTERN = /^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|MIDCAP|SENSEX|BANKEX)/
 
 const isIndexSymbol = (symbol) => INDEX_PATTERN.test(symbol)
+// The server flags indices (instrument type IDX); the pattern is the fallback.
+const isIndexEntry = (entry) => entry.isIndex ?? isIndexSymbol(entry.symbol)
+const ADX_STATUS = { increase: 'Increased', decrease: 'Decreased', flat: 'Flat' }
 
 // What one symbol looks like on one timeframe.
 function cellInfo(entry, interval) {
@@ -83,6 +86,12 @@ function ExpandedRow({ entry, colSpan }) {
                   {info.summary && <span className="text-[11px] text-on-surface-variant">Close ₹{info.summary.lastClose}</span>}
                 </div>
                 {info.status !== 'ok' && <div className="text-xs text-on-surface-variant pt-xs">{info.status === 'error' ? info.error : 'Pending first scan'}</div>}
+                {info.summary?.adx && (
+                  <div className="text-xs text-on-surface-variant pt-xs">
+                    ADX ({info.summary.adx.period || 14}): current <span className="font-mono text-on-surface">{info.summary.adx.value.toFixed(2)}</span> · previous{' '}
+                    <span className="font-mono text-on-surface">{info.summary.adx.prev.toFixed(2)}</span> · {ADX_STATUS[info.summary.adx.trend]}
+                  </div>
+                )}
                 {info.status === 'ok' && signals.length === 0 && <div className="text-xs text-on-surface-variant pt-xs">No crossover in the loaded history.</div>}
                 <ul className="flex flex-col gap-xs pt-xs">
                   {signals.map((signal) => (
@@ -117,7 +126,7 @@ function OverviewTab() {
   const [bias, setBias] = useState('any')
   const [minAgree, setMinAgree] = useState(0)
   const [focus, setFocus] = useState('all')
-  const [sortBy, setSortBy] = useState('symbol')
+  const [sortBy, setSortBy] = useState('list')
   const [expanded, setExpanded] = useState(() => new Set())
 
   const load = useCallback(async () => {
@@ -163,8 +172,8 @@ function OverviewTab() {
     const needle = query.trim().toLowerCase()
     const filtered = rows.filter(({ entry, cells }) => {
       if (needle && !entry.symbol.toLowerCase().includes(needle)) return false
-      if (group === 'stocks' && isIndexSymbol(entry.symbol)) return false
-      if (group === 'indices' && !isIndexSymbol(entry.symbol)) return false
+      if (group === 'stocks' && isIndexEntry(entry)) return false
+      if (group === 'indices' && !isIndexEntry(entry)) return false
       if (bias === 'any' && minAgree === 0) return true
       // Passes if ANY focused timeframe satisfies both the bias and the minimum agreement.
       return focusIntervals.some((interval) => {
@@ -180,7 +189,9 @@ function OverviewTab() {
     return [...filtered].sort((a, b) => {
       if (sortBy === 'agreement') return bestAgreement(b.cells) - bestAgreement(a.cells) || a.entry.symbol.localeCompare(b.entry.symbol)
       if (sortBy === 'recent') return latest(b.cells) - latest(a.cells) || a.entry.symbol.localeCompare(b.entry.symbol)
-      return a.entry.symbol.localeCompare(b.entry.symbol)
+      if (sortBy === 'symbol') return a.entry.symbol.localeCompare(b.entry.symbol)
+      // List order: indices first, then the uploaded list order (server sends it pre-sorted this way).
+      return (isIndexEntry(a.entry) ? 0 : 1) - (isIndexEntry(b.entry) ? 0 : 1) || (a.entry.sortOrder ?? 1e6) - (b.entry.sortOrder ?? 1e6) || a.entry.symbol.localeCompare(b.entry.symbol)
     })
   }, [rows, query, group, bias, minAgree, focusIntervals, sortBy])
 
@@ -240,14 +251,15 @@ function OverviewTab() {
         </select>
         <select value={minAgree} onChange={(e) => setMinAgree(Number(e.target.value))} className={selectClass} aria-label="Minimum agreeing indicators">
           <option value={0}>Any agreement</option>
-          {[1, 2, 3, 4, 5, 6].map((n) => (
+          {[1, 2, 3, 4, 5, 6, 7].map((n) => (
             <option key={n} value={n}>
               {n}+ indicators agree
             </option>
           ))}
         </select>
         <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={selectClass} aria-label="Sort">
-          <option value="symbol">Sort: symbol</option>
+          <option value="list">Sort: list order (indices first)</option>
+          <option value="symbol">Sort: symbol A–Z</option>
           <option value="agreement">Sort: most agreement</option>
           <option value="recent">Sort: most recent</option>
         </select>
@@ -283,7 +295,7 @@ function OverviewTab() {
                         <span className="material-symbols-outlined text-on-surface-variant text-base">{isOpen ? 'expand_more' : 'chevron_right'}</span>
                       </td>
                       <td className="p-sm font-medium text-on-surface whitespace-nowrap">
-                        {entry.symbol} <span className="text-xs text-on-surface-variant">{isIndexSymbol(entry.symbol) ? 'Index' : entry.exchange}</span>
+                        {entry.symbol} <span className="text-xs text-on-surface-variant">{isIndexEntry(entry) ? 'Index' : entry.exchange}</span>
                       </td>
                       <td className="p-sm text-on-surface-variant whitespace-nowrap">{close != null ? `₹${close}` : '—'}</td>
                       {TIMEFRAME_ORDER.map((interval) => (

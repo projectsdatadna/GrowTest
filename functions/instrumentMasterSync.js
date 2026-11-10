@@ -60,7 +60,7 @@ export async function syncInstrumentMaster() {
   for (const row of instrumentRows) {
     if (seen.has(row.trading_symbol)) continue
     seen.add(row.trading_symbol)
-    docs.push({ id: row.trading_symbol, symbol: row.trading_symbol, name: row.name, exchange: row.exchange || 'NSE' })
+    docs.push({ id: row.trading_symbol, symbol: row.trading_symbol, name: row.name, exchange: row.exchange || 'NSE', instrumentType: row.instrument_type || null })
   }
 
   for (let i = 0; i < docs.length; i += BATCH_SIZE) {
@@ -70,6 +70,8 @@ export async function syncInstrumentMaster() {
         symbol: doc.symbol,
         name: doc.name,
         exchange: doc.exchange,
+        // 'IDX' for indices (NIFTY, BANKNIFTY, ...) - the Crossover Scanner pins those first.
+        instrumentType: doc.instrumentType,
         updatedAt: admin.firestore.FieldValue.serverTimestamp(),
       })
     }
@@ -115,5 +117,5 @@ export async function searchInstruments(query, limit = 50) {
     .filter((doc) => doc.symbol.toLowerCase().includes(needle) || doc.name.toLowerCase().includes(needle))
     .sort((a, b) => matchRank(a, needle) - matchRank(b, needle) || a.symbol.localeCompare(b.symbol))
     .slice(0, limit)
-    .map((doc) => ({ symbol: doc.symbol, name: doc.name, exchange: doc.exchange }))
+    .map((doc) => ({ symbol: doc.symbol, name: doc.name, exchange: doc.exchange, instrumentType: doc.instrumentType ?? null }))
 }

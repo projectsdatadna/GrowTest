@@ -1,11 +1,17 @@
 /**
- * ADX +DI / -DI crossover detection - the standard trend-direction-flip
+ * DMI (Directional Movement Index) +DI / -DI crossover detection - the
+ * standard trend-direction-flip
  * signal (+DI crossing above -DI = bullish, the mirror = bearish), same
  * shape as macdCrossoverIndicator.js's MACD/Signal cross. ADX.calculate()'s
  * `pdi`/`mdi` come back fully populated with no leading null/undefined gap
  * (verified live against real candle data, same diligence
  * technicalIndicators.js's own gotcha comments follow) - so no warm-up trim
  * is needed here before crossUp/crossDown.
+ *
+ * Formerly named "ADX crossover": it never used the ADX line itself, only
+ * +DI/-DI, so it is now DMI. The real ADX (trend strength) is in
+ * adxTrendIndicator.js. Spec strings: DMICROSS:n (ADXCROSS:n kept as an alias
+ * for stored historical-watchlist specs and the Historical Chart).
  */
 
 import { ADX, crossUp, crossDown } from 'technicalindicators'
@@ -15,7 +21,7 @@ import { ADX, crossUp, crossDown } from 'technicalindicators'
  * @param {{period:number}} params
  * @returns {Array<{timestamp:number, value:{type:'bullish'|'bearish', pdi:number, mdi:number, price:number}}>}
  */
-export function computeAdxCrossover(candles, { period }) {
+export function computeDmiCrossover(candles, { period }) {
   const raw = ADX.calculate({
     close: candles.map((c) => c.close),
     high: candles.map((c) => c.high),

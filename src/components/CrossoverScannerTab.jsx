@@ -2,8 +2,11 @@
  * Crossover Scanner page - the ONE stock list, the automatic-scan status and
  * the timeframe settings. The scanner runs by itself (a scheduled dispatcher
  * in functions/index.js ticks every 15 minutes and scans whatever bar has
- * just closed on each enabled timeframe), so there is no "Scan now" here, and
- * alerts are read on the Notifications page rather than listed twice.
+ * just closed on each enabled timeframe). "Run now" scans immediately, for
+ * testing without waiting for the next tick. Alerts are read on the
+ * Notifications page rather than listed twice. The stock list is shown in its
+ * display order (indices first, then the order set by a pasted list with "Use
+ * this list as the display order").
  * State is local: everything is server-owned (Firestore) and refetched.
  */
 
@@ -28,6 +31,7 @@ import {
   TIMEFRAME_LABELS,
 } from './crossoverFormat'
 import Spinner from './Spinner'
+import RunScanButton from './RunScanButton'
 
 const POLL_MS = 60 * 1000
 const SEARCH_DEBOUNCE_MS = 300
@@ -92,6 +96,8 @@ function CrossoverScannerTab({ onTabChange }) {
   const [bulkText, setBulkText] = useState('')
   const [bulkBusy, setBulkBusy] = useState(false)
   const [bulkResults, setBulkResults] = useState(null)
+  const [bulkSetOrder, setBulkSetOrder] = useState(false)
+  const [runNotice, setRunNotice] = useState('')
 
   const [filter, setFilter] = useState('')
   const [permission, setPermission] = useState(getNotificationPermission())
@@ -156,8 +162,9 @@ function CrossoverScannerTab({ onTabChange }) {
     setBulkResults(null)
     setError('')
     try {
-      const { results: outcome } = await bulkAddCrossoverScannerSymbols(bulkText)
+      const { results: outcome, order } = await bulkAddCrossoverScannerSymbols(bulkText, { setOrder: bulkSetOrder })
       setBulkResults(outcome)
+      if (order) setRunNotice(`Display order saved for ${order.ordered} symbols${order.unlisted?.length ? `; ${order.unlisted.length} not in the list go last` : ''}.`)
       // Keep only what failed in the box so it can be corrected and retried.
       setBulkText(outcome.filter((r) => r.status === 'invalid' || r.status === 'not-found').map((r) => r.symbol).join(', '))
       await load()
@@ -214,7 +221,7 @@ function CrossoverScannerTab({ onTabChange }) {
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Crossover Scanner</h2>
           <p className="text-xs text-on-surface-variant">
-            Runs automatically after every bar close · MACD, TSI, Stoch RSI, ADX, SMA 50/200, EMA 12/26 · one stock list for every timeframe
+            Runs automatically after every bar close · MACD, TSI, Stoch RSI, DMI (+DI/-DI), RSI 14/14, SMA 50/200, EMA 12/26 crossovers + ADX trend · one stock list for every timeframe
           </p>
         </div>
         <div className="flex items-center gap-md">
@@ -224,6 +231,12 @@ function CrossoverScannerTab({ onTabChange }) {
             </button>
           )}
           {permission === 'granted' && <span className="text-xs text-on-surface-variant">Desktop alerts on</span>}
+          <RunScanButton
+            onDone={({ ok, message }) => {
+              setRunNotice(ok ? `Scan finished: ${message}` : `Scan failed: ${message}`)
+              if (ok) load()
+            }}
+          />
           {permission === 'denied' && <span className="text-xs text-on-surface-variant">Desktop alerts blocked in browser settings</span>}
           {onTabChange && (
             <button type="button" onClick={() => onTabChange('notifications')} className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium">
@@ -234,6 +247,7 @@ function CrossoverScannerTab({ onTabChange }) {
       </div>
 
       {error && <div className="text-sm text-bearish">{error}</div>}
+      {runNotice && <div className="text-sm text-on-surface-variant">{runNotice}</div>}
 
       <section className="glass-panel rounded-xl p-md flex flex-col gap-md">
         <div className="flex items-center justify-between gap-md flex-wrap">
@@ -324,6 +338,10 @@ function CrossoverScannerTab({ onTabChange }) {
             disabled={bulkBusy}
             className="bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-base text-on-surface"
           />
+          <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Notifications, Overview and the Excel export follow this order (indices always first)">
+            <input type="checkbox" checked={bulkSetOrder} onChange={(e) => setBulkSetOrder(e.target.checked)} disabled={bulkBusy} />
+            Use this list as the display order
+          </label>
           <div className="flex items-center gap-md">
             <button
               type="button"

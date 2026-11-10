@@ -461,12 +461,63 @@ export const getCrossoverStatus = async () => {
   }
 }
 
-export const bulkAddCrossoverScannerSymbols = async (symbols) => {
+// setOrder: true also makes the pasted order the display order (indices are
+// always pinned first).
+export const bulkAddCrossoverScannerSymbols = async (symbols, { setOrder = false } = {}) => {
   try {
-    const response = await apiClient.post('/crossover-scanner/symbols/bulk', { symbols })
+    const response = await apiClient.post('/crossover-scanner/symbols/bulk', { symbols, setOrder })
     return response.data
   } catch (error) {
     console.error('Error bulk-adding crossover scanner symbols:', error)
+    throw error
+  }
+}
+
+// "Run now": one bounded pass of the scanner (same dispatcher as the scheduled
+// tick). Returns {scanned, newAlerts, errors, remaining, ...}; call again while
+// `remaining` > 0. 409 = another manual run is in progress.
+export const runCrossoverScan = async ({ force = false } = {}) => {
+  try {
+    const response = await apiClient.post('/crossover-scanner/run', { force }, { timeout: 130000 })
+    return response.data
+  } catch (error) {
+    console.error('Error running crossover scan:', error)
+    throw error
+  }
+}
+
+// Excel export (Notification List template). {from, to} = ISO bounds on the
+// crossover time; none = today. Resolves to {blob, filename}.
+export const exportNotificationsExcel = async ({ from, to } = {}) => {
+  try {
+    const response = await apiClient.get('/crossover-scanner/export.xlsx', { params: { from, to }, responseType: 'blob', timeout: 120000 })
+    const disposition = response.headers?.['content-disposition'] || ''
+    const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || 'Notification List.xlsx'
+    return { blob: response.data, filename }
+  } catch (error) {
+    console.error('Error exporting notifications:', error)
+    throw error
+  }
+}
+
+// Numbered page of one timeframe's crossover groups (one card per symbol + bar,
+// indices first) under the Notifications page filters. Returns {groups, total, indexTotal}.
+export const getNotificationGroups = async (section, filters = {}, page = 1, pageSize = 25) => {
+  try {
+    const response = await apiClient.get('/notifications/groups', { params: { section, page, pageSize, ...filters } })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching notification groups:', error)
+    throw error
+  }
+}
+
+export const markAllNotificationsRead = async () => {
+  try {
+    const response = await apiClient.post('/notifications/mark-all-read')
+    return response.data
+  } catch (error) {
+    console.error('Error marking all notifications read:', error)
     throw error
   }
 }
@@ -551,9 +602,10 @@ export const getUnreadNotificationCount = async () => {
   }
 }
 
-export const markNotificationsRead = async (ids) => {
+// ids = notification ids; groupIds = crossover group (card) ids.
+export const markNotificationsRead = async (ids, groupIds = []) => {
   try {
-    const response = await apiClient.post('/notifications/mark-read', { ids })
+    const response = await apiClient.post('/notifications/mark-read', { ids, groupIds })
     return response.data
   } catch (error) {
     console.error('Error marking notifications read:', error)

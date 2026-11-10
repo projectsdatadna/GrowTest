@@ -190,7 +190,7 @@ const INDICATOR_ROWS = [
       { name: 'dPeriod', label: 'D' },
     ],
   },
-  { key: 'adxCrossover', label: 'ADX Crossover', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'adxCrossover', label: 'DMI Crossover (+DI/-DI)', fields: [{ name: 'period', label: 'Period' }] },
   { key: 'smaCrossover', label: 'SMA Crossover', fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }] },
   { key: 'emaCrossover', label: 'EMA Crossover', fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }] },
 ]
@@ -941,7 +941,7 @@ function HistoricalChartTab({ instanceKey = 'primary' }) {
 
       {indicatorConfig.adxCrossover.enabled && (
         <CrossoverCard
-          title="ADX Crossover"
+          title="DMI Crossover (+DI/-DI)"
           formatDetail={(v) => `+DI ${v.pdi.toFixed(2)} / -DI ${v.mdi.toFixed(2)}`}
           events={indicatorSeries[`ADXCROSS:${indicatorConfig.adxCrossover.period}`] || []}
         />

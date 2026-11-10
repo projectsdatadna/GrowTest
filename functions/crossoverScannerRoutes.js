@@ -27,7 +27,14 @@ import {
   countUnreadNotifications,
   markNotificationsRead,
   listOverview,
+  setSymbolOrder,
+  queryCrossoverGroupsPage,
+  markCrossoverGroupsRead,
+  markAllNotificationsAndGroupsRead,
+  acquireManualRunLease,
+  releaseManualRunLease,
 } from './crossoverScannerFirestoreClient.js'
+import { buildNotificationWorkbook } from './crossoverExport.js'
 import { runDispatch, isIntervalDue } from './crossoverScanner.js'
 import { searchInstruments } from './instrumentMasterSync.js'
 import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestExpectedBarEnd } from './crossoverTimeframes.js'
@@ -38,6 +45,18 @@ const MAX_MARK_READ_IDS = 1000
 const CURSOR_OVERLAP_MS = 15000
 const MAX_PAGE_SIZE = 100
 const NOTIFICATION_TYPES = ['crossover', 'candles', 'analysis', 'scanner_warning']
+// "Run now": each request scans for at most this long (the deployed API
+// function times out at 120s); the client repeats while work remains.
+const MANUAL_RUN_BUDGET_MS = 75000
+const MANUAL_RUN_LEASE_MS = 150000
+const EXPORT_CONTENT_TYPE = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+
+const parseSymbolList = (raw) => {
+  const list = Array.isArray(raw) ? raw : String(raw || '').split(/[\s,;]+/)
+  // A pasted spreadsheet column usually carries its header ("SYMBOL") - skip it.
+  // Set keeps the first occurrence, so list order survives de-duplication.
+  return [...new Set(list.map((s) => String(s).trim().toUpperCase()).filter((s) => s && s !== 'SYMBOL'))]
+}
 
 // Filters shared by /notifications/page and /notifications/counts. Returns
 // {error} for an unusable value. Everything is optional; symbol is upper-cased.
@@ -92,10 +111,10 @@ async function addValidatedSymbol(rawSymbol, rawExchange) {
   if (!SYMBOL_PATTERN.test(symbol)) return { symbol, status: 'invalid', error: 'Invalid symbol' }
 
   const matches = await searchInstruments(symbol, 20)
-  const known = matches.some((m) => m.symbol === symbol && m.exchange === exchange)
-  if (!known) return { symbol, status: 'not-found', error: `${symbol} was not found on ${exchange} in the instrument list` }
+  const match = matches.find((m) => m.symbol === symbol && m.exchange === exchange)
+  if (!match) return { symbol, status: 'not-found', error: `${symbol} was not found on ${exchange} in the instrument list` }
 
-  const { id, created } = await addScannerSymbol({ symbol, exchange, source: 'manual' })
+  const { id, created } = await addScannerSymbol({ symbol, exchange, source: 'manual', instrumentType: match.instrumentType })
   return { symbol, id, status: created ? 'added' : 'exists' }
 }
 
@@ -144,21 +163,34 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
 
   // Paste many symbols once (comma / space / newline separated). Each is
   // validated independently; the response reports the outcome per symbol.
+  // setOrder: true also makes the pasted order the display order (Notifications,
+  // Overview, export) - e.g. Sheet1 of the notification list.
   app.post('/crossover-scanner/symbols/bulk', async (req, res) => {
     try {
-      const raw = req.body?.symbols
-      const list = Array.isArray(raw) ? raw : String(raw || '').split(/[\s,;]+/)
-      // A pasted spreadsheet column usually carries its header ("SYMBOL") - skip it.
-      const unique = [...new Set(list.map((s) => String(s).trim().toUpperCase()).filter((s) => s && s !== 'SYMBOL'))]
+      const unique = parseSymbolList(req.body?.symbols)
       if (unique.length === 0) return res.status(400).json({ error: 'No symbols provided', required: ['symbols'] })
       if (unique.length > MAX_BULK_SYMBOLS) return res.status(400).json({ error: `At most ${MAX_BULK_SYMBOLS} symbols per request` })
 
       const exchange = req.body?.exchange
       const results = []
       for (const symbol of unique) results.push(await addValidatedSymbol(symbol, exchange))
-      res.json({ status: 'SUCCESS', results })
+      const order = req.body?.setOrder === true ? await setSymbolOrder(unique) : null
+      res.json({ status: 'SUCCESS', results, order })
     } catch (error) {
       console.error('Error bulk-adding crossover scanner symbols:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Display order only (no adds): symbols in list order; unlisted ones go last.
+  app.put('/crossover-scanner/symbols/order', async (req, res) => {
+    try {
+      const unique = parseSymbolList(req.body?.symbols)
+      if (unique.length === 0) return res.status(400).json({ error: 'No symbols provided', required: ['symbols'] })
+      if (unique.length > MAX_BULK_SYMBOLS) return res.status(400).json({ error: `At most ${MAX_BULK_SYMBOLS} symbols per request` })
+      res.json({ status: 'SUCCESS', ...(await setSymbolOrder(unique)) })
+    } catch (error) {
+      console.error('Error saving crossover scanner symbol order:', error.message)
       res.status(500).json({ error: error.message })
     }
   })
@@ -237,17 +269,45 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
-  // Diagnostic only - the UI has no "Scan now"; the scheduled dispatcher does
-  // this automatically. Idempotent. Body {force: true} re-checks symbols that
-  // are not due (it still only alerts on bars newer than the last one scanned).
+  // "Run now" (Crossover Scanner + Notifications pages): the same dispatcher
+  // as the scheduled tick, on demand. Each request scans what is due for at
+  // most MANUAL_RUN_BUDGET_MS and reports `remaining` (due work not started);
+  // the client repeats until it is 0. Idempotent. A lease rejects a second
+  // overlapping manual run with 409. Body {force: true} re-checks symbols
+  // that are not due (it still only alerts on bars newer than the last one
+  // scanned) - diagnostic only.
   app.post('/crossover-scanner/run', async (req, res) => {
+    let leased = false
     try {
+      leased = await acquireManualRunLease(MANUAL_RUN_LEASE_MS)
+      if (!leased) return res.status(409).json({ error: 'A manual scan is already running - try again shortly' })
       const groww_token = await getGrowwAccessToken()
-      const summary = await runDispatch({ groww_token, force: req.body?.force === true })
-      res.json({ status: 'SUCCESS', ...summary })
+      const summary = await runDispatch({ groww_token, force: req.body?.force === true, budgetMs: MANUAL_RUN_BUDGET_MS })
+      res.json({ status: 'SUCCESS', ...summary, remaining: summary.deferred })
     } catch (error) {
       console.error('Error running crossover scan:', error.message)
       res.status(error.statusCode || 500).json({ error: error.message })
+    } finally {
+      if (leased) await releaseManualRunLease().catch(() => {})
+    }
+  })
+
+  // Excel export in the "Notification List" template layout (see
+  // crossoverExport.js). Optional ISO from/to on the displayed crossover time;
+  // without them, today (IST).
+  app.get('/crossover-scanner/export.xlsx', async (req, res) => {
+    try {
+      const range = parseDateRange(req.query)
+      if (range.error) return res.status(400).json({ error: range.error })
+      const workbook = await buildNotificationWorkbook(range)
+      const buffer = await workbook.xlsx.writeBuffer()
+      const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date())
+      res.setHeader('Content-Type', EXPORT_CONTENT_TYPE)
+      res.setHeader('Content-Disposition', `attachment; filename="Notification List ${day}.xlsx"`)
+      res.send(Buffer.from(buffer))
+    } catch (error) {
+      console.error('Error exporting notifications:', error.message)
+      res.status(500).json({ error: error.message })
     }
   })
 
@@ -311,6 +371,25 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
+  // One numbered page of a timeframe's crossover groups (one card per symbol +
+  // bar, every indicator that crossed merged in, stars = indicator count).
+  // Index symbols always come first; then newest bar, then list order.
+  app.get('/notifications/groups', async (req, res) => {
+    try {
+      const section = String(req.query.section || '')
+      if (!TIMEFRAME_ORDER.includes(section)) return res.status(400).json({ error: 'section must be a timeframe', supported: TIMEFRAME_ORDER })
+      const { filters, error } = parseNotificationFilters(req.query)
+      if (error) return res.status(400).json({ error })
+      const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1)
+      const pageSize = Math.min(Math.max(Number.parseInt(req.query.pageSize, 10) || 25, 1), MAX_PAGE_SIZE)
+      const { items, total, indexTotal } = await queryCrossoverGroupsPage(section, filters, { page, pageSize })
+      res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, groups: items })
+    } catch (error) {
+      console.error('Error listing notification groups:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
   // Per-section totals and unread counts under the same filters.
   app.get('/notifications/counts', async (req, res) => {
     try {
@@ -368,15 +447,28 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
+  // {ids: notification ids, groupIds: crossover group ids} - at least one list.
   app.post('/notifications/mark-read', async (req, res) => {
     try {
-      const ids = req.body?.ids
-      if (!Array.isArray(ids) || ids.length === 0 || ids.some((id) => typeof id !== 'string' || id.includes('/'))) {
-        return res.status(400).json({ error: 'ids must be a non-empty list of notification ids', required: ['ids'] })
+      const validList = (list) => Array.isArray(list) && list.every((id) => typeof id === 'string' && id && !id.includes('/'))
+      const ids = req.body?.ids ?? []
+      const groupIds = req.body?.groupIds ?? []
+      if (!validList(ids) || !validList(groupIds) || ids.length + groupIds.length === 0) {
+        return res.status(400).json({ error: 'ids / groupIds must be lists of ids, and not both empty', required: ['ids'] })
       }
-      if (ids.length > MAX_MARK_READ_IDS) return res.status(400).json({ error: `At most ${MAX_MARK_READ_IDS} ids per request` })
-      const count = await markNotificationsRead(ids)
+      if (ids.length + groupIds.length > MAX_MARK_READ_IDS) return res.status(400).json({ error: `At most ${MAX_MARK_READ_IDS} ids per request` })
+      const [count] = await Promise.all([ids.length ? markNotificationsRead(ids) : 0, groupIds.length ? markCrossoverGroupsRead(groupIds) : 0])
       res.json({ status: 'SUCCESS', count })
+    } catch (error) {
+      console.error('Error marking notifications read:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Every unread notification and crossover group.
+  app.post('/notifications/mark-all-read', async (_req, res) => {
+    try {
+      res.json({ status: 'SUCCESS', count: await markAllNotificationsAndGroupsRead() })
     } catch (error) {
       console.error('Error marking notifications read:', error.message)
       res.status(500).json({ error: error.message })

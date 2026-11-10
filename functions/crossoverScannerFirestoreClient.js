@@ -24,6 +24,9 @@ const db = getFirestore(admin.app(), DATABASE_ID)
 
 const SYMBOLS_COLLECTION = 'crossoverScannerSymbols'
 const NOTIFICATIONS_COLLECTION = 'historicalWatchlistNotifications'
+// One doc per symbol + timeframe + crossover bar, merging every indicator that
+// crossed on that bar (the Notifications page's cards). See upsertCrossoverGroup.
+const GROUPS_COLLECTION = 'crossoverGroups'
 const APP_CONFIG_COLLECTION = 'appConfig'
 const SETTINGS_DOC = 'crossoverScanner'
 const STATUS_DOC = 'crossoverScannerStatus'
@@ -63,6 +66,28 @@ function serializeNotificationDoc(doc) {
   return { id: doc.id, ...data, createdAt: data.createdAt?.toDate?.().toISOString() || null }
 }
 
+// ---------- display order + index detection ----------
+
+// Symbols without an explicit list position sort after every listed one.
+export const UNLISTED_SORT_ORDER = 100000
+
+// NSE index symbols (instrument_type IDX). Used only when the instrument master
+// has no instrumentType for the symbol (docs synced before that field existed).
+const INDEX_SYMBOL_PATTERN = /^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY|SENSEX|BANKEX)/
+const ETF_SUFFIX_PATTERN = /(BEES|ETF|IETF)$/
+
+export function isIndexSymbol(symbol, instrumentType) {
+  if (instrumentType) return instrumentType === 'IDX'
+  return INDEX_SYMBOL_PATTERN.test(symbol) && !ETF_SUFFIX_PATTERN.test(symbol)
+}
+
+// Indices first, then the uploaded list order, then alphabetical.
+export function compareSymbolOrder(a, b) {
+  const ai = (a.isIndex ?? isIndexSymbol(a.symbol)) ? 0 : 1
+  const bi = (b.isIndex ?? isIndexSymbol(b.symbol)) ? 0 : 1
+  return ai - bi || (a.sortOrder ?? UNLISTED_SORT_ORDER) - (b.sortOrder ?? UNLISTED_SORT_ORDER) || a.symbol.localeCompare(b.symbol)
+}
+
 // Deterministic id (exchange + symbol) makes add idempotent and lets DELETE
 // address a symbol without a lookup.
 export function scannerSymbolId(exchange, symbol) {
@@ -72,32 +97,100 @@ export function scannerSymbolId(exchange, symbol) {
 // ---------- symbol list (one list for every timeframe) ----------
 
 // No orderBy on the query (so no composite index needed) - the list is tiny,
-// sort in memory by createdAt.
+// sorted in memory: indices first, then the uploaded list order (sortOrder).
 export async function listActiveScannerSymbols() {
   const snapshot = await db.collection(SYMBOLS_COLLECTION).where('active', '==', true).get()
-  return snapshot.docs.map(serializeSymbolDoc).sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.symbol.localeCompare(b.symbol))
+  return snapshot.docs.map(serializeSymbolDoc).sort(compareSymbolOrder)
 }
 
 // Idempotent: re-adding an existing symbol just reactivates it (clearing any
 // soft-delete) instead of creating a duplicate.
-export async function addScannerSymbol({ symbol, exchange = 'NSE', source = 'manual' }) {
+export async function addScannerSymbol({ symbol, exchange = 'NSE', source = 'manual', instrumentType = null }) {
   const id = scannerSymbolId(exchange, symbol)
   const ref = db.collection(SYMBOLS_COLLECTION).doc(id)
   const existing = await ref.get()
+  const isIndex = isIndexSymbol(symbol, instrumentType)
   if (existing.exists) {
-    await ref.update({ active: true })
+    await ref.update({ active: true, isIndex })
     return { id, created: !existing.data().active }
   }
   await ref.set({
     symbol,
     exchange,
     source,
+    isIndex,
+    sortOrder: UNLISTED_SORT_ORDER,
     active: true,
     scanState: {},
     lastError: null,
     createdAt: admin.firestore.FieldValue.serverTimestamp(),
   })
   return { id, created: true }
+}
+
+/**
+ * Applies a display order (e.g. Sheet1 of the notification list): each listed
+ * symbol gets its position (first occurrence wins), every other symbol doc
+ * gets UNLISTED_SORT_ORDER + its alphabetical rank. Then copies sortOrder /
+ * isIndex onto the last `groupDays` days of crossover groups so existing cards
+ * re-sort too. Returns {ordered, unlisted, groupsUpdated}.
+ */
+// Names the notification-list sheet uses for symbols Groww spells differently
+// (indices) - other truncated names (BAJAJ, GVT, NAM) resolve by prefix below.
+export const LIST_SYMBOL_ALIASES = { MIDCPNIFTY: 'NIFTYMIDSELECT', NIFTYNXT: 'NIFTYJR' }
+
+// A list name -> the scanner's symbol: exact, alias, or the one symbol whose
+// part before '-' / '&' matches (BAJAJ -> BAJAJ-AUTO, GVT -> GVT&D, NAM -> NAM-INDIA).
+export function resolveListSymbol(name, knownSymbols) {
+  if (knownSymbols.has(name)) return name
+  if (LIST_SYMBOL_ALIASES[name] && knownSymbols.has(LIST_SYMBOL_ALIASES[name])) return LIST_SYMBOL_ALIASES[name]
+  const byPrefix = [...knownSymbols].filter((s) => /[-&]/.test(s) && s.split(/[-&]/)[0] === name)
+  return byPrefix.length === 1 ? byPrefix[0] : null
+}
+
+export async function setSymbolOrder(orderedSymbols, { groupDays = 30, now = new Date() } = {}) {
+  const snapshot = await db.collection(SYMBOLS_COLLECTION).get()
+  const known = new Set(snapshot.docs.map((d) => d.data().symbol))
+  const position = new Map()
+  const unresolved = []
+  for (const raw of orderedSymbols) {
+    const name = String(raw).trim().toUpperCase()
+    if (!name) continue
+    const symbol = resolveListSymbol(name, known)
+    if (!symbol) unresolved.push(name)
+    else if (!position.has(symbol)) position.set(symbol, position.size)
+  }
+  const unlisted = snapshot.docs.filter((d) => !position.has(d.data().symbol)).sort((a, b) => a.data().symbol.localeCompare(b.data().symbol))
+  const unlistedRank = new Map(unlisted.map((d, i) => [d.id, i]))
+
+  const bySymbol = new Map()
+  const updates = snapshot.docs.map((doc) => {
+    const { symbol } = doc.data()
+    const sortOrder = position.has(symbol) ? position.get(symbol) : UNLISTED_SORT_ORDER + unlistedRank.get(doc.id)
+    const isIndex = doc.data().isIndex ?? isIndexSymbol(symbol)
+    bySymbol.set(symbol, { sortOrder, isIndex })
+    return { ref: doc.ref, patch: { sortOrder, isIndex } }
+  })
+  await commitInBatches(updates, (batch, { ref, patch }) => batch.update(ref, patch))
+
+  const cutoff = Math.floor(now.getTime() / 1000) - groupDays * 24 * 60 * 60
+  const groups = await db.collection(GROUPS_COLLECTION).where('candleTimestamp', '>=', cutoff).get()
+  const groupUpdates = groups.docs
+    .map((doc) => ({ ref: doc.ref, data: doc.data() }))
+    .filter(({ data }) => bySymbol.has(data.symbol))
+    .map(({ ref, data }) => ({ ref, patch: bySymbol.get(data.symbol), data }))
+    .filter(({ patch, data }) => patch.sortOrder !== data.sortOrder || patch.isIndex !== data.isIndex)
+  await commitInBatches(groupUpdates, (batch, { ref, patch }) => batch.update(ref, patch))
+
+  return { ordered: position.size, unresolved, unlisted: unlisted.map((d) => d.data().symbol), groupsUpdated: groupUpdates.length }
+}
+
+async function commitInBatches(items, apply) {
+  for (let i = 0; i < items.length; i += BATCH_LIMIT) {
+    const batch = db.batch()
+    items.slice(i, i + BATCH_LIMIT).forEach((item) => apply(batch, item))
+    await batch.commit()
+  }
 }
 
 // Soft delete, same as the Historical Watchlist - keeps the doc but excludes
@@ -128,6 +221,8 @@ export async function listOverview() {
       id: entry.id,
       symbol: entry.symbol,
       exchange: entry.exchange,
+      isIndex: entry.isIndex ?? isIndexSymbol(entry.symbol),
+      sortOrder: entry.sortOrder ?? UNLISTED_SORT_ORDER,
       intervals: Object.fromEntries(
         Object.entries(entry.scanState || {}).map(([interval, state]) => [
           interval,
@@ -135,7 +230,7 @@ export async function listOverview() {
         ])
       ),
     }))
-    .sort((a, b) => a.symbol.localeCompare(b.symbol))
+    .sort(compareSymbolOrder)
 }
 
 // ---------- per-timeframe scan state ----------
@@ -193,6 +288,24 @@ export async function saveRunStatus(patch) {
   await db.collection(APP_CONFIG_COLLECTION).doc(STATUS_DOC).set(patch, { merge: true })
 }
 
+// Short lease so two manual "Run now" requests can't overlap (a scheduled tick
+// overlapping a manual run is harmless - every write is idempotent). Returns
+// false when another manual run holds the lease.
+export async function acquireManualRunLease(leaseMs, now = new Date()) {
+  const ref = db.collection(APP_CONFIG_COLLECTION).doc(STATUS_DOC)
+  return db.runTransaction(async (tx) => {
+    const doc = await tx.get(ref)
+    const until = doc.exists ? doc.data().manualRunLockUntil : null
+    if (until && Date.parse(until) > now.getTime()) return false
+    tx.set(ref, { manualRunLockUntil: new Date(now.getTime() + leaseMs).toISOString() }, { merge: true })
+    return true
+  })
+}
+
+export async function releaseManualRunLease() {
+  await db.collection(APP_CONFIG_COLLECTION).doc(STATUS_DOC).set({ manualRunLockUntil: null }, { merge: true })
+}
+
 // ---------- notifications ----------
 
 // Creates one alert under a caller-supplied deterministic id. create() fails
@@ -229,6 +342,107 @@ export async function createScannerWarningNotification(id, { message }) {
     if (error.code === ALREADY_EXISTS_CODE) return false
     throw error
   }
+}
+
+// ---------- crossover groups (one card per symbol + timeframe + bar) ----------
+
+export function crossoverGroupId({ exchange, symbol, interval, candleTimestamp }) {
+  return `xg_${exchange}_${symbol}_${interval}_${candleTimestamp}`
+}
+
+// Every crossover of one symbol/timeframe/bar comes out of one scan call, so
+// the group is built in memory and written whole. A first write creates it
+// unread; a re-write (a retried scan of the same bar) refreshes the content
+// but keeps `read` and `createdAt`.
+export async function upsertCrossoverGroup(id, fields) {
+  const ref = db.collection(GROUPS_COLLECTION).doc(id)
+  try {
+    await ref.create({ ...fields, read: false, createdAt: admin.firestore.FieldValue.serverTimestamp() })
+    return true
+  } catch (error) {
+    if (error.code !== ALREADY_EXISTS_CODE) throw error
+    await ref.set(fields, { merge: true })
+    return false
+  }
+}
+
+// Notifications predating the ADX -> DMI rename carry the old label (until
+// scripts/migrateAdxToDmi.mjs has run) - a filter on either label matches both.
+export const LEGACY_INDICATOR_LABELS = { 'DMI 14 (+DI/-DI)': ['ADX 14 (+DI/-DI)'] }
+export function expandIndicatorLabels(labels) {
+  return [...new Set(labels.flatMap((label) => [label, ...(LEGACY_INDICATOR_LABELS[label] || [])]))]
+}
+
+// One timeframe's groups for either the index symbols or the rest, with the
+// page filters. Ordered newest bar first, then list order (sortOrder).
+// Indexes: crossoverGroups composites in firestore.indexes.json.
+function groupQuery(section, isIndex, { type, unreadOnly, indicator, direction, symbol, from, to } = {}) {
+  if (type && type !== 'crossover') return null
+  let query = db.collection(GROUPS_COLLECTION).where('interval', '==', section).where('isIndex', '==', isIndex)
+  if (unreadOnly) query = query.where('read', '==', false)
+  if (symbol) query = query.where('symbol', '==', symbol)
+  if (direction === 'bullish') query = query.where('hasBullish', '==', true)
+  if (direction === 'bearish') query = query.where('hasBearish', '==', true)
+  if (indicator?.length) query = query.where('indicatorLabels', 'array-contains-any', expandIndicatorLabels(indicator))
+  const { gte, lte } = candleStartRangeForEndRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
+  if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
+  if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
+  return query.orderBy('candleTimestamp', 'desc').orderBy('sortOrder', 'asc')
+}
+
+function serializeGroupDoc(doc) {
+  const data = doc.data()
+  return { id: doc.id, ...data, createdAt: data.createdAt?.toDate?.().toISOString() || null }
+}
+
+/**
+ * One numbered page of a timeframe's crossover groups. Index groups always
+ * come first: the page is an offset window over [index groups..., stock
+ * groups...], so totals are exact and nothing repeats across pages.
+ */
+export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25 } = {}) {
+  if (!DEFAULT_ENABLED_INTERVALS.includes(section)) return { items: [], total: 0, indexTotal: 0 }
+  const indexQuery = groupQuery(section, true, filters)
+  const stockQuery = groupQuery(section, false, filters)
+  if (!indexQuery || !stockQuery) return { items: [], total: 0, indexTotal: 0 }
+
+  const [indexCount, stockCount] = await Promise.all([indexQuery.count().get(), stockQuery.count().get()])
+  const indexTotal = indexCount.data().count
+  const total = indexTotal + stockCount.data().count
+
+  const start = (page - 1) * pageSize
+  const end = start + pageSize
+  const fetches = []
+  if (start < indexTotal) fetches.push(indexQuery.offset(start).limit(Math.min(end, indexTotal) - start).get())
+  if (end > indexTotal) {
+    const stockStart = Math.max(0, start - indexTotal)
+    fetches.push(stockQuery.offset(stockStart).limit(end - Math.max(start, indexTotal)).get())
+  }
+  const snapshots = await Promise.all(fetches)
+  return { items: snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc)), total, indexTotal }
+}
+
+export async function markCrossoverGroupsRead(ids) {
+  await commitInBatches(ids, (batch, id) => batch.update(db.collection(GROUPS_COLLECTION).doc(id), { read: true }))
+  return ids.length
+}
+
+// "Mark all read": every unread notification and every unread group, in
+// batches (no 500-write limit).
+export async function markAllNotificationsAndGroupsRead() {
+  let notifications = 0
+  for (const collection of [NOTIFICATIONS_COLLECTION, GROUPS_COLLECTION]) {
+    for (;;) {
+      const snapshot = await db.collection(collection).where('read', '==', false).limit(BATCH_LIMIT).get()
+      if (snapshot.empty) break
+      const batch = db.batch()
+      snapshot.docs.forEach((doc) => batch.update(doc.ref, { read: true }))
+      await batch.commit()
+      if (collection === NOTIFICATIONS_COLLECTION) notifications += snapshot.size
+      if (snapshot.size < BATCH_LIMIT) break
+    }
+  }
+  return notifications
 }
 
 // Needs the (type, createdAt DESC) composite index in firestore.indexes.json.
@@ -289,8 +503,9 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
     if (type) query = query.where('type', '==', type)
   }
   if (unreadOnly) query = query.where('read', '==', false)
-  if (indicator?.length === 1) query = query.where('indicatorLabel', '==', indicator[0])
-  else if (indicator?.length > 1) query = query.where('indicatorLabel', 'in', indicator)
+  const labels = indicator?.length ? expandIndicatorLabels(indicator) : []
+  if (labels.length === 1) query = query.where('indicatorLabel', '==', labels[0])
+  else if (labels.length > 1) query = query.where('indicatorLabel', 'in', labels)
   if (direction) query = query.where('direction', '==', direction)
   if (symbol) query = query.where('symbol', '==', symbol)
   // Optional date range. Timeframe sections filter on the crossover's own bar time
@@ -375,28 +590,42 @@ function deleteQueries(sections, from, to) {
   return sections.map((section) => sectionQuery(section, { from, to })).filter(Boolean)
 }
 
-export async function countNotificationsForDelete({ sections, from, to }) {
-  const counts = await Promise.all(deleteQueries(sections, from, to).map(async (q) => (await q.count().get()).data().count))
+export async function countNotificationsForDelete({ sections, from, to, includeGroups = false }) {
+  const queries = [...deleteQueries(sections, from, to), ...(includeGroups ? groupDeleteQueries(sections, from, to) : [])]
+  const counts = await Promise.all(queries.map(async (q) => (await q.count().get()).data().count))
   return counts.reduce((sum, n) => sum + n, 0)
+}
+
+// The crossover groups behind the same date range (timeframe sections only).
+function groupDeleteQueries(sections, from, to) {
+  return sections
+    .filter((section) => section !== SYSTEM_SECTION)
+    .map((section) => {
+      const { gte, lte } = candleStartRangeForEndRange(section, Math.floor(Date.parse(from) / 1000), Math.floor(Date.parse(to) / 1000))
+      let query = db.collection(GROUPS_COLLECTION).where('interval', '==', section)
+      if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
+      if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
+      return query
+    })
 }
 
 export async function deleteNotificationsInRange({ sections, from, to, maxBatches = 20 }) {
   let deleted = 0
   let batches = 0
-  for (const query of deleteQueries(sections, from, to)) {
+  for (const query of [...deleteQueries(sections, from, to), ...groupDeleteQueries(sections, from, to)]) {
     while (batches < maxBatches) {
       const snapshot = await query.limit(BATCH_LIMIT).get()
       if (snapshot.empty) break
       const batch = db.batch()
       snapshot.docs.forEach((doc) => batch.delete(doc.ref))
       await batch.commit()
-      deleted += snapshot.size
+      if (snapshot.docs[0].ref.parent.id === NOTIFICATIONS_COLLECTION) deleted += snapshot.size
       batches += 1
       if (snapshot.size < BATCH_LIMIT) break
     }
     if (batches >= maxBatches) break
   }
-  const remaining = batches >= maxBatches ? await countNotificationsForDelete({ sections, from, to }) : 0
+  const remaining = batches >= maxBatches ? await countNotificationsForDelete({ sections, from, to, includeGroups: true }) : 0
   return { deleted, hasMore: remaining > 0 }
 }
 
@@ -430,13 +659,16 @@ export async function markNotificationsRead(ids) {
 export async function deleteOldReadNotifications({ olderThanDays = 30, maxBatches = 20, now = new Date() } = {}) {
   const cutoff = admin.firestore.Timestamp.fromDate(new Date(now.getTime() - olderThanDays * 24 * 60 * 60 * 1000))
   let deleted = 0
-  for (let i = 0; i < maxBatches; i++) {
-    const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).where('read', '==', true).where('createdAt', '<', cutoff).limit(BATCH_LIMIT).get()
-    if (snapshot.empty) break
-    const batch = db.batch()
-    snapshot.docs.forEach((doc) => batch.delete(doc.ref))
-    await batch.commit()
-    deleted += snapshot.size
+  for (const collection of [NOTIFICATIONS_COLLECTION, GROUPS_COLLECTION]) {
+    for (let i = 0; i < maxBatches; i++) {
+      const snapshot = await db.collection(collection).where('read', '==', true).where('createdAt', '<', cutoff).limit(BATCH_LIMIT).get()
+      if (snapshot.empty) break
+      const batch = db.batch()
+      snapshot.docs.forEach((doc) => batch.delete(doc.ref))
+      await batch.commit()
+      if (collection === NOTIFICATIONS_COLLECTION) deleted += snapshot.size
+      if (snapshot.size < BATCH_LIMIT) break
+    }
   }
   return deleted
 }
@@ -447,3 +679,28 @@ export async function countOldReadNotifications({ olderThanDays = 30, now = new 
   const snapshot = await db.collection(NOTIFICATIONS_COLLECTION).where('read', '==', true).where('createdAt', '<', cutoff).count().get()
   return snapshot.data().count
 }
+
+// ---------- Excel export ----------
+
+// Every crossover notification whose bar falls in the (displayed bar-end)
+// range, across all timeframes - the export's YES/NO matrix. One range query
+// per timeframe on the (interval, type, candleTimestamp) index.
+export async function listCrossoversForExport({ from, to }) {
+  const fromSec = from ? Math.floor(Date.parse(from) / 1000) : null
+  const toSec = to ? Math.floor(Date.parse(to) / 1000) : null
+  const perInterval = await Promise.all(
+    DEFAULT_ENABLED_INTERVALS.map(async (interval) => {
+      const { gte, lte } = candleStartRangeForEndRange(interval, fromSec, toSec)
+      let query = db.collection(NOTIFICATIONS_COLLECTION).where('interval', '==', interval).where('type', '==', 'crossover')
+      if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
+      if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
+      const snapshot = await query.get()
+      return snapshot.docs.map(serializeNotificationDoc)
+    })
+  )
+  return perInterval.flat()
+}
+
+// For the one-off maintenance scripts in functions/scripts (migration/backfill).
+export const scannerDb = db
+export const SCANNER_COLLECTIONS = { symbols: SYMBOLS_COLLECTION, notifications: NOTIFICATIONS_COLLECTION, groups: GROUPS_COLLECTION }

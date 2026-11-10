@@ -1,10 +1,13 @@
 /**
  * Crossover Scanner - on every timeframe (15 min, 1 hour, 4 hour, Daily,
- * Weekly) runs all six crossover indicators over each scanner symbol when a
+ * Weekly) runs all seven crossover indicators over each scanner symbol when a
  * new bar has closed, and raises an in-app alert (type 'crossover') for every
- * crossover on a newly closed bar. Driven by one scheduled dispatcher
- * (crossoverScanDispatch in functions/index.js) that ticks every 15 minutes
- * and scans only what is due - there is no manual trigger in the UI.
+ * crossover on a newly closed bar. Crossovers of one symbol on the same bar
+ * are also merged into one crossover group (the Notifications page's cards),
+ * and every scan records the ADX trend (adxTrendIndicator.js) as context.
+ * Driven by one scheduled dispatcher (crossoverScanDispatch in
+ * functions/index.js) that ticks every 15 minutes and scans only what is due;
+ * the UI's "Run now" button calls the same dispatcher on demand.
  *
  * Rule-based only - no AI call, so no token cost.
  *
@@ -16,6 +19,7 @@
 
 import { refreshAndLoadWindow } from './crossoverCandleWindow.js'
 import { computeIndicatorSpec } from './technicalIndicators.js'
+import { computeAdxTrend } from './adxTrendIndicator.js'
 import {
   TIMEFRAMES,
   TIMEFRAME_ORDER,
@@ -31,6 +35,10 @@ import {
   saveRunStatus,
   createCrossoverNotification,
   createScannerWarningNotification,
+  upsertCrossoverGroup,
+  crossoverGroupId,
+  isIndexSymbol,
+  UNLISTED_SORT_ORDER,
 } from './crossoverScannerFirestoreClient.js'
 
 // Closed bars looked at per scan, beyond the very first scan of a symbol:
@@ -58,7 +66,10 @@ export const CROSSOVER_SPECS = [
   { spec: 'MACDCROSS:12:26:9', label: 'MACD 12/26/9', lineNames: { macd: 'MACD', signal: 'Signal' } },
   { spec: 'TSICROSS:25:13:13', label: 'TSI 25/13/13', lineNames: { tsi: 'TSI', signal: 'Signal' } },
   { spec: 'STOCHRSICROSS:14:14:3:3', label: 'Stoch RSI 14/14/3/3', lineNames: { k: '%K', d: '%D' } },
-  { spec: 'ADXCROSS:14', label: 'ADX 14 (+DI/-DI)', lineNames: { pdi: '+DI', mdi: '-DI' } },
+  // DMI = the +DI/-DI crossover (formerly labelled "ADX"; the real ADX line is
+  // the separate ADX trend, see adxTrendIndicator.js).
+  { spec: 'DMICROSS:14', label: 'DMI 14 (+DI/-DI)', lineNames: { pdi: '+DI', mdi: '-DI' } },
+  { spec: 'RSICROSS:14:14', label: 'RSI 14/14', lineNames: { rsi: 'RSI', ma: 'RSI MA' } },
   { spec: 'SMACROSS:50:200', label: 'SMA 50/200', lineNames: { fast: 'SMA 50', slow: 'SMA 200' } },
   { spec: 'EMACROSS:12:26', label: 'EMA 12/26', lineNames: { fast: 'EMA 12', slow: 'EMA 26' } },
 ]
@@ -126,8 +137,11 @@ export async function scanSymbolInterval({
   groww_token,
   now = new Date(),
   state = {},
+  isIndex = isIndexSymbol(symbol),
+  sortOrder = UNLISTED_SORT_ORDER,
   loadCandles = refreshAndLoadWindow,
   persistAlert = createCrossoverNotification,
+  persistGroup = upsertCrossoverGroup,
 }) {
   const config = TIMEFRAMES[interval]
   const nowSeconds = Math.floor(now.getTime() / 1000)
@@ -185,6 +199,13 @@ export async function scanSymbolInterval({
   const closeByTimestamp = new Map(closed.map((c) => [c.timestamp, c.close]))
 
   const barIndexByTimestamp = new Map(closed.map((c, i) => [c.timestamp, i]))
+  // ADX(14) per bar vs the bar before - context, not a crossover.
+  let adxByTimestamp = new Map()
+  try {
+    adxByTimestamp = computeAdxTrend(closed)
+  } catch (error) {
+    console.error(`crossoverScanner: ADX trend failed for ${exchange}:${symbol} ${interval}:`, error.message)
+  }
   const signals = []
   const alertEvents = []
   const confluencePool = []
@@ -241,11 +262,18 @@ export async function scanSymbolInterval({
       lines,
       confluence,
       agreement,
+      adx: adxByTimestamp.get(event.timestamp) ?? null,
     }
     // Every crossover is stored; the per-timeframe minimum agreement is applied
     // by the app (popup / notification filters) using the stored `agreement`.
-    const created = await persistAlert(notificationId({ exchange, symbol, interval, spec: def.spec, direction, timestamp: event.timestamp }), fields)
-    found.push({ ...fields, created })
+    const id = notificationId({ exchange, symbol, interval, spec: def.spec, direction, timestamp: event.timestamp })
+    const created = await persistAlert(id, fields)
+    found.push({ ...fields, id, spec: def.spec, created })
+  }
+
+  // One group (card) per bar: every indicator that crossed on it.
+  for (const group of buildCrossoverGroups(found, { isIndex, sortOrder })) {
+    await persistGroup(crossoverGroupId(group), group)
   }
 
   return {
@@ -258,9 +286,51 @@ export async function scanSymbolInterval({
       backfilledAt,
       pendingEnd: null,
       attempts: 0,
-      summary: { asOf: closed.at(-1).timestamp, lastClose: round(closed.at(-1).close), signals },
+      summary: { asOf: closed.at(-1).timestamp, lastClose: round(closed.at(-1).close), signals, adx: adxByTimestamp.get(closed.at(-1).timestamp) ?? null },
     },
   }
+}
+
+/**
+ * Merges one scan's crossovers into one group per bar (pure, tested offline).
+ * stars = number of distinct indicators that crossed on the bar.
+ */
+export function buildCrossoverGroups(found, { isIndex = false, sortOrder = UNLISTED_SORT_ORDER } = {}) {
+  const byBar = new Map()
+  for (const f of found) {
+    if (!byBar.has(f.candleTimestamp)) byBar.set(f.candleTimestamp, [])
+    byBar.get(f.candleTimestamp).push(f)
+  }
+  return [...byBar.entries()].map(([candleTimestamp, items]) => {
+    const order = new Map(CROSSOVER_SPECS.map((d, i) => [d.label, i]))
+    const indicators = items
+      .map((f) => ({ label: f.indicatorLabel, spec: f.spec ?? null, direction: f.direction, lines: f.lines ?? {}, notificationId: f.id }))
+      .sort((a, b) => (order.get(a.label) ?? 99) - (order.get(b.label) ?? 99))
+    const bullishCount = indicators.filter((i) => i.direction === 'bullish').length
+    const bearishCount = indicators.length - bullishCount
+    const first = items[0]
+    return {
+      symbol: first.symbol,
+      exchange: first.exchange,
+      interval: first.interval,
+      // Older notifications may lack these - Firestore rejects undefined.
+      timeframeLabel: first.timeframeLabel ?? TIMEFRAMES[first.interval]?.label ?? null,
+      candleTimestamp,
+      closePrice: first.closePrice ?? null,
+      isIndex,
+      sortOrder,
+      indicators,
+      indicatorLabels: [...new Set(indicators.map((i) => i.label))],
+      notificationIds: indicators.map((i) => i.notificationId),
+      stars: new Set(indicators.map((i) => i.label)).size,
+      bullishCount,
+      bearishCount,
+      hasBullish: bullishCount > 0,
+      hasBearish: bearishCount > 0,
+      bias: bullishCount > bearishCount ? 'bullish' : bearishCount > bullishCount ? 'bearish' : 'mixed',
+      adx: first.adx ?? null,
+    }
+  })
 }
 
 async function runWithConcurrency(tasks, limit, deadline, worker) {
@@ -287,7 +357,7 @@ async function runWithConcurrency(tasks, limit, deadline, worker) {
  * up automatically on the next tick). `force` ignores the due check (diagnostic
  * only - the alert rule still only covers bars newer than the last one scanned).
  */
-export async function runDispatch({ groww_token, now = new Date(), force = false }) {
+export async function runDispatch({ groww_token, now = new Date(), force = false, budgetMs = RUN_BUDGET_MS }) {
   await ensureSeeded()
   const [symbols, settings] = await Promise.all([listActiveScannerSymbols(), getScannerSettings()])
   const nowSeconds = Math.floor(now.getTime() / 1000)
@@ -302,9 +372,18 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
     }
   }
 
-  const results = await runWithConcurrency(tasks, SYMBOL_CONCURRENCY, startedAt + RUN_BUDGET_MS, async ({ entry, interval, state }) => {
+  const results = await runWithConcurrency(tasks, SYMBOL_CONCURRENCY, startedAt + budgetMs, async ({ entry, interval, state }) => {
     try {
-      const result = await scanSymbolInterval({ symbol: entry.symbol, exchange: entry.exchange, interval, groww_token, now, state })
+      const result = await scanSymbolInterval({
+        symbol: entry.symbol,
+        exchange: entry.exchange,
+        interval,
+        groww_token,
+        now,
+        state,
+        isIndex: entry.isIndex ?? isIndexSymbol(entry.symbol),
+        sortOrder: entry.sortOrder ?? UNLISTED_SORT_ORDER,
+      })
       if (result.statePatch) await setIntervalState(entry.id, interval, result.statePatch)
       return { interval, symbol: entry.symbol, ok: true, status: result.status, found: result.found }
     } catch (error) {
@@ -354,6 +433,8 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
     symbols: symbols.length,
     due: tasks.length,
     deferred: results.filter((r) => r.skipped).length,
+    scanned: ran.filter((r) => r.ok && r.status === 'scanned').length,
+    notPublished: ran.filter((r) => r.ok && r.status === 'not-published').length,
     errors: ran.filter((r) => !r.ok).map((r) => ({ symbol: r.symbol, interval: r.interval, error: r.error })),
     newAlerts: newAlerts.length,
     alerts: newAlerts.map((f) => ({ symbol: f.symbol, interval: f.interval, indicator: f.indicatorLabel, direction: f.direction, candleTimestamp: f.candleTimestamp })),
