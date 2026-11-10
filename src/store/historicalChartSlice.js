@@ -85,7 +85,11 @@ export function createHistoricalChartSlice(name) {
       builder.addCase(REHYDRATE, (state, action) => {
         const persisted = action.payload?.[name]
         if (!persisted) return state
-        return { ...persisted, indicatorConfig: { ...buildInitialState().indicatorConfig, ...(persisted.indicatorConfig || {}) } }
+        const saved = persisted.indicatorConfig || {}
+        // The old combined "ADX" panel drew ADX + DI lines; it is now ADX and DMI
+        // panels. Anyone who had it on keeps seeing both.
+        const migrated = saved.dmi || !saved.adx?.enabled ? saved : { ...saved, dmi: { enabled: true, period: saved.adx.period ?? 14 } }
+        return { ...persisted, indicatorConfig: { ...buildInitialState().indicatorConfig, ...migrated } }
       })
     },
   })

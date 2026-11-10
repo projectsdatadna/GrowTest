@@ -168,8 +168,8 @@ const INDICATOR_ROWS = [
       { name: 'dPeriod', label: 'D' },
     ],
   },
-  { key: 'adx', label: 'ADX', fields: [{ name: 'period', label: 'Period' }] },
-  { key: 'dmi', label: 'DMI (+DI/-DI)', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'adx', label: 'ADX (trend strength)', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'dmi', label: 'DMI (+DI / -DI)', fields: [{ name: 'period', label: 'Period' }] },
   { key: 'rsiDivergence', label: 'RSI Divergence', fields: [{ name: 'rsiPeriod', label: 'RSI' }, { name: 'lookback', label: 'Lookback' }] },
   {
     key: 'macdCrossover',
