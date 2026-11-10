@@ -246,9 +246,9 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
     const showTsi = indicatorConfig.tsi.enabled
     const showStochRsi = indicatorConfig.stochRsi.enabled
     const showAdx = indicatorConfig.adx.enabled
-    // The DMI panel also appears when only the DMI crossover is on, so its markers have a chart to sit on.
-    const showDmi = indicatorConfig.dmi.enabled || indicatorConfig.adxCrossover.enabled
-    const dmiPeriod = indicatorConfig.dmi.enabled ? indicatorConfig.dmi.period : indicatorConfig.adxCrossover.period
+    // One DMI checkbox (the DMI crossover row): it draws the +DI/-DI panel with the crossover markers on it.
+    const showDmi = indicatorConfig.adxCrossover.enabled
+    const dmiPeriod = indicatorConfig.adxCrossover.period
 
     // SMA/EMA/Bollinger Bands overlay directly on the price panel below (same
     // price units as the candles) rather than getting their own row - only

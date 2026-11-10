@@ -169,7 +169,6 @@ const INDICATOR_ROWS = [
     ],
   },
   { key: 'adx', label: 'ADX (trend strength)', fields: [{ name: 'period', label: 'Period' }] },
-  { key: 'dmi', label: 'DMI (+DI / -DI)', fields: [{ name: 'period', label: 'Period' }] },
   { key: 'rsiDivergence', label: 'RSI Divergence', fields: [{ name: 'rsiPeriod', label: 'RSI' }, { name: 'lookback', label: 'Lookback' }] },
   {
     key: 'macdCrossover',
@@ -191,7 +190,7 @@ const INDICATOR_ROWS = [
       { name: 'dPeriod', label: 'D' },
     ],
   },
-  { key: 'adxCrossover', label: 'DMI Crossover (+DI/-DI)', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'adxCrossover', label: 'DMI (+DI / -DI) with crossovers', fields: [{ name: 'period', label: 'Period' }] },
   { key: 'smaCrossover', label: 'SMA Crossover', fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }] },
   { key: 'emaCrossover', label: 'EMA Crossover', fields: [{ name: 'fastPeriod', label: 'Fast' }, { name: 'slowPeriod', label: 'Slow' }] },
 ]
@@ -210,8 +209,8 @@ function buildIndicatorSpecs(indicatorConfig) {
     specs.push(`STOCHRSI:${rsiPeriod}:${stochasticPeriod}:${kPeriod}:${dPeriod}`)
   }
   // ADX and DMI panels both read the same ADX:<period> series (adx, +DI, -DI).
-  // (the DMI panel is also drawn for the DMI crossover alone, using its period).
-  for (const key of ['adx', 'dmi', 'adxCrossover']) {
+  // (the DMI panel is drawn by the DMI crossover row, using its period).
+  for (const key of ['adx', 'adxCrossover']) {
     const spec = `ADX:${indicatorConfig[key].period}`
     if (indicatorConfig[key].enabled && !specs.includes(spec)) specs.push(spec)
   }

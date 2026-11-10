@@ -25,7 +25,6 @@ function buildInitialState() {
       tsi: { enabled: false, longPeriod: 25, shortPeriod: 13, signalPeriod: 13 },
       stochRsi: { enabled: false, rsiPeriod: 14, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3 },
       adx: { enabled: false, period: 14 },
-      dmi: { enabled: false, period: 14 },
       rsiDivergence: { enabled: false, rsiPeriod: 14, lookback: 5 },
       macdCrossover: { enabled: false, fastPeriod: 12, slowPeriod: 26, signalPeriod: 9 },
       tsiCrossover: { enabled: false, longPeriod: 25, shortPeriod: 13, signalPeriod: 13 },
@@ -88,9 +87,13 @@ export function createHistoricalChartSlice(name) {
         const saved = persisted.indicatorConfig || {}
         // The old combined "ADX" panel drew ADX + DI lines; it is now ADX and DMI
         // panels. Anyone who had it on keeps seeing both.
-        // dmiSynced: one-time, because an earlier build already saved dmi (off) for them.
-        const migrated = persisted.dmiSynced || !saved.adx?.enabled ? saved : { ...saved, dmi: { enabled: true, period: saved.adx.period ?? 14 } }
-        return { ...persisted, dmiSynced: true, indicatorConfig: { ...buildInitialState().indicatorConfig, ...migrated } }
+        // The separate DMI checkbox was merged into the DMI crossover row (one
+        // checkbox = the DMI panel with its crossovers). Carry an enabled DMI
+        // (or the old combined ADX panel) over to it, once.
+        const { dmi, ...rest } = saved
+        const wantsDmi = dmi?.enabled || (!persisted.dmiSynced && saved.adx?.enabled)
+        const migrated = persisted.dmiMerged || !wantsDmi ? rest : { ...rest, adxCrossover: { ...(rest.adxCrossover || {}), enabled: true, period: dmi?.period ?? saved.adx?.period ?? 14 } }
+        return { ...persisted, dmiSynced: true, dmiMerged: true, indicatorConfig: { ...buildInitialState().indicatorConfig, ...migrated } }
       })
     },
   })
