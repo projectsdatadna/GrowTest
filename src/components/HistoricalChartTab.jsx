@@ -169,6 +169,7 @@ const INDICATOR_ROWS = [
     ],
   },
   { key: 'adx', label: 'ADX', fields: [{ name: 'period', label: 'Period' }] },
+  { key: 'dmi', label: 'DMI (+DI/-DI)', fields: [{ name: 'period', label: 'Period' }] },
   { key: 'rsiDivergence', label: 'RSI Divergence', fields: [{ name: 'rsiPeriod', label: 'RSI' }, { name: 'lookback', label: 'Lookback' }] },
   {
     key: 'macdCrossover',
@@ -208,7 +209,11 @@ function buildIndicatorSpecs(indicatorConfig) {
     const { rsiPeriod, stochasticPeriod, kPeriod, dPeriod } = indicatorConfig.stochRsi
     specs.push(`STOCHRSI:${rsiPeriod}:${stochasticPeriod}:${kPeriod}:${dPeriod}`)
   }
-  if (indicatorConfig.adx.enabled) specs.push(`ADX:${indicatorConfig.adx.period}`)
+  // ADX and DMI panels both read the same ADX:<period> series (adx, +DI, -DI).
+  for (const key of ['adx', 'dmi']) {
+    const spec = `ADX:${indicatorConfig[key].period}`
+    if (indicatorConfig[key].enabled && !specs.includes(spec)) specs.push(spec)
+  }
   if (indicatorConfig.rsiDivergence.enabled) specs.push(`RSIDIV:${indicatorConfig.rsiDivergence.rsiPeriod}:${indicatorConfig.rsiDivergence.lookback}`)
   if (indicatorConfig.macdCrossover.enabled) {
     const { fastPeriod, slowPeriod, signalPeriod } = indicatorConfig.macdCrossover

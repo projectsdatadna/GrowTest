@@ -246,6 +246,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
     const showTsi = indicatorConfig.tsi.enabled
     const showStochRsi = indicatorConfig.stochRsi.enabled
     const showAdx = indicatorConfig.adx.enabled
+    const showDmi = indicatorConfig.dmi.enabled
 
     // SMA/EMA/Bollinger Bands overlay directly on the price panel below (same
     // price units as the candles) rather than getting their own row - only
@@ -253,7 +254,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
     // y-scale, so only they appear here. Order matters: this list's order is
     // the stacking order top-to-bottom below the price row, and its length
     // determines the y-axis each row gets (rows[0] -> 'y2', rows[1] -> 'y3', ...).
-    const indicatorRows = [showRsi && 'rsi', showMacd && 'macd', showTsi && 'tsi', showStochRsi && 'stochRsi', showAdx && 'adx'].filter(Boolean)
+    const indicatorRows = [showRsi && 'rsi', showMacd && 'macd', showTsi && 'tsi', showStochRsi && 'stochRsi', showAdx && 'adx', showDmi && 'dmi'].filter(Boolean)
 
     const { price: priceDomain, rows: rowDomains, plotHeightPx } = computeDomains(indicatorRows.length)
     const yAxisKeyFor = (rowName) => {
@@ -382,7 +383,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
 
     if (indicatorConfig.adxCrossover.enabled) {
       const events = indicatorSeries[`ADXCROSS:${indicatorConfig.adxCrossover.period}`] || []
-      pushCrossoverTraces(traces, events, { oscillatorYAxis: showAdx ? yAxisKeyFor('adx') : null, oscillatorField: 'pdi', legendPrefix: 'adxcross', showOnPricePanel: false })
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: showDmi ? yAxisKeyFor('dmi') : null, oscillatorField: 'pdi', legendPrefix: 'adxcross', showOnPricePanel: false })
     }
 
     // SMA/EMA crossovers overlay the price panel only (both lines are
@@ -504,13 +505,26 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
       const points = indicatorSeries[`ADX:${indicatorConfig.adx.period}`] || []
       const x = points.map((p) => toPlotlyDate(p.timestamp))
       traces.push({ type: 'scatter', mode: 'lines', name: 'ADX', x, y: points.map((p) => p.value?.adx), line: { color: COLOR_PRIMARY, width: 1.5 }, xaxis: 'x', yaxis })
+
+      layoutAxes.shapes = [...(layoutAxes.shapes || []), ...referenceLines(yaxis, [25])]
+    }
+
+    // DMI: the +DI/-DI directional lines on their own panel (the ADX strength
+    // line has its own panel above).
+    if (showDmi) {
+      const yaxis = yAxisKeyFor('dmi')
+      const axisKey = `yaxis${yaxis.slice(1)}`
+      const domain = rowDomains[indicatorRows.indexOf('dmi')]
+      layoutAxes[axisKey] = { domain, range: [0, 100], gridcolor: COLOR_GRID, color: COLOR_TEXT }
+      annotations.push(panelLabel('DMI', domain[1]))
+
+      const points = indicatorSeries[`ADX:${indicatorConfig.dmi.period}`] || []
+      const x = points.map((p) => toPlotlyDate(p.timestamp))
       // +DI/-DI reuse the app's bullish/bearish palette (same as
       // Support/Resistance) - +DI is upward directional strength, -DI is
       // downward, the same semantic pairing.
       traces.push({ type: 'scatter', mode: 'lines', name: '+DI', x, y: points.map((p) => p.value?.pdi), line: { color: COLOR_SUPPORT, width: 1 }, xaxis: 'x', yaxis })
       traces.push({ type: 'scatter', mode: 'lines', name: '-DI', x, y: points.map((p) => p.value?.mdi), line: { color: COLOR_RESISTANCE, width: 1 }, xaxis: 'x', yaxis })
-
-      layoutAxes.shapes = [...(layoutAxes.shapes || []), ...referenceLines(yaxis, [25])]
     }
 
     // Fullscreen wraps the plot in its own scrollable container (see
