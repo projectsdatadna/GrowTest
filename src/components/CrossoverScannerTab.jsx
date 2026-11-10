@@ -10,12 +10,13 @@
  * State is local: everything is server-owned (Firestore) and refetched.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getCrossoverScannerSymbols,
   addCrossoverScannerSymbol,
   removeCrossoverScannerSymbol,
   bulkAddCrossoverScannerSymbols,
+  saveCrossoverSymbolOrder,
   getCrossoverSettings,
   saveCrossoverSettings,
   getCrossoverStatus,
@@ -100,12 +101,18 @@ function CrossoverScannerTab({ onTabChange }) {
   const [runNotice, setRunNotice] = useState('')
 
   const [filter, setFilter] = useState('')
+  const [dirty, setDirty] = useState(false)
+  const [savingOrder, setSavingOrder] = useState(false)
+  const [dragId, setDragId] = useState(null)
+  const [overId, setOverId] = useState(null)
+  const dirtyRef = useRef(false)
   const [permission, setPermission] = useState(getNotificationPermission())
 
   const load = useCallback(async () => {
     // Independent: a failing status/settings read must not hide the symbol list.
     const [symbolsResult, statusResult, settingsResult] = await Promise.allSettled([getCrossoverScannerSymbols(), getCrossoverStatus(), getCrossoverSettings()])
-    if (symbolsResult.status === 'fulfilled') setSymbols(symbolsResult.value.symbols || [])
+    // Unsaved drag-and-drop order must survive the background poll.
+    if (symbolsResult.status === 'fulfilled' && !dirtyRef.current) setSymbols(symbolsResult.value.symbols || [])
     if (statusResult.status === 'fulfilled') setStatus(statusResult.value)
     if (settingsResult.status === 'fulfilled') setSettings(settingsResult.value.settings)
     const failed = [symbolsResult, statusResult, settingsResult].find((r) => r.status === 'rejected')
@@ -173,6 +180,48 @@ function CrossoverScannerTab({ onTabChange }) {
     } finally {
       setBulkBusy(false)
     }
+  }
+
+  const setDirtyFlag = (value) => {
+    dirtyRef.current = value
+    setDirty(value)
+  }
+
+  // Drop: move the dragged row to the target's position (same group only -
+  // indices are always pinned above stocks).
+  const handleDrop = (targetId) => {
+    const sourceId = dragId
+    setDragId(null)
+    setOverId(null)
+    if (!sourceId || sourceId === targetId) return
+    const from = symbols.findIndex((s) => s.id === sourceId)
+    const to = symbols.findIndex((s) => s.id === targetId)
+    if (from < 0 || to < 0 || Boolean(symbols[from].isIndex) !== Boolean(symbols[to].isIndex)) return
+    const next = [...symbols]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    setSymbols(next)
+    setDirtyFlag(true)
+  }
+
+  const handleSaveOrder = async () => {
+    setSavingOrder(true)
+    setError('')
+    try {
+      const result = await saveCrossoverSymbolOrder(symbols.map((s) => s.symbol))
+      setDirtyFlag(false)
+      setRunNotice(`Priority order saved for ${result.ordered} symbols - notifications, overview and export now follow it.`)
+      await load()
+    } catch (err) {
+      setError(errorMessage(err))
+    } finally {
+      setSavingOrder(false)
+    }
+  }
+
+  const handleDiscardOrder = async () => {
+    setDirtyFlag(false)
+    await load()
   }
 
   const handleRemove = async (id) => {
@@ -365,6 +414,23 @@ function CrossoverScannerTab({ onTabChange }) {
           aria-label="Filter symbols"
         />
 
+        {dirty && (
+          <div className="flex items-center gap-sm text-sm bg-surface-container-highest rounded-lg px-md py-xs">
+            <span className="text-on-surface">Order changed - not saved yet.</span>
+            <button type="button" onClick={handleSaveOrder} disabled={savingOrder} className="px-md py-xs rounded-lg bg-primary text-on-primary text-sm disabled:opacity-60">
+              {savingOrder ? 'Saving…' : 'Save order'}
+            </button>
+            <button type="button" onClick={handleDiscardOrder} disabled={savingOrder} className="px-md py-xs rounded-lg border border-outline-variant text-on-surface text-sm">
+              Discard
+            </button>
+          </div>
+        )}
+        {needle ? (
+          <p className="text-xs text-on-surface-variant">Clear the filter to drag symbols into priority order.</p>
+        ) : (
+          <p className="text-xs text-on-surface-variant">Drag the handle on the left to set priority order (indices stay above stocks). Notifications, overview and export follow this order.</p>
+        )}
+
         {loading ? (
           <Spinner />
         ) : (
@@ -372,6 +438,7 @@ function CrossoverScannerTab({ onTabChange }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs uppercase text-on-surface-variant">
+                  <th className="py-xs w-6" />
                   <th className="py-xs">Symbol</th>
                   {visibleTimeframes.map((interval) => (
                     <th key={interval} className="py-xs pr-md whitespace-nowrap">
@@ -383,7 +450,42 @@ function CrossoverScannerTab({ onTabChange }) {
               </thead>
               <tbody>
                 {shownSymbols.map((s) => (
-                  <tr key={s.id} className="border-t border-outline-variant">
+                  <tr
+                    key={s.id}
+                    onDragOver={(e) => {
+                      if (!dragId) return
+                      const source = symbols.find((x) => x.id === dragId)
+                      if (!source || Boolean(source.isIndex) !== Boolean(s.isIndex)) return
+                      e.preventDefault()
+                      if (overId !== s.id) setOverId(s.id)
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      handleDrop(s.id)
+                    }}
+                    className={`border-t ${overId === s.id && dragId && dragId !== s.id ? 'border-primary border-t-2' : 'border-outline-variant'} ${dragId === s.id ? 'opacity-40' : ''}`}
+                  >
+                    <td className="py-xs w-6">
+                      {!needle && (
+                        <span
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.effectAllowed = 'move'
+                            e.dataTransfer.setData('text/plain', s.id)
+                            setDragId(s.id)
+                          }}
+                          onDragEnd={() => {
+                            setDragId(null)
+                            setOverId(null)
+                          }}
+                          className="material-symbols-outlined text-[18px] text-on-surface-variant cursor-grab active:cursor-grabbing select-none"
+                          title="Drag to reorder"
+                          aria-label={`Drag ${s.symbol} to reorder`}
+                        >
+                          drag_indicator
+                        </span>
+                      )}
+                    </td>
                     <td className="py-xs font-medium text-on-surface whitespace-nowrap">
                       {s.symbol} <span className="text-xs text-on-surface-variant">{s.exchange}</span>
                     </td>
@@ -401,7 +503,7 @@ function CrossoverScannerTab({ onTabChange }) {
                 ))}
                 {shownSymbols.length === 0 && (
                   <tr>
-                    <td colSpan={visibleTimeframes.length + 2} className="py-md text-center text-on-surface-variant">
+                    <td colSpan={visibleTimeframes.length + 3} className="py-md text-center text-on-surface-variant">
                       {symbols.length === 0 ? 'No symbols yet - search above or paste a list to add some.' : 'No symbols match the filter.'}
                     </td>
                   </tr>

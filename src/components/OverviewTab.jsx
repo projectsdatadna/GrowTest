@@ -258,7 +258,7 @@ function OverviewTab() {
           ))}
         </select>
         <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={selectClass} aria-label="Sort">
-          <option value="list">Sort: list order (indices first)</option>
+          <option value="list">Sort: priority order (indices first)</option>
           <option value="symbol">Sort: symbol A–Z</option>
           <option value="agreement">Sort: most agreement</option>
           <option value="recent">Sort: most recent</option>

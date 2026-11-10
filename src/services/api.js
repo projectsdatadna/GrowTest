@@ -461,6 +461,18 @@ export const getCrossoverStatus = async () => {
   }
 }
 
+// Saves the table order as the display order everywhere (cards, overview,
+// export). `symbols` = symbol names in priority order.
+export const saveCrossoverSymbolOrder = async (symbols) => {
+  try {
+    const response = await apiClient.put('/crossover-scanner/symbols/order', { symbols })
+    return response.data
+  } catch (error) {
+    console.error('Error saving crossover scanner symbol order:', error)
+    throw error
+  }
+}
+
 // setOrder: true also makes the pasted order the display order (indices are
 // always pinned first).
 export const bulkAddCrossoverScannerSymbols = async (symbols, { setOrder = false } = {}) => {

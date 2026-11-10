@@ -41,6 +41,8 @@ import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestEx
 
 const SYMBOL_PATTERN = /^[A-Z0-9&-]{1,20}$/
 const MAX_BULK_SYMBOLS = 300
+// A saved priority order re-stamps every stored card, however old, so all views agree.
+const ORDER_GROUP_DAYS = 3650
 const MAX_MARK_READ_IDS = 1000
 const CURSOR_OVERLAP_MS = 15000
 const MAX_PAGE_SIZE = 100
@@ -188,7 +190,7 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       const unique = parseSymbolList(req.body?.symbols)
       if (unique.length === 0) return res.status(400).json({ error: 'No symbols provided', required: ['symbols'] })
       if (unique.length > MAX_BULK_SYMBOLS) return res.status(400).json({ error: `At most ${MAX_BULK_SYMBOLS} symbols per request` })
-      res.json({ status: 'SUCCESS', ...(await setSymbolOrder(unique)) })
+      res.json({ status: 'SUCCESS', ...(await setSymbolOrder(unique, { groupDays: ORDER_GROUP_DAYS })) })
     } catch (error) {
       console.error('Error saving crossover scanner symbol order:', error.message)
       res.status(500).json({ error: error.message })
