@@ -126,9 +126,10 @@ function downloadBlob(blob, filename) {
   URL.revokeObjectURL(url)
 }
 
-// Local-time day bounds as ISO strings for the API ('' stays '').
-const startOfDayIso = (value) => (value ? new Date(`${value}T00:00:00`).toISOString() : '')
-const endOfDayIso = (value) => (value ? new Date(`${value}T23:59:59.999`).toISOString() : '')
+// IST day bounds as ISO strings for the API ('' stays ''). The scanner's bars and
+// the export are IST, so the browser's time zone must not shift the window.
+const startOfDayIso = (value) => (value ? new Date(`${value}T00:00:00+05:30`).toISOString() : '')
+const endOfDayIso = (value) => (value ? new Date(`${value}T23:59:59.999+05:30`).toISOString() : '')
 
 // Checkbox dropdown for choosing any number of indicators (none = all).
 function IndicatorMultiSelect({ selected, onChange, className }) {
@@ -423,13 +424,19 @@ function NotificationsTab({ onTabChange }) {
   }
 
   const handleExport = async () => {
+    if (exporting) return
     setExporting(true)
     try {
-      const { blob, filename } = await exportNotificationsExcel({ from: fromDate ? startOfDayIso(fromDate) : undefined, to: toDate ? endOfDayIso(toDate) : undefined })
+      // Same filters the table is using right now.
+      const { blob, filename, cards, symbols } = await exportNotificationsExcel({ ...filtersRef.current })
       downloadBlob(blob, filename)
-      setNotice(`Exported ${fromDate || toDate ? `${fromDate || '…'} to ${toDate || 'now'}` : `the latest day with crossovers (${filename.replace(/^Notification List |\.xlsx$/g, '')})`} to ${filename}.`)
+      const what = Number.isFinite(cards) ? (cards === 0 ? 'No matching crossovers - the sheet is empty' : `${cards} card${cards === 1 ? '' : 's'} across ${symbols} symbol${symbols === 1 ? '' : 's'}`) : 'Done'
+      setNotice(`Exported ${filename} (${what}).${fromDate || toDate ? '' : ' No date filter: latest day with crossovers.'}`)
     } catch (err) {
-      setNotice(`Export failed: ${err?.response?.data?.error || err?.message || 'unknown error'}`)
+      let message = err?.response?.data?.error || err?.message || 'unknown error'
+      // Error bodies arrive as a Blob (responseType: 'blob').
+      if (err?.response?.data instanceof Blob) message = await err.response.data.text().then((t) => JSON.parse(t).error).catch(() => message)
+      setNotice(`Export failed: ${message}`)
     } finally {
       setExporting(false)
     }
@@ -490,7 +497,7 @@ function NotificationsTab({ onTabChange }) {
             type="button"
             onClick={handleExport}
             disabled={exporting}
-            title={fromDate || toDate ? 'Export the chosen date range' : 'Export the latest day with crossovers (pick From/To to change)'}
+            title={`Export what the table shows (current filters${fromDate || toDate ? ', chosen date range' : ': latest day with crossovers - pick From/To to change'})`}
             className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
           >
             {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}

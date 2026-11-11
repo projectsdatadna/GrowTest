@@ -8,6 +8,7 @@
   "main": "index.js",
   "scripts": {
     "serve": "firebase emulators:start --only functions",
+    "test": "node --test test/crossoverExport.test.js",
     "deploy": "firebase deploy --only functions:growtestApi"
   },
   "dependencies": {

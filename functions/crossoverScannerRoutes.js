@@ -49,6 +49,8 @@ const ORDER_GROUP_DAYS = 3650
 const MAX_MARK_READ_IDS = 1000
 const CURSOR_OVERLAP_MS = 15000
 const MAX_PAGE_SIZE = 100
+const MAX_EXPORT_RANGE_DAYS = 31
+const MAX_EXPORT_RANGE_MS = MAX_EXPORT_RANGE_DAYS * 24 * 3600 * 1000
 const NOTIFICATION_TYPES = ['crossover', 'candles', 'analysis', 'scanner_warning']
 // "Run now": each request scans for at most this long (the deployed API
 // function times out at 120s); the client repeats while work remains.
@@ -306,16 +308,24 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
   // without them, today (IST).
   app.get('/crossover-scanner/export.xlsx', async (req, res) => {
     try {
-      const range = parseDateRange(req.query)
-      if (range.error) return res.status(400).json({ error: range.error })
-      const { workbook, range: used } = await buildNotificationWorkbook(range)
+      const { filters, error } = parseNotificationFilters(req.query)
+      if (error) return res.status(400).json({ error })
+      if (filters.from && filters.to && Date.parse(filters.to) - Date.parse(filters.from) > MAX_EXPORT_RANGE_MS) {
+        return res.status(400).json({ error: `Date range too large - export at most ${MAX_EXPORT_RANGE_DAYS} days at a time` })
+      }
+      const { workbook, range: used, cardCount, symbolCount } = await buildNotificationWorkbook(filters)
       const buffer = await workbook.xlsx.writeBuffer()
-      // Default (no dates) = the latest day with crossovers; name the file after it.
-      const day = used.day || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date())
+      // Name the file after the exported IST day(s), not the download date.
+      const istDate = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(iso))
+      const fromDay = istDate(used.from)
+      const toDay = istDate(used.to)
+      const label = fromDay === toDay ? fromDay : `${fromDay} to ${toDay}`
       res.setHeader('X-Export-Range', `${used.from || ''}|${used.to || ''}${used.day ? `|${used.day}` : ''}`)
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Range')
+      res.setHeader('X-Export-Count', `${cardCount}|${symbolCount}`)
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Range, X-Export-Count')
+      res.setHeader('Cache-Control', 'no-store')
       res.setHeader('Content-Type', EXPORT_CONTENT_TYPE)
-      res.setHeader('Content-Disposition', `attachment; filename="Notification List ${day}.xlsx"`)
+      res.setHeader('Content-Disposition', `attachment; filename="Notification List ${label}.xlsx"`)
       res.send(Buffer.from(buffer))
     } catch (error) {
       console.error('Error exporting notifications:', error.message)

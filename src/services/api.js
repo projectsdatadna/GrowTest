@@ -498,14 +498,17 @@ export const runCrossoverScan = async ({ force = false } = {}) => {
   }
 }
 
-// Excel export (Notification List template). {from, to} = ISO bounds on the
-// crossover time; none = the latest day with crossovers. Resolves to {blob, filename}.
-export const exportNotificationsExcel = async ({ from, to } = {}) => {
+// Excel export (Notification List template). `filters` = the Notifications page
+// filters (type, unreadOnly, symbol, indicator, direction, adx, from, to), so the
+// file matches the table; no dates = the latest day with crossovers.
+// Resolves to {blob, filename, cards, symbols}.
+export const exportNotificationsExcel = async (filters = {}) => {
   try {
-    const response = await apiClient.get('/crossover-scanner/export.xlsx', { params: { from, to }, responseType: 'blob', timeout: 120000 })
+    const response = await apiClient.get('/crossover-scanner/export.xlsx', { params: filters, responseType: 'blob', timeout: 120000 })
+    const [cards, symbols] = String(response.headers?.['x-export-count'] || '').split('|').map(Number)
     const disposition = response.headers?.['content-disposition'] || ''
     const filename = /filename="([^"]+)"/.exec(disposition)?.[1] || 'Notification List.xlsx'
-    return { blob: response.data, filename }
+    return { blob: response.data, filename, cards, symbols }
   } catch (error) {
     console.error('Error exporting notifications:', error)
     throw error

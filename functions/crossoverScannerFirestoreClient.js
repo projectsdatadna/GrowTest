@@ -722,23 +722,19 @@ export async function countOldReadNotifications({ olderThanDays = 30, now = new 
 
 // ---------- Excel export ----------
 
-// Every crossover notification whose bar falls in the (displayed bar-end)
-// range, across all timeframes - the export's YES/NO matrix. One range query
-// per timeframe on the (interval, type, candleTimestamp) index.
-export async function listCrossoversForExport({ from, to }) {
-  const fromSec = from ? Math.floor(Date.parse(from) / 1000) : null
-  const toSec = to ? Math.floor(Date.parse(to) / 1000) : null
-  const perInterval = await Promise.all(
-    DEFAULT_ENABLED_INTERVALS.map(async (interval) => {
-      const { gte, lte } = candleStartRangeForEndRange(interval, fromSec, toSec)
-      let query = db.collection(NOTIFICATIONS_COLLECTION).where('interval', '==', interval).where('type', '==', 'crossover')
-      if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
-      if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
-      const snapshot = await query.get()
-      return snapshot.docs.map(serializeNotificationDoc)
-    })
-  )
-  return perInterval.flat()
+// Every crossover card the Notifications table would list under `filters`, all
+// pages, all timeframes. Uses the same groupQuery as the table so the export
+// and the page can never disagree.
+export async function listCrossoverGroupsForExport(filters = {}) {
+  const queries = []
+  for (const interval of DEFAULT_ENABLED_INTERVALS) {
+    for (const isIndex of [true, false]) {
+      const query = groupQuery(interval, isIndex, filters)
+      if (query) queries.push(query.get())
+    }
+  }
+  const snapshots = await Promise.all(queries)
+  return snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc))
 }
 
 // Newest crossover card: {interval, candleTimestamp} or null. Lets the export
@@ -748,29 +744,6 @@ export async function latestCrossoverGroup() {
   if (snapshot.empty) return null
   const { interval, candleTimestamp } = snapshot.docs[0].data()
   return { interval, candleTimestamp }
-}
-
-// Latest crossover card per symbol + timeframe in the range, for the export's
-// ADX Trend / price fallback (the scanner's per-symbol summary only fills in
-// after a live scan). Map key: `${exchange}_${symbol}_${interval}`.
-export async function listGroupAdxForExport({ from, to }) {
-  const fromSec = from ? Math.floor(Date.parse(from) / 1000) : null
-  const toSec = to ? Math.floor(Date.parse(to) / 1000) : null
-  const perInterval = await Promise.all(
-    DEFAULT_ENABLED_INTERVALS.map(async (interval) => {
-      const { gte, lte } = candleStartRangeForEndRange(interval, fromSec, toSec)
-      let query = db.collection(GROUPS_COLLECTION).where('interval', '==', interval)
-      if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
-      if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
-      return (await query.get()).docs.map((d) => d.data())
-    })
-  )
-  const latest = new Map()
-  for (const g of perInterval.flat()) {
-    const key = `${g.exchange}_${g.symbol}_${g.interval}`
-    if (!latest.has(key) || g.candleTimestamp > latest.get(key).candleTimestamp) latest.set(key, { adx: g.adx ?? null, closePrice: g.closePrice ?? null, candleTimestamp: g.candleTimestamp })
-  }
-  return latest
 }
 
 // For the one-off maintenance scripts in functions/scripts (migration/backfill).
