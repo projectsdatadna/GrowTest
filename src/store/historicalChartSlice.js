@@ -36,6 +36,9 @@ function buildInitialState() {
   }
 }
 
+// Every indicator off, default params - the Notifications hover chart starts from this.
+export const DEFAULT_INDICATOR_CONFIG = buildInitialState().indicatorConfig
+
 // Factory instead of one static slice - the Chart tab is mounted twice (see
 // App.jsx's 'chart'/'chart2' entries, both rendering HistoricalChartTab with
 // a different instanceKey - src/store/index.js creates one slice instance

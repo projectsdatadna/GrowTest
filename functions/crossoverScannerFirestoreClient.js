@@ -423,6 +423,12 @@ export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1
   return { items: snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc)), total, indexTotal }
 }
 
+// One merged card by id, or null.
+export async function getCrossoverGroup(id) {
+  const snapshot = await db.collection(GROUPS_COLLECTION).doc(id).get()
+  return snapshot.exists ? serializeGroupDoc(snapshot) : null
+}
+
 export async function markCrossoverGroupsRead(ids) {
   await commitInBatches(ids, (batch, id) => batch.update(db.collection(GROUPS_COLLECTION).doc(id), { read: true }))
   return ids.length

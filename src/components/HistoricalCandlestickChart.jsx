@@ -239,7 +239,15 @@ function pushCrossoverTraces(traces, events, { oscillatorYAxis, oscillatorField,
   }
 }
 
-function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig, isFullscreen = false }) {
+const NO_LINES = []
+
+// Optional extras (used by the hover chart on Notifications cards):
+//   compact            - no range slider / mode bar (small popover)
+//   highlightTimestamp - epoch seconds of a bar to mark with a vertical line
+//   overlayLines       - [{name, points, color}] extra price-panel lines (e.g. SMA 50 + 200)
+// indicatorConfig.rsiCrossover (optional {enabled, rsiPeriod, maPeriod}) adds the
+// RSI-vs-its-moving-average crossover markers and the RSI MA line on the RSI panel.
+function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig, isFullscreen = false, compact = false, highlightTimestamp = null, overlayLines = NO_LINES }) {
   const { data, layout } = useMemo(() => {
     const showRsi = indicatorConfig.rsi.enabled
     const showMacd = indicatorConfig.macd.enabled
@@ -393,6 +401,16 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
     // panel to mirror onto, so oscillatorYAxis is always null and
     // showOnPricePanel stays at its default true (the price panel is their
     // one respective panel, unlike the 4 oscillator crossovers above).
+    if (indicatorConfig.rsiCrossover?.enabled) {
+      const { rsiPeriod, maPeriod } = indicatorConfig.rsiCrossover
+      const events = indicatorSeries[`RSICROSS:${rsiPeriod}:${maPeriod}`] || []
+      pushCrossoverTraces(traces, events, { oscillatorYAxis: showRsi ? yAxisKeyFor('rsi') : null, oscillatorField: 'rsi', legendPrefix: 'rsicross', showOnPricePanel: false })
+    }
+
+    for (const line of overlayLines) {
+      traces.push({ type: 'scatter', mode: 'lines', name: line.name, ...seriesToXY(line.points), line: { color: line.color, width: 1.5 }, xaxis: 'x', yaxis: 'y' })
+    }
+
     if (indicatorConfig.smaCrossover.enabled) {
       const { fastPeriod, slowPeriod } = indicatorConfig.smaCrossover
       const events = indicatorSeries[`SMACROSS:${fastPeriod}:${slowPeriod}`] || []
@@ -436,6 +454,12 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
 
       const points = indicatorSeries[`RSI:${indicatorConfig.rsi.period}`] || []
       traces.push({ type: 'scatter', mode: 'lines', name: `RSI ${indicatorConfig.rsi.period}`, ...seriesToXY(points), line: { color: COLOR_PRIMARY, width: 1.5 }, xaxis: 'x', yaxis })
+
+      if (indicatorConfig.rsiCrossover?.enabled) {
+        const { rsiPeriod, maPeriod } = indicatorConfig.rsiCrossover
+        const maPoints = indicatorSeries[`RSIMA:${rsiPeriod}:${maPeriod}`] || []
+        traces.push({ type: 'scatter', mode: 'lines', name: `RSI MA ${maPeriod}`, ...seriesToXY(maPoints), line: { color: COLOR_SECONDARY, width: 1.2 }, xaxis: 'x', yaxis })
+      }
 
       layoutAxes.shapes = [...(layoutAxes.shapes || []), ...referenceLines(yaxis, [30, 70])]
     }
@@ -535,6 +559,15 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
     // fills the available viewport instead of leaving a band of empty
     // background below it. FULLSCREEN_CHROME_PX approximates the fullscreen
     // toolbar row + surrounding padding that sits above the plot.
+    if (highlightTimestamp != null) {
+      const at = toPlotlyDate(highlightTimestamp)
+      layoutAxes.shapes = [
+        ...(layoutAxes.shapes || []),
+        { type: 'line', xref: 'x', yref: 'paper', x0: at, x1: at, y0: 0, y1: 1, line: { color: '#f5c542', width: 1, dash: 'dot' } },
+      ]
+    }
+    if (compact) layoutAxes.xaxis = { ...layoutAxes.xaxis, rangeslider: { visible: false } }
+
     const FULLSCREEN_CHROME_PX = 100
     const plotHeight = isFullscreen ? Math.max(plotHeightPx + CHROME_PX, window.innerHeight - FULLSCREEN_CHROME_PX) : plotHeightPx + CHROME_PX
 
@@ -553,7 +586,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
         font: { color: COLOR_TEXT },
       },
     }
-  }, [candles, indicatorSeries, indicatorConfig, isFullscreen])
+  }, [candles, indicatorSeries, indicatorConfig, isFullscreen, compact, highlightTimestamp, overlayLines])
 
   // No inline height here - layout.height above drives the actual size (it
   // grows as more indicator panels are enabled), autosize + useResizeHandler
@@ -564,7 +597,7 @@ function HistoricalCandlestickChart({ candles, indicatorSeries, indicatorConfig,
       layout={layout}
       style={{ width: '100%' }}
       useResizeHandler
-      config={{ displaylogo: false, displayModeBar: true, modeBarButtonsToRemove: MODE_BAR_BUTTONS_TO_REMOVE }}
+      config={{ displaylogo: false, displayModeBar: !compact, modeBarButtonsToRemove: MODE_BAR_BUTTONS_TO_REMOVE }}
     />
   )
 }

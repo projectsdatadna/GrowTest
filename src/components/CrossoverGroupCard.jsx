@@ -8,6 +8,7 @@
  */
 
 import { DirectionBadge } from './NotificationContent'
+import { CardChartButton } from './CardChartHover'
 import { formatCrossoverTime, formatLines, timeframeLabel } from './crossoverFormat'
 
 // Crossover indicators the scanner runs (CROSSOVER_SPECS) - the star scale.
@@ -48,11 +49,11 @@ export function AdxColumn({ adx }) {
   )
 }
 
-export default function CrossoverGroupCard({ group, isRead, onOpen }) {
+export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover }) {
   return (
     <div
       onClick={() => !isRead && onOpen(group)}
-      className={`px-sm py-xs rounded-lg text-sm flex flex-col md:flex-row gap-sm ${isRead ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
+      className={`px-sm py-xs rounded-lg text-sm flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-sm ${isRead ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
     >
       <div className="flex-1 min-w-0 flex flex-col gap-[2px]">
         <div className="flex items-center justify-between gap-sm flex-wrap">
@@ -78,7 +79,11 @@ export default function CrossoverGroupCard({ group, isRead, onOpen }) {
         </ul>
         <div className="text-xs text-on-surface-variant">Close ₹{group.closePrice}</div>
       </div>
-      <AdxColumn adx={group.adx} />
+      {/* middle column = the centre of the card */}
+      <div className="flex items-center justify-center">{chartHover && <CardChartButton group={group} hover={chartHover} />}</div>
+      <div className="md:justify-self-end">
+        <AdxColumn adx={group.adx} />
+      </div>
     </div>
   )
 }

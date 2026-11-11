@@ -36,6 +36,12 @@ export function windowDocId(exchange, symbol, interval) {
   return `${exchange}_${symbol}_${interval}`
 }
 
+// The stored window for one symbol + timeframe (ascending bars), or [] when none.
+export async function readCandleWindow({ exchange, symbol, interval }) {
+  const snapshot = await db.collection(WINDOWS_COLLECTION).doc(windowDocId(exchange, symbol, interval)).get()
+  return snapshot.exists ? decodeWindow(snapshot.data()) : []
+}
+
 export function encodeWindow(candles) {
   return {
     t: candles.map((c) => c.timestamp),

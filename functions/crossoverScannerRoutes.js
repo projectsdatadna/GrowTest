@@ -28,6 +28,7 @@ import {
   markNotificationsRead,
   listOverview,
   setSymbolOrder,
+  getCrossoverGroup,
   queryCrossoverGroupsPage,
   markCrossoverGroupsRead,
   markAllNotificationsAndGroupsRead,
@@ -35,6 +36,8 @@ import {
   releaseManualRunLease,
 } from './crossoverScannerFirestoreClient.js'
 import { buildNotificationWorkbook } from './crossoverExport.js'
+import { buildCrossoverChart } from './crossoverChartData.js'
+import { readCandleWindow } from './crossoverCandleWindow.js'
 import { runDispatch, isIntervalDue } from './crossoverScanner.js'
 import { searchInstruments } from './instrumentMasterSync.js'
 import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestExpectedBarEnd } from './crossoverTimeframes.js'
@@ -395,6 +398,30 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, groups: items })
     } catch (error) {
       console.error('Error listing notification groups:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Hover chart of one card: the scanner's stored candles around the crossover
+  // bar plus the series for the card's indicators (see crossoverChartData.js).
+  app.get('/notifications/groups/:id/chart', async (req, res) => {
+    try {
+      const group = await getCrossoverGroup(req.params.id)
+      if (!group) return res.status(404).json({ error: 'Crossover card not found' })
+      const candles = await readCandleWindow({ exchange: group.exchange, symbol: group.symbol, interval: group.interval })
+      if (candles.length === 0) return res.status(404).json({ error: 'No stored candles for this symbol yet' })
+      const specs = (group.indicators || []).map((i) => i.spec).filter(Boolean)
+      const chart = buildCrossoverChart({ candles, interval: group.interval, crossoverTimestamp: group.candleTimestamp, specs })
+      if (chart.error) return res.status(404).json({ error: chart.error })
+      res.set('Cache-Control', 'private, max-age=60')
+      res.json({
+        status: 'SUCCESS',
+        group: { id: group.id, symbol: group.symbol, exchange: group.exchange, interval: group.interval, candleTimestamp: group.candleTimestamp, closePrice: group.closePrice },
+        specs,
+        ...chart,
+      })
+    } catch (error) {
+      console.error('Error building card chart:', error.message)
       res.status(500).json({ error: error.message })
     }
   })

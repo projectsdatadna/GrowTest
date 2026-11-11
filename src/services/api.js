@@ -512,6 +512,18 @@ export const exportNotificationsExcel = async ({ from, to } = {}) => {
   }
 }
 
+// Hover chart of one crossover card: stored candles around the crossover bar
+// plus the series for its indicators.
+export const getCrossoverGroupChart = async (groupId) => {
+  try {
+    const response = await apiClient.get(`/notifications/groups/${encodeURIComponent(groupId)}/chart`)
+    return response.data
+  } catch (error) {
+    console.error('Error fetching card chart:', error)
+    throw error
+  }
+}
+
 // Numbered page of one timeframe's crossover groups (one card per symbol + bar,
 // indices first) under the Notifications page filters. Returns {groups, total, indexTotal}.
 export const getNotificationGroups = async (section, filters = {}, page = 1, pageSize = 25) => {

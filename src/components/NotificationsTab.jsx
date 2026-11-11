@@ -37,6 +37,7 @@ import { NotificationBody, notificationTitle, notificationType } from './Notific
 import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTime, timeAgo } from './crossoverFormat'
 import Spinner from './Spinner'
 import CrossoverGroupCard from './CrossoverGroupCard'
+import { useCardChartHover } from './CardChartHover'
 import RunScanButton from './RunScanButton'
 
 // Crossover indicators, matching the labels the scanner stores in
@@ -303,6 +304,7 @@ function NotificationsTab({ onTabChange }) {
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
+  const chartHover = useCardChartHover()
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
   const [pages, setPages] = useState({}) // section -> current page (default 1)
@@ -474,6 +476,7 @@ function NotificationsTab({ onTabChange }) {
 
   return (
     <div className="flex flex-col gap-lg">
+      {chartHover.popover}
       <div className="flex items-center justify-between gap-md flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Notifications</h2>
@@ -619,7 +622,7 @@ function NotificationsTab({ onTabChange }) {
                       return (
                         <li key={g.id}>
                           {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                          <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} />
+                          <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} />
                         </li>
                       )
                     })}
