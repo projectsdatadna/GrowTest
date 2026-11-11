@@ -722,18 +722,13 @@ export async function countOldReadNotifications({ olderThanDays = 30, now = new 
 
 // ---------- Excel export ----------
 
-// Every crossover card the Notifications table would list under `filters`, all
-// pages, all timeframes. Uses the same groupQuery as the table so the export
-// and the page can never disagree.
-export async function listCrossoverGroupsForExport(filters = {}) {
-  const queries = []
-  for (const interval of DEFAULT_ENABLED_INTERVALS) {
-    for (const isIndex of [true, false]) {
-      const query = groupQuery(interval, isIndex, filters)
-      if (query) queries.push(query.get())
-    }
-  }
-  const snapshots = await Promise.all(queries)
+// Every crossover card the Notifications table lists under `filters` for one
+// timeframe, all pages (same groupQuery as the table), in table order: index
+// cards first, then newest bar, then list order. Capped at `limit` per query.
+export async function listCrossoverGroupsForExport(section, filters = {}, { limit = 50000 } = {}) {
+  const queries = [true, false].map((isIndex) => groupQuery(section, isIndex, filters))
+  if (queries.some((q) => !q)) return []
+  const snapshots = await Promise.all(queries.map((q) => q.limit(limit).get()))
   return snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc))
 }
 

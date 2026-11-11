@@ -497,7 +497,7 @@ function NotificationsTab({ onTabChange }) {
             type="button"
             onClick={handleExport}
             disabled={exporting}
-            title={`Export what the table shows (current filters${fromDate || toDate ? ', chosen date range' : ': latest day with crossovers - pick From/To to change'})`}
+            title={`Export the table's cards on one sheet (current filters${fromDate || toDate ? ', chosen date range' : ': latest day with crossovers - pick From/To to change'})`}
             className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
           >
             {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}

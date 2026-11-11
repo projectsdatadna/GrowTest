@@ -38,7 +38,7 @@ import {
 import { buildNotificationWorkbook } from './crossoverExport.js'
 import { buildCrossoverChart } from './crossoverChartData.js'
 import { readCandleWindow } from './crossoverCandleWindow.js'
-import { runDispatch, isIntervalDue } from './crossoverScanner.js'
+import { runDispatch, isIntervalDue, CROSSOVER_SPECS } from './crossoverScanner.js'
 import { searchInstruments } from './instrumentMasterSync.js'
 import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestExpectedBarEnd } from './crossoverTimeframes.js'
 
@@ -49,8 +49,6 @@ const ORDER_GROUP_DAYS = 3650
 const MAX_MARK_READ_IDS = 1000
 const CURSOR_OVERLAP_MS = 15000
 const MAX_PAGE_SIZE = 100
-const MAX_EXPORT_RANGE_DAYS = 31
-const MAX_EXPORT_RANGE_MS = MAX_EXPORT_RANGE_DAYS * 24 * 3600 * 1000
 const NOTIFICATION_TYPES = ['crossover', 'candles', 'analysis', 'scanner_warning']
 // "Run now": each request scans for at most this long (the deployed API
 // function times out at 120s); the client repeats while work remains.
@@ -303,26 +301,21 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
-  // Excel export in the "Notification List" template layout (see
-  // crossoverExport.js). Optional ISO from/to on the displayed crossover time;
-  // without them, today (IST).
+  // Excel export (one sheet) of the Notifications tab's cards under the page's
+  // filters (see crossoverExport.js); no dates = the latest day with crossovers.
   app.get('/crossover-scanner/export.xlsx', async (req, res) => {
     try {
       const { filters, error } = parseNotificationFilters(req.query)
       if (error) return res.status(400).json({ error })
-      if (filters.from && filters.to && Date.parse(filters.to) - Date.parse(filters.from) > MAX_EXPORT_RANGE_MS) {
-        return res.status(400).json({ error: `Date range too large - export at most ${MAX_EXPORT_RANGE_DAYS} days at a time` })
-      }
-      const { workbook, range: used, cardCount, symbolCount } = await buildNotificationWorkbook(filters)
+      const { workbook, range, cardCount, symbolCount } = await buildNotificationWorkbook(filters)
       const buffer = await workbook.xlsx.writeBuffer()
-      // Name the file after the exported IST day(s), not the download date.
+      // Name the file after the exported IST day(s).
       const istDate = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(iso))
-      const fromDay = istDate(used.from)
-      const toDay = istDate(used.to)
+      const fromDay = istDate(range.from)
+      const toDay = istDate(range.to)
       const label = fromDay === toDay ? fromDay : `${fromDay} to ${toDay}`
-      res.setHeader('X-Export-Range', `${used.from || ''}|${used.to || ''}${used.day ? `|${used.day}` : ''}`)
       res.setHeader('X-Export-Count', `${cardCount}|${symbolCount}`)
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Range, X-Export-Count')
+      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Count')
       res.setHeader('Cache-Control', 'no-store')
       res.setHeader('Content-Type', EXPORT_CONTENT_TYPE)
       res.setHeader('Content-Disposition', `attachment; filename="Notification List ${label}.xlsx"`)
@@ -420,7 +413,10 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       if (!group) return res.status(404).json({ error: 'Crossover card not found' })
       const candles = await readCandleWindow({ exchange: group.exchange, symbol: group.symbol, interval: group.interval })
       if (candles.length === 0) return res.status(404).json({ error: 'No stored candles for this symbol yet' })
-      const specs = (group.indicators || []).map((i) => i.spec).filter(Boolean)
+      // Every crossover indicator is computed so the popover can toggle any of them;
+      // `crossedSpecs` = the ones that crossed on this card.
+      const crossedSpecs = (group.indicators || []).map((i) => i.spec).filter(Boolean)
+      const specs = CROSSOVER_SPECS.map((d) => d.spec)
       const chart = buildCrossoverChart({ candles, interval: group.interval, crossoverTimestamp: group.candleTimestamp, specs })
       if (chart.error) return res.status(404).json({ error: chart.error })
       res.set('Cache-Control', 'private, max-age=60')
@@ -428,6 +424,7 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
         status: 'SUCCESS',
         group: { id: group.id, symbol: group.symbol, exchange: group.exchange, interval: group.interval, candleTimestamp: group.candleTimestamp, closePrice: group.closePrice },
         specs,
+        crossedSpecs,
         ...chart,
       })
     } catch (error) {
