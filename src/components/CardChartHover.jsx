@@ -32,6 +32,7 @@ function placement(rect) {
 
 export function useCardChartHover() {
   const [active, setActive] = useState(null) // {group, rect}
+  const popoverRef = useRef(null)
   const openTimer = useRef(null)
   const closeTimer = useRef(null)
   const activeRef = useRef(null)
@@ -71,10 +72,16 @@ export function useCardChartHover() {
     if (!active) return undefined
     const onKey = (event) => event.key === 'Escape' && close()
     window.addEventListener('keydown', onKey)
-    window.addEventListener('scroll', close, true)
+    // Page scrolling closes the chart; the popover's own scrolling (it is taller
+    // than the viewport when several indicators crossed) must not.
+    const onScroll = (event) => {
+      if (popoverRef.current?.contains(event.target)) return
+      close()
+    }
+    window.addEventListener('scroll', onScroll, true)
     return () => {
       window.removeEventListener('keydown', onKey)
-      window.removeEventListener('scroll', close, true)
+      window.removeEventListener('scroll', onScroll, true)
     }
   }, [active, close])
   useEffect(() => clearTimers, [])
@@ -82,11 +89,12 @@ export function useCardChartHover() {
   const popover = active
     ? createPortal(
         <div
+          ref={popoverRef}
           role="dialog"
           aria-label={`${active.group.symbol} chart`}
           onMouseEnter={keepOpen}
           onMouseLeave={scheduleClose}
-          style={{ position: 'fixed', zIndex: 60, overflowY: 'auto', ...placement(active.rect) }}
+          style={{ position: 'fixed', zIndex: 60, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin', ...placement(active.rect) }}
           className="rounded-xl border border-outline-variant bg-surface-container shadow-2xl p-sm"
         >
           <Suspense fallback={<div className="text-xs text-on-surface-variant py-md">Loading chart…</div>}>
