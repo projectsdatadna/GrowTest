@@ -57,7 +57,7 @@ import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.
 import { registerCrossoverScannerRoutes } from './crossoverScannerRoutes.js'
 import { runDispatch, recordScannerTokenFailure } from './crossoverScanner.js'
 import { deleteOldReadNotifications } from './crossoverScannerFirestoreClient.js'
-import { isDispatchWindow } from './crossoverTimeframes.js'
+import { isCloseoutTick, isQuarterHourTick } from './crossoverTimeframes.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
 const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
@@ -1313,38 +1313,63 @@ export const instrumentMasterSync = onSchedule(
 )
 
 /**
- * Crossover Scanner dispatcher - the one automatic trigger for every
- * timeframe (15 min, 1 hour, 4 hour, Daily, Weekly). Ticks every 15 minutes,
- * a couple of minutes after each quarter-hour so Groww has published the bar
- * that just closed, 09:30-18:30 IST on weekdays. Each tick scans only what is
- * due (a symbol/timeframe whose latest expected bar close is newer than the
- * last one it processed - see isIntervalDue in crossoverScanner.js), so most
- * ticks do little: 15-minute bars every tick, 1-hour on the hour, 4-hour at
- * 12:00 and 15:30, Daily/Weekly after the 15:30 close (retried until
- * published, hence the 18:30 tail). A symbol with no scan state is simply
- * due, so newly added symbols are picked up automatically.
+ * Crossover Scanner dispatcher - the automatic trigger for every timeframe
+ * (15 min, 1 hour, 4 hour, Daily, Weekly), weekdays IST:
+ *   - crossoverScanDispatch: every 15 minutes from 09:15 to 15:15
+ *     (09:15, 09:30 ... 15:15 - 25 ticks);
+ *   - crossoverScanCloseout: 15:32 (everything that closed at the 15:30 bell)
+ *     and 16:32 / 17:32 / 18:32, which retry Daily/Weekly bars Groww publishes late.
+ * Each run scans only what is due (a symbol/timeframe whose latest expected bar
+ * close is newer than the last one it processed - isIntervalDue in
+ * crossoverScanner.js), so most runs do little: 15-minute bars every tick,
+ * 1-hour on the hour, 4-hour (Groww's two bars, closing 12:00 and 15:30) at
+ * 12:00 and 15:32, Daily/Weekly after the 15:30 close. A symbol with no scan
+ * state is simply due, so newly added symbols are picked up automatically.
+ *
+ * A tick fires right at the bar close, when Groww may not have published the
+ * bar yet, so after a pass that reports not-published bars the run waits and
+ * re-runs (settle passes) instead of leaving them for the next tick.
  *
  * Pure rule-based - no Azure secrets needed. NSE holidays just produce ticks
- * with no new bars. Replaces the earlier crossoverScanHourly/crossoverScanClose.
+ * with no new bars.
  */
-export const crossoverScanDispatch = onSchedule(
-  { schedule: '2,17,32,47 9-18 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
-  async () => {
-    const now = new Date()
-    if (!isDispatchWindow(now)) return
+const SETTLE_WAIT_MS = 90 * 1000
+const SETTLE_PASSES = 2
 
-    let groww_token
-    try {
-      groww_token = await getGrowwAccessToken()
-    } catch (error) {
-      console.error('crossoverScanDispatch: failed to obtain Groww access token:', error.message)
-      await recordScannerTokenFailure(error, now)
-      return
-    }
+async function runScheduledScan(label, gate) {
+  const now = new Date()
+  if (!gate(now)) return
 
-    const result = await runDispatch({ groww_token, now })
-    console.log('crossoverScanDispatch result:', JSON.stringify(result))
+  let groww_token
+  try {
+    groww_token = await getGrowwAccessToken()
+  } catch (error) {
+    console.error(`${label}: failed to obtain Groww access token:`, error.message)
+    await recordScannerTokenFailure(error, now)
+    return
   }
+
+  const startedAt = Date.now()
+  let result = await runDispatch({ groww_token, now })
+  console.log(`${label} result:`, JSON.stringify(result))
+  for (let pass = 1; pass <= SETTLE_PASSES && result.notPublished > 0; pass++) {
+    // Stay inside the 900 s function timeout: wait, then give the pass what is left of ~840 s.
+    const remaining = 840000 - (Date.now() - startedAt) - SETTLE_WAIT_MS
+    if (remaining < 60000) break
+    await new Promise((resolve) => setTimeout(resolve, SETTLE_WAIT_MS))
+    result = await runDispatch({ groww_token, now: new Date(), budgetMs: remaining })
+    console.log(`${label} settle pass ${pass} result:`, JSON.stringify(result))
+  }
+}
+
+export const crossoverScanDispatch = onSchedule(
+  { schedule: '0,15,30,45 9-15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
+  () => runScheduledScan('crossoverScanDispatch', isQuarterHourTick)
+)
+
+export const crossoverScanCloseout = onSchedule(
+  { schedule: '32 15-18 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
+  () => runScheduledScan('crossoverScanCloseout', isCloseoutTick)
 )
 
 /**

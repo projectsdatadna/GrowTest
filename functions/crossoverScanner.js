@@ -5,8 +5,9 @@
  * crossover on a newly closed bar. Crossovers of one symbol on the same bar
  * are also merged into one crossover group (the Notifications page's cards),
  * and every scan records the ADX trend (adxTrendIndicator.js) as context.
- * Driven by one scheduled dispatcher (crossoverScanDispatch in
- * functions/index.js) that ticks every 15 minutes and scans only what is due;
+ * Driven by scheduled dispatchers (crossoverScanDispatch every 15 minutes from
+ * 09:15 to 15:15, crossoverScanCloseout at 15:32 + hourly retries, both in
+ * functions/index.js) that scan only what is due;
  * the UI's "Run now" button calls the same dispatcher on demand.
  *
  * Rule-based only - no AI call, so no token cost.

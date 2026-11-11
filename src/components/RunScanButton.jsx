@@ -1,6 +1,6 @@
 /**
  * "Run now" - runs the crossover scanner immediately instead of waiting for
- * the scheduled tick (every 15 minutes in market hours). Each request is a
+ * the scheduled tick (every 15 minutes, 09:15-15:15). Each request is a
  * bounded pass (the deployed API times out at 120s); while the server reports
  * `remaining` work and the last pass made progress, it runs another pass.
  */

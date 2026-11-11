@@ -1,8 +1,9 @@
 /**
  * Crossover Scanner page - the ONE stock list, the automatic-scan status and
  * the timeframe settings. The scanner runs by itself (a scheduled dispatcher
- * in functions/index.js ticks every 15 minutes and scans whatever bar has
- * just closed on each enabled timeframe). "Run now" scans immediately, for
+ * in functions/index.js ticks every 15 minutes from 09:15 to 15:15, plus a
+ * close-out run at 15:32, and scans whatever bar has closed on each enabled
+ * timeframe). "Run now" scans immediately, for
  * testing without waiting for the next tick. Alerts are read on the
  * Notifications page rather than listed twice. The stock list is shown in its
  * display order (indices first, then the order set by a pasted list with "Use

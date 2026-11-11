@@ -162,15 +162,39 @@ export function latestExpectedBarEnd(interval, nowSeconds) {
   return null
 }
 
-/**
- * Whether the dispatcher should do anything at `now`: a trading weekday from
- * 09:30 to 18:30 IST. The tail until 18:30 exists so Daily/Weekly bars that
- * Groww publishes late after the 15:30 close are still retried.
- */
-export function isDispatchWindow(now = new Date()) {
+// Minutes after IST midnight for the weekday `now` falls on, or null on a weekend.
+function istWeekdayMinutes(now) {
   const ts = Math.floor(now.getTime() / 1000)
   const weekday = istWeekday(ts)
-  if (weekday < 1 || weekday > 5) return false
-  const offset = ts - istDayStart(ts)
-  return offset >= 9 * 3600 + 30 * 60 && offset <= 18 * 3600 + 30 * 60
+  if (weekday < 1 || weekday > 5) return null
+  return Math.floor((ts - istDayStart(ts)) / 60)
+}
+
+// Cloud Scheduler can fire a minute or two late; accept that much slack.
+const TICK_SLACK_MINUTES = 2
+
+/**
+ * The 15-minute scan ticks: weekdays 09:15, 09:30 ... 15:15 (25 ticks), at the
+ * :00/:15/:30/:45 marks the scheduler fires on. Whatever bar closed by then and
+ * is not scanned yet gets scanned (a bar Groww has not published yet is retried
+ * by the settle pass, see runScheduledScan in functions/index.js).
+ */
+export function isQuarterHourTick(now = new Date()) {
+  const minutes = istWeekdayMinutes(now)
+  if (minutes == null) return false
+  const quarter = minutes - (minutes % 15)
+  return minutes - quarter <= TICK_SLACK_MINUTES && quarter >= 9 * 60 + 15 && quarter <= 15 * 60 + 15
+}
+
+/**
+ * The close-out ticks: weekdays 15:32 (everything that closed at 15:30 - last
+ * 15-min bar, 1h, 4h, Daily, Weekly on Fridays) and 16:32 / 17:32 / 18:32,
+ * which retry Daily/Weekly bars that Groww publishes late.
+ */
+export function isCloseoutTick(now = new Date()) {
+  const minutes = istWeekdayMinutes(now)
+  if (minutes == null) return false
+  const hour = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  return hour >= 15 && hour <= 18 && minute >= 32 && minute <= 32 + TICK_SLACK_MINUTES
 }
