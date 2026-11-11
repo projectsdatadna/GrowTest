@@ -547,9 +547,42 @@ export async function queryNotificationsPage(section, filters = {}, { page = 1, 
 // loading their items. bullish/bearish ignore the direction filter (the cards
 // always show both sides) but honour every other filter; the System section has
 // no direction so both are 0.
+// The ADX status lives on the merged cards (crossoverGroups), not on the
+// per-indicator notifications, so with that filter a timeframe section is
+// counted in cards (index + stock cards) to match the list underneath it.
+async function countGroupsForSection(section, filters) {
+  const sum = async (extra) => {
+    const queries = [true, false].map((isIndex) => groupQuery(section, isIndex, { ...filters, ...extra }))
+    if (queries.some((q) => !q)) return 0
+    const counts = await Promise.all(queries.map(async (q) => (await q.count().get()).data().count))
+    return counts[0] + counts[1]
+  }
+  const newest = async () => {
+    const queries = [true, false].map((isIndex) => groupQuery(section, isIndex, filters))
+    if (queries.some((q) => !q)) return null
+    const snaps = await Promise.all(queries.map((q) => q.limit(1).get()))
+    const stamps = snaps.flatMap((snap) => snap.docs.map((d) => d.data().candleTimestamp)).filter((t) => t != null)
+    return stamps.length ? Math.max(...stamps) : null
+  }
+  const [total, unread, bullish, bearish, unreadBullish, unreadBearish, lastCrossover] = await Promise.all([
+    sum({}),
+    sum({ unreadOnly: true }),
+    sum({ direction: 'bullish' }),
+    sum({ direction: 'bearish' }),
+    sum({ direction: 'bullish', unreadOnly: true }),
+    sum({ direction: 'bearish', unreadOnly: true }),
+    newest(),
+  ])
+  return { total, unread, bullish, bearish, unreadBullish, unreadBearish, lastCrossover }
+}
+
 export async function countNotificationsBySection(filters = {}) {
   const entries = await Promise.all(
     SECTION_KEYS.map(async (section) => {
+      if (filters.adx) {
+        if (section === SYSTEM_SECTION || (filters.type && filters.type !== 'crossover')) return [section, { total: 0, unread: 0, bullish: 0, bearish: 0, unreadBullish: 0, unreadBearish: 0, lastCrossover: null }]
+        return [section, await countGroupsForSection(section, filters)]
+      }
       const all = sectionQuery(section, filters)
       const unread = sectionQuery(section, { ...filters, unreadOnly: true })
       if (!all || !unread) return [section, { total: 0, unread: 0, bullish: 0, bearish: 0, unreadBullish: 0, unreadBearish: 0, lastCrossover: null }]
