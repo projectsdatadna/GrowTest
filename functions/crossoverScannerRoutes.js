@@ -301,19 +301,17 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
-  // Excel export (one sheet) of the Notifications tab's cards under the page's
-  // filters (see crossoverExport.js); no dates = the latest day with crossovers.
+  // Excel export (Notification List template): each symbol's LATEST crossover per
+  // timeframe, one row per symbol, under the page's filters (see crossoverExport.js).
   app.get('/crossover-scanner/export.xlsx', async (req, res) => {
     try {
       const { filters, error } = parseNotificationFilters(req.query)
       if (error) return res.status(400).json({ error })
       const { workbook, range, cardCount, symbolCount } = await buildNotificationWorkbook(filters)
       const buffer = await workbook.xlsx.writeBuffer()
-      // Name the file after the exported IST day(s).
-      const istDate = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date(iso))
-      const fromDay = istDate(range.from)
-      const toDay = istDate(range.to)
-      const label = fromDay === toDay ? fromDay : `${fromDay} to ${toDay}`
+      // Name the file after the export day, or the chosen From/To range.
+      const istDate = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date)
+      const label = range.from || range.to ? `${range.from ? istDate(new Date(range.from)) : 'start'} to ${range.to ? istDate(new Date(range.to)) : 'now'}` : istDate(new Date())
       res.setHeader('X-Export-Count', `${cardCount}|${symbolCount}`)
       res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, X-Export-Count')
       res.setHeader('Cache-Control', 'no-store')

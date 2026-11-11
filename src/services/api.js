@@ -500,7 +500,7 @@ export const runCrossoverScan = async ({ force = false } = {}) => {
 
 // Excel export (Notification List template). `filters` = the Notifications page
 // filters (type, unreadOnly, symbol, indicator, direction, adx, from, to), so the
-// file matches the table; no dates = the latest day with crossovers.
+// file matches the table; no dates = the latest crossover whatever the day.
 // Resolves to {blob, filename, cards, symbols}.
 export const exportNotificationsExcel = async (filters = {}) => {
   try {

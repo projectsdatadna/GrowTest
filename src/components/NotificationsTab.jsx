@@ -430,8 +430,8 @@ function NotificationsTab({ onTabChange }) {
       // Same filters the table is using right now.
       const { blob, filename, cards, symbols } = await exportNotificationsExcel({ ...filtersRef.current })
       downloadBlob(blob, filename)
-      const what = Number.isFinite(cards) ? (cards === 0 ? 'No matching crossovers - the sheet is empty' : `${cards} card${cards === 1 ? '' : 's'} across ${symbols} symbol${symbols === 1 ? '' : 's'}`) : 'Done'
-      setNotice(`Exported ${filename} (${what}).${fromDate || toDate ? '' : ' No date filter: latest day with crossovers.'}`)
+      const what = Number.isFinite(cards) ? (cards === 0 ? 'No matching crossovers - the sheet is empty' : `${symbols} symbol${symbols === 1 ? '' : 's'} with a crossover, ${cards} latest crossover${cards === 1 ? '' : 's'} across timeframes`) : 'Done'
+      setNotice(`Exported ${filename} (${what}).`)
     } catch (err) {
       let message = err?.response?.data?.error || err?.message || 'unknown error'
       // Error bodies arrive as a Blob (responseType: 'blob').
@@ -497,7 +497,7 @@ function NotificationsTab({ onTabChange }) {
             type="button"
             onClick={handleExport}
             disabled={exporting}
-            title={`Export the table's cards on one sheet (current filters${fromDate || toDate ? ', chosen date range' : ': latest day with crossovers - pick From/To to change'})`}
+            title={`Export each symbol's latest crossover per timeframe, one row per symbol (current filters${fromDate || toDate ? ', latest within the chosen date range' : ', all dates'})`}
             className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
           >
             {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}

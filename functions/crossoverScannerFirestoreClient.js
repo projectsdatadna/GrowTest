@@ -722,14 +722,37 @@ export async function countOldReadNotifications({ olderThanDays = 30, now = new 
 
 // ---------- Excel export ----------
 
-// Every crossover card the Notifications table lists under `filters` for one
-// timeframe, all pages (same groupQuery as the table), in table order: index
-// cards first, then newest bar, then list order. Capped at `limit` per query.
-export async function listCrossoverGroupsForExport(section, filters = {}, { limit = 50000 } = {}) {
-  const queries = [true, false].map((isIndex) => groupQuery(section, isIndex, filters))
-  if (queries.some((q) => !q)) return []
-  const snapshots = await Promise.all(queries.map((q) => q.limit(limit).get()))
-  return snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc))
+// Runs `fn` over `items` with at most `limit` in flight.
+async function mapPool(items, limit, fn) {
+  const out = new Array(items.length)
+  let next = 0
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++
+      out[i] = await fn(items[i], i)
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  return out
+}
+
+/**
+ * Fallback for the export: the newest crossover card for each {entry, interval}
+ * pair (symbols whose scan summary is missing). One `limit(1)` query per pair on
+ * the interval+isIndex+symbol+candleTimestamp index, optionally inside from/to.
+ * Returns Map(`${exchange}_${symbol}_${interval}` -> card).
+ */
+export async function listLatestGroupsForPairs(pairs, { from, to } = {}) {
+  const latest = new Map()
+  await mapPool(pairs, 40, async ({ entry, interval }) => {
+    const query = groupQuery(interval, Boolean(entry.isIndex), { symbol: entry.symbol, from, to })
+    if (!query) return
+    const doc = (await query.limit(1).get()).docs[0]
+    if (!doc) return
+    const card = serializeGroupDoc(doc)
+    if (card.exchange === entry.exchange) latest.set(`${card.exchange}_${card.symbol}_${card.interval}`, card)
+  })
+  return latest
 }
 
 // Newest crossover card: {interval, candleTimestamp} or null. Lets the export

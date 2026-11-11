@@ -27,8 +27,27 @@ const TAB_COMPONENTS = {
   overview: OverviewTab,
 }
 
+const ACTIVE_TAB_KEY = 'growtest.activeTab'
+
 function App() {
-  const [activeTab, setActiveTab] = useState('greek-analysis')
+  // The open tab survives a refresh (localStorage; falls back to the default if
+  // storage is blocked or holds a tab that no longer exists).
+  const [activeTab, setActiveTabState] = useState(() => {
+    try {
+      const saved = localStorage.getItem(ACTIVE_TAB_KEY)
+      return saved && TAB_COMPONENTS[saved] ? saved : 'greek-analysis'
+    } catch {
+      return 'greek-analysis'
+    }
+  })
+  const setActiveTab = (tab) => {
+    setActiveTabState(tab)
+    try {
+      localStorage.setItem(ACTIVE_TAB_KEY, tab)
+    } catch {
+      /* storage unavailable - the tab just won't persist */
+    }
+  }
   const ActiveTabComponent = TAB_COMPONENTS[activeTab] || GreekAnalysis
 
   return (

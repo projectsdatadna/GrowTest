@@ -1,186 +1,200 @@
 /**
- * Excel export of the Notifications tab's LATEST data, on one sheet. One row per
- * merged crossover card (symbol + bar), all timeframes together, same filters
- * as the tab. With no date filter it covers the latest IST day that has
- * crossovers; with From/To it covers that range.
+ * Excel export of the Notifications tab in the "Notification List" template
+ * (Sheet2 of the template workbook):
  *
- *   Timeframe | Crossed Time (IST) | Symbol | Index | Stars | Bullish | Bearish |
- *   Bias | RSI | DI | MACD | TSI | Stoch RSI | Other (SMA/EMA) | Close |
- *   ADX Current | ADX Previous | ADX Status | Read
- * Indicator cells: "YES - Bullish" (green) / "YES - Bearish" (red) / "NO".
+ *   row 1: A1:C1 blank (merged), then one merged 6-column block per timeframe
+ *          (15 Mins / 1 Hour / 4 Hour / Daily / Weekly)
+ *   row 2: SYMBOL | Bullish/ Bearish | Price | Price | Crossover Time, then per
+ *          timeframe ADX Trend | RSI | DI | MACD | TSI | Stoch RSI Crossover
+ *   row 3: hint row
+ *   row 4+: ONE row per active scanner symbol (indices first, then list order)
+ *
+ * One row per symbol. In every timeframe block each indicator shows ITS OWN latest
+ * crossover - direction plus the date/time it happened (e.g. "YES - Bullish · 06 Nov
+ * 26 15:15") - taken from the scanner's per-timeframe summary (the latest crossover of
+ * every indicator, whether or not it alerted); NO only if it never crossed. B = bias of
+ * those latest crossovers, C = latest close, D = close at the newest crossover,
+ * E = date and time of the symbol's newest crossover (bar end, IST).
  */
 
 import ExcelJS from 'exceljs'
 import { TIMEFRAME_ORDER, candleEnd } from './crossoverTimeframes.js'
-import { latestCrossoverGroup, listCrossoverGroupsForExport } from './crossoverScannerFirestoreClient.js'
+import { listActiveScannerSymbols, listLatestGroupsForPairs } from './crossoverScannerFirestoreClient.js'
 
-export const TIMEFRAME_SHEETS = { '15minute': '15 Mins', '1hour': '1 Hour', '4hour': '4 Hour', '1day': 'Daily', '1week': 'Weekly' }
-const MAX_STARS = 7
-const MAX_ROWS = 50000
-const IST_OFFSET_SECONDS = 19800
+const TIMEFRAME_HEADERS = { '15minute': '15 Mins ', '1hour': '1 Hour', '4hour': '4 Hour', '1day': 'Daily', '1week': 'Weekly' }
+const HINT = 'YES - Bullish · date/ YES - Bearish · date/ NO'
 
-// The five template indicator columns; any other label goes to "Other".
+// Template columns per timeframe, in order. `labels` = the scanner's
+// indicatorLabel values that fill the column (incl. the pre-rename DMI label).
 const INDICATOR_COLUMNS = [
-  { header: 'RSI', labels: ['RSI 14/14'] },
-  { header: 'DI', labels: ['DMI 14 (+DI/-DI)', 'ADX 14 (+DI/-DI)'] },
-  { header: 'MACD', labels: ['MACD 12/26/9'] },
-  { header: 'TSI', labels: ['TSI 25/13/13'] },
-  { header: 'Stoch RSI', labels: ['Stoch RSI 14/14/3/3'] },
+  { header: 'RSI Crossover', labels: ['RSI 14/14'] },
+  { header: 'DI Crossover', labels: ['DMI 14 (+DI/-DI)', 'ADX 14 (+DI/-DI)'] },
+  { header: 'MACD Crossover', labels: ['MACD 12/26/9'] },
+  { header: 'TSI Crossover', labels: ['TSI 25/13/13'] },
+  { header: 'Stoch RSI Crossover', labels: ['Stoch RSI 14/14/3/3'] },
 ]
 const COLUMN_BY_LABEL = new Map(INDICATOR_COLUMNS.flatMap((col, i) => col.labels.map((label) => [label, i])))
-const ADX_TEXT = { increase: 'Increased', decrease: 'Decreased', flat: 'Flat' }
+const BLOCK_WIDTH = 1 + INDICATOR_COLUMNS.length // ADX Trend + indicators
+const FIRST_BLOCK_COL = 6 // F
+const ADX_TEXT = { increase: 'Increase', decrease: 'Decrease', flat: 'Flat' }
+
 const GREEN = 'FF1E8E3E'
 const RED = 'FFD93025'
 const BASE_FONT = { name: 'Arial', size: 10 }
-const HEADER_FONT = { name: 'Arial', size: 10, bold: true }
-const HEADER_FILL = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EAED' } }
-const DATE_FORMAT = 'dd mmm yy hh:mm'
+const SYMBOL_FONT = { name: 'Inter', size: 10, color: { argb: 'FF424242' } }
+
+const istFormatter = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kolkata',
+  day: '2-digit',
+  month: 'short',
+  year: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false,
+})
+const formatIst = (epochSeconds) => istFormatter.format(new Date(epochSeconds * 1000)).replace(',', '')
+const istDay = (date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(date)
 
 const finiteOrBlank = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : '')
-const yesText = (direction) => (direction === 'bullish' ? 'YES - Bullish' : 'YES - Bearish')
-// Excel has no time zones: store the IST wall-clock time as the cell's value.
-const istCellDate = (epochSeconds) => (Number.isFinite(epochSeconds) ? new Date((epochSeconds + IST_OFFSET_SECONDS) * 1000) : '')
 
-const TIMEFRAME_COLUMNS = [
-  { header: 'Timeframe', width: 11 },
-  { header: 'Crossed Time (IST)', width: 19, date: true },
-  { header: 'Symbol', width: 16 },
-  { header: 'Index', width: 8 },
-  { header: 'Stars', width: 8 },
-  { header: 'Bullish', width: 9 },
-  { header: 'Bearish', width: 9 },
-  { header: 'Bias', width: 10 },
-  ...INDICATOR_COLUMNS.map((c) => ({ header: c.header, width: 15 })),
-  { header: 'Other (SMA/EMA)', width: 30 },
-  { header: 'Close', width: 11 },
-  { header: 'ADX Current', width: 12 },
-  { header: 'ADX Previous', width: 12 },
-  { header: 'ADX Status', width: 12 },
-  { header: 'Read', width: 8 },
-]
-/** Pure: cards (crossoverGroups docs, table order) -> {values, colors} rows. */
-export function buildCardRows(groups) {
-  return groups.map((g) => {
-    const bullish = g.bullishCount || 0
-    const bearish = g.bearishCount || 0
-    const bias = bullish + bearish === 0 ? '' : bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Mixed'
-    const cells = INDICATOR_COLUMNS.map(() => 'NO')
-    const colors = {}
-    const other = []
-    for (const ind of g.indicators || []) {
-      const col = COLUMN_BY_LABEL.get(ind.label)
-      if (col === undefined) other.push(`${ind.label} ${ind.direction === 'bullish' ? 'Bullish' : 'Bearish'}`)
-      else {
-        cells[col] = yesText(ind.direction)
-        colors[8 + col] = ind.direction === 'bullish' ? GREEN : RED
-      }
-    }
-    const end = candleEnd(g.interval, g.candleTimestamp) ?? g.candleTimestamp
-    const adx = g.adx
-    const values = [
-      TIMEFRAME_SHEETS[g.interval] || g.interval,
-      istCellDate(end),
-      g.symbol,
-      g.isIndex ? 'INDEX' : '',
-      `${g.stars ?? (g.indicators || []).length}/${MAX_STARS}`,
-      bullish,
-      bearish,
-      bias,
-      ...cells,
-      other.join(', '),
-      finiteOrBlank(g.closePrice),
-      finiteOrBlank(adx?.value),
-      finiteOrBlank(adx?.prev),
-      adx && ADX_TEXT[adx.trend] ? ADX_TEXT[adx.trend] : '',
-      g.read ? 'Read' : 'Unread',
-    ]
-    return { values, colors, bullish, bearish, unread: !g.read, crossovers: (g.indicators || []).length }
-  })
-}
+const barEndOf = (interval, ts) => candleEnd(interval, ts) ?? ts
+const toSeconds = (iso) => (iso ? Math.floor(Date.parse(iso) / 1000) : null)
 
-const istFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' })
-const istDay = (date) => istFormatter.format(date)
-const istDayRange = (day) => ({ from: new Date(`${day}T00:00:00+05:30`).toISOString(), to: new Date(`${day}T23:59:59.999+05:30`).toISOString() })
-
-// No date filter: the most recent IST day that has crossovers (falls back to
-// today when nothing is stored). `day` is set only for this default.
-export async function defaultExportRange(now = new Date()) {
-  const latest = await latestCrossoverGroup()
-  const end = latest ? (candleEnd(latest.interval, latest.candleTimestamp) ?? latest.candleTimestamp) : null
-  const day = istDay(end ? new Date(Math.min(end * 1000, now.getTime())) : now)
-  return { ...istDayRange(day), day }
-}
-
-// {from, to} the page asked for, or the latest day. One bound only: the other is
-// the same IST day, never open-ended.
-export async function resolveExportRange({ from, to } = {}) {
-  if (!from && !to) return defaultExportRange()
-  if (!from) return { from: istDayRange(istDay(new Date(to))).from, to }
-  if (!to) return { from, to: istDayRange(istDay(new Date(from))).to }
-  return { from, to }
-}
-
-function writeSheet(workbook, name, columns, rows) {
-  const sheet = workbook.addWorksheet(name, { views: [{ state: 'frozen', ySplit: 1 }] })
-  sheet.columns = columns.map((c) => ({ header: c.header, width: c.width }))
-  const header = sheet.getRow(1)
-  header.eachCell((cell) => {
-    cell.font = HEADER_FONT
-    cell.fill = HEADER_FILL
-  })
-  rows.forEach(({ values, colors }, r) => {
-    const row = sheet.getRow(2 + r)
-    values.forEach((value, c) => {
-      const cell = row.getCell(c + 1)
-      cell.value = value
-      if (columns[c].date && value instanceof Date) cell.numFmt = DATE_FORMAT
-      cell.font = colors[c] ? { ...BASE_FONT, bold: true, color: { argb: colors[c] } } : BASE_FONT
-    })
-  })
-  if (rows.length) sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1 + rows.length, column: columns.length } }
-  else sheet.getCell(2, 1).value = 'No notifications match.'
-  return sheet
-}
-
-const describeFilters = (f) => {
-  const parts = []
-  if (f.type) parts.push(`type: ${f.type}`)
-  if (f.unreadOnly) parts.push('unread only')
-  if (f.symbol) parts.push(`symbol: ${f.symbol}`)
-  if (f.indicator?.length) parts.push(`indicators: ${f.indicator.join(', ')}`)
-  if (f.direction) parts.push(`direction: ${f.direction}`)
-  if (f.adx) parts.push(`ADX status: ${f.adx}`)
-  return parts.length ? parts.join('; ') : 'none'
+// {adx, signals:[{label,direction,ts,close}]} for one symbol + timeframe: the
+// scanner summary (each indicator's latest crossover), or - when the symbol has
+// no summary yet - the newest stored card for that timeframe.
+function intervalData(entry, interval, fallback) {
+  const summary = entry.scanState?.[interval]?.summary
+  if (summary) return { adx: summary.adx, signals: summary.signals || [], lastClose: summary.lastClose }
+  const card = fallback.get(`${entry.exchange}_${entry.symbol}_${interval}`)
+  if (!card) return { adx: null, signals: [], lastClose: null }
+  return { adx: card.adx, signals: (card.indicators || []).map((i) => ({ label: i.label, direction: i.direction, ts: card.candleTimestamp, close: card.closePrice })), lastClose: null }
 }
 
 /**
- * Builds the single-sheet workbook for `filters` (the Notifications page filters,
- * see parseNotificationFilters). Returns {workbook, range, cardCount, symbolCount, truncated}.
+ * Pure: ordered symbols + fallback cards (Map `${exchange}_${symbol}_${interval}`
+ * -> card, only for symbols without a scan summary) -> row value arrays. Page
+ * filters (indicator, direction, adx, from/to) narrow which crossovers count;
+ * with any of them (or a symbol filter) symbols left without a crossover are
+ * dropped. Each row: {values: [...35 cells], colors, hasCrossover}.
  */
-export async function buildNotificationWorkbook(filters = {}) {
-  const range = await resolveExportRange({ from: filters.from, to: filters.to })
-  const effective = { ...filters, from: range.from, to: range.to }
-  const perTimeframe = await Promise.all(TIMEFRAME_ORDER.map((interval) => listCrossoverGroupsForExport(interval, effective, { limit: MAX_ROWS + 1 })))
-  const all = buildCardRows(perTimeframe.flat())
-  const truncated = all.length > MAX_ROWS
-  const rows = truncated ? all.slice(0, MAX_ROWS) : all
+export function buildExportRows(symbols, fallback = new Map(), filters = {}) {
+  const wantedColumns = filters.indicator?.length ? new Set(filters.indicator.map((l) => COLUMN_BY_LABEL.get(l)).filter((c) => c !== undefined)) : null
+  const fromSec = toSeconds(filters.from)
+  const toSec = toSeconds(filters.to)
+  const narrowed = Boolean(filters.symbol || wantedColumns || filters.direction || filters.adx || fromSec != null || toSec != null)
 
+  const rows = []
+  for (const entry of symbols) {
+    const picked = [] // {interval, col, signal, end}
+    const blocks = []
+    let lastClose = null
+    for (const interval of TIMEFRAME_ORDER) {
+      const data = intervalData(entry, interval, fallback)
+      if (lastClose == null && Number.isFinite(data.lastClose)) lastClose = data.lastClose
+      const adxTrend = data.adx?.trend
+      const adxOk = !filters.adx || adxTrend === filters.adx
+      const cells = INDICATOR_COLUMNS.map(() => null)
+      if (adxOk) {
+        for (const signal of data.signals) {
+          const col = COLUMN_BY_LABEL.get(signal.label)
+          if (col === undefined || (wantedColumns && !wantedColumns.has(col))) continue
+          if (filters.direction && signal.direction !== filters.direction) continue
+          const end = barEndOf(interval, signal.ts)
+          if ((fromSec != null && end < fromSec) || (toSec != null && end > toSec)) continue
+          if (!cells[col] || signal.ts > cells[col].signal.ts) cells[col] = { signal, end }
+        }
+      }
+      cells.forEach((cell, col) => cell && picked.push({ interval, col, ...cell }))
+      blocks.push({ adx: adxOk && ADX_TEXT[adxTrend] ? ADX_TEXT[adxTrend] : '', cells })
+    }
+    if (narrowed && picked.length === 0) continue
+
+    const newest = picked.reduce((best, p) => (!best || p.end > best.end ? p : best), null)
+    const bullish = picked.filter((p) => p.signal.direction === 'bullish').length
+    const bearish = picked.length - bullish
+    const bias = picked.length === 0 ? '' : bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Mixed'
+    const values = [entry.symbol, bias, finiteOrBlank(lastClose ?? newest?.signal.close), finiteOrBlank(newest?.signal.close), newest ? formatIst(newest.end) : '']
+    const colors = {}
+    for (const { adx, cells } of blocks) {
+      values.push(adx)
+      for (const cell of cells) {
+        const colIndex = values.length // 0-based, before push
+        if (cell) {
+          const bull = cell.signal.direction === 'bullish'
+          values.push(`${bull ? 'YES - Bullish' : 'YES - Bearish'} · ${formatIst(cell.end)}`)
+          colors[colIndex] = bull ? GREEN : RED
+        } else values.push('NO')
+      }
+    }
+    rows.push({ values, colors, hasCrossover: picked.length > 0 })
+  }
+  return rows
+}
+
+function writeHeader(sheet) {
+  sheet.mergeCells('A1:C1')
+  const row1 = sheet.getRow(1)
+  const row2 = sheet.getRow(2)
+  const row3 = sheet.getRow(3)
+  ;['SYMBOL', 'Bullish/ Bearish', 'Price', 'Price', 'Crossover Time'].forEach((text, i) => {
+    row2.getCell(i + 1).value = text
+  })
+  TIMEFRAME_ORDER.forEach((interval, block) => {
+    const start = FIRST_BLOCK_COL + block * BLOCK_WIDTH
+    sheet.mergeCells(1, start, 1, start + BLOCK_WIDTH - 1)
+    row1.getCell(start).value = TIMEFRAME_HEADERS[interval]
+    row1.getCell(start).alignment = { horizontal: 'center' }
+    row2.getCell(start).value = 'ADX Trend'
+    row3.getCell(start).value = 'Increase/ Decrease/ Flat'
+    INDICATOR_COLUMNS.forEach((col, i) => {
+      row2.getCell(start + 1 + i).value = col.header
+      row3.getCell(start + 1 + i).value = HINT
+    })
+  })
+  for (const row of [row1, row2, row3]) row.eachCell((cell) => (cell.font = cell.font?.name ? cell.font : BASE_FONT))
+  for (let c = 1; c <= 3; c++) row2.getCell(c).font = SYMBOL_FONT
+}
+
+// `filters` = the Notifications page filters (parseNotificationFilters shape).
+// Every symbol's per-indicator latest crossover, whatever day it was; From/To
+// keep only crossovers inside that range.
+export async function buildNotificationWorkbook(filters = {}) {
+  const symbols = filters.type && filters.type !== 'crossover' ? [] : (await listActiveScannerSymbols()).filter((e) => !filters.symbol || e.symbol === filters.symbol)
+  // Symbols the scanner has no summary for yet fall back to their newest stored card.
+  const pairs = symbols.flatMap((entry) => TIMEFRAME_ORDER.filter((interval) => !entry.scanState?.[interval]?.summary).map((interval) => ({ entry, interval })))
+  const fallback = pairs.length ? await listLatestGroupsForPairs(pairs, { from: filters.from, to: filters.to }) : new Map()
+  const rows = buildExportRows(symbols, fallback, filters)
+  const range = { from: filters.from, to: filters.to }
+  const withCrossover = rows.filter((r) => r.hasCrossover).length
+  return { workbook: renderWorkbook(rows, range), range, cardCount: rows.reduce((n, r) => n + r.values.filter((v) => typeof v === 'string' && v.startsWith('YES')).length, 0), symbolCount: withCrossover }
+}
+
+export function renderWorkbook(rows, range = {}) {
   const workbook = new ExcelJS.Workbook()
   workbook.creator = 'GrowTest Crossover Scanner'
-  workbook.title = 'Notification List'
-  const sheet = writeSheet(workbook, 'Notification List', TIMEFRAME_COLUMNS, rows)
+  workbook.title = `Notification List ${istDay(new Date())}`
+  const sheet = workbook.addWorksheet('Notification List', {
+    properties: { defaultColWidth: 12.63, defaultRowHeight: 15.75 },
+    views: [{ state: 'frozen', xSplit: 1, ySplit: 3 }],
+  })
+  // Wide enough for "YES - Bearish · 06 Nov 26 15:15".
+  sheet.getColumn(1).width = 16
+  sheet.getColumn(5).width = 19.13
+  for (let c = FIRST_BLOCK_COL; c <= FIRST_BLOCK_COL + TIMEFRAME_ORDER.length * BLOCK_WIDTH - 1; c++) sheet.getColumn(c).width = (c - FIRST_BLOCK_COL) % BLOCK_WIDTH === 0 ? 14 : 29
 
-  let next = 3 + rows.length
-  const note = (text) => {
-    sheet.getCell(next, 1).value = text
-    sheet.getCell(next, 1).font = { ...BASE_FONT, italic: true }
-    next += 1
-  }
-  const day = range.day || (range.from === range.to ? istDay(new Date(range.from)) : `${istDay(new Date(range.from))} to ${istDay(new Date(range.to))}`)
-  note(`Crossed on (IST): ${range.day ? `${day} (latest day with crossovers)` : day} | Filters: ${describeFilters(filters)} | Cards: ${rows.length}`)
-  if (truncated) note(`Showing the first ${MAX_ROWS} rows only - narrow the filters or date range to export the rest.`)
-  note('Legend: YES - Bullish (green) = indicator crossed bullish on that bar; YES - Bearish (red) = crossed bearish; NO = did not cross on that bar.')
-  note('Stars = distinct indicators that crossed on the bar. ADX Current/Previous = ADX at that bar vs the bar before; Status = Increased/Decreased/Flat. Other lists crossovers with no dedicated column.')
-
-  return { workbook, range, cardCount: rows.length, symbolCount: new Set(rows.map((r) => r.values[2])).size, truncated }
+  writeHeader(sheet)
+  rows.forEach(({ values, colors }, r) => {
+    const row = sheet.getRow(4 + r)
+    values.forEach((value, c) => {
+      const cell = row.getCell(c + 1)
+      cell.value = value
+      cell.font = c === 0 ? SYMBOL_FONT : colors[c] ? { ...BASE_FONT, bold: true, color: { argb: colors[c] } } : BASE_FONT
+    })
+  })
+  const legend = 4 + rows.length + 1
+  const rangeText = range.from || range.to ? `Only crossovers between ${range.from ? istDay(new Date(range.from)) : '...'} and ${range.to ? istDay(new Date(range.to)) : '...'}. ` : ''
+  sheet.getCell(legend, 1).value = `One row per symbol. Each indicator shows its own latest crossover with the date and time it happened (IST): YES - Bullish (green) / YES - Bearish (red); NO = it has not crossed in the loaded history. ${rangeText}Crossover Time = the symbol's newest crossover; ADX Trend = ADX on the timeframe's latest bar.`
+  sheet.getCell(legend, 1).font = { ...BASE_FONT, italic: true }
+  return workbook
 }
