@@ -47,6 +47,12 @@ export function sortGroups(
         );
       return dir * (a.closePrice - b.closePrice) || bySymbol(a, b);
     },
+    // Bar time, then indices before stocks within one bar, then list order.
+    timeindex: (a, b) =>
+      dir * (a.candleTimestamp - b.candleTimestamp) ||
+      (b.isIndex ? 1 : 0) - (a.isIndex ? 1 : 0) ||
+      byList(a, b) ||
+      bySymbol(a, b),
     time: (a, b) =>
       dir * (a.candleTimestamp - b.candleTimestamp) ||
       byList(a, b) ||
