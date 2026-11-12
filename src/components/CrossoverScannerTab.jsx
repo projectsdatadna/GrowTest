@@ -12,6 +12,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import {
   getCrossoverScannerSymbols,
   addCrossoverScannerSymbol,
@@ -85,26 +86,39 @@ function BulkResultSummary({ results }) {
   )
 }
 
-// Inline-editable NRML margin of one symbol. Saves on blur / Enter, Esc reverts,
-// an empty box clears it. Keeps its own draft so the status polling never
-// overwrites what is being typed.
+// NRML margin of one symbol: read-only text; the pencil asks for confirmation
+// before the box becomes editable. Saves on blur / Enter, Esc cancels, an empty
+// box clears the value. Keeps its own draft so status polling never overwrites it.
 function MarginCell({ symbol, onSave }) {
   const saved = symbol.nrmlMargin ?? ''
+  const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(saved))
-  const [focused, setFocused] = useState(false)
   const [state, setState] = useState('') // '' | 'saving' | 'error'
+  const [confirming, setConfirming] = useState(false)
+  const cancelled = useRef(false)
+  const inputRef = useRef(null)
+
+  const startEdit = () => {
+    setConfirming(false)
+    cancelled.current = false
+    setDraft(String(saved))
+    setState('')
+    setEditing(true)
+  }
+
   useEffect(() => {
-    if (!focused) setDraft(String(saved))
-  }, [saved, focused])
+    if (editing) inputRef.current?.focus()
+    if (editing) inputRef.current?.select()
+  }, [editing])
 
   const commit = async () => {
-    setFocused(false)
+    if (cancelled.current) return setEditing(false)
     const text = draft.replace(/[₹,\s]/g, '')
-    if (text === String(saved)) return setDraft(String(saved))
+    if (text === String(saved)) return setEditing(false)
     const value = text === '' ? null : Number(text)
     if (value !== null && (!Number.isFinite(value) || value < 0)) {
       setState('error')
-      return setDraft(String(saved))
+      return setEditing(false)
     }
     setState('saving')
     try {
@@ -112,30 +126,62 @@ function MarginCell({ symbol, onSave }) {
       setState('')
     } catch {
       setState('error')
-      setDraft(String(saved))
     }
+    setEditing(false)
+  }
+
+  if (!editing) {
+    return (
+      <span className="inline-flex items-center justify-end gap-xs w-28">
+        <span className={`text-sm ${state === 'error' ? 'text-bearish' : 'text-on-surface'}`} title={state === 'error' ? 'Could not save' : undefined}>
+          {state === 'saving' ? '...' : saved === '' ? '-' : `₹${Number(saved).toLocaleString('en-IN')}`}
+        </span>
+        <button type="button" onClick={() => setConfirming(true)} disabled={state === 'saving'} className="text-on-surface-variant hover:text-primary" aria-label={`Edit ${symbol.symbol} NRML margin`}>
+          <span className="material-symbols-outlined text-[16px]">edit</span>
+        </button>
+        {confirming &&
+          createPortal(
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-md" role="dialog" aria-modal="true" aria-label="Confirm edit">
+              <div className="glass-panel rounded-xl p-lg w-full max-w-sm flex flex-col gap-md bg-surface">
+                <div className="text-sm font-semibold text-on-surface">Edit NRML margin?</div>
+                <div className="text-sm text-on-surface-variant">
+                  You are about to change the NRML margin of <span className="font-semibold text-on-surface">{symbol.symbol}</span>
+                  {saved !== '' && <> (currently ₹{Number(saved).toLocaleString('en-IN')})</>}. It is used on the Notifications cards and in the Excel export.
+                </div>
+                <div className="flex justify-end gap-sm">
+                  <button type="button" onClick={() => setConfirming(false)} className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface">
+                    Cancel
+                  </button>
+                  <button type="button" autoFocus onClick={startEdit} className="px-md py-xs rounded-lg bg-primary text-on-primary text-xs font-semibold">
+                    Yes, edit
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body
+          )}
+      </span>
+    )
   }
 
   return (
     <input
+      ref={inputRef}
       type="text"
       inputMode="decimal"
       value={draft}
       placeholder="-"
-      disabled={state === 'saving'}
-      onFocus={() => setFocused(true)}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === 'Enter') e.currentTarget.blur()
         if (e.key === 'Escape') {
-          setDraft(String(saved))
+          cancelled.current = true
           e.currentTarget.blur()
         }
       }}
-      title={state === 'error' ? 'Could not save - enter a number, or leave empty to clear' : 'NRML margin'}
       aria-label={`${symbol.symbol} NRML margin`}
-      className={`w-28 px-xs py-[2px] rounded border bg-transparent text-right text-sm text-on-surface ${state === 'error' ? 'border-bearish' : 'border-outline-variant'}`}
+      className="w-28 px-xs py-[2px] rounded border border-primary bg-transparent text-right text-sm text-on-surface"
     />
   )
 }

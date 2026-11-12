@@ -29,3 +29,13 @@ test('does not mutate its input; only time/desc is the Firestore default order',
   assert.equal(isDefaultGroupOrder('time', 'asc'), false)
   assert.equal(isDefaultGroupOrder('alpha', 'desc'), false)
 })
+
+test('timeindex: newest bar first, indices before stocks inside a bar', () => {
+  const rows = [
+    { symbol: 'TCS', candleTimestamp: 200, isIndex: false, sortOrder: 1 },
+    { symbol: 'NIFTY', candleTimestamp: 200, isIndex: true, sortOrder: 9 },
+    { symbol: 'ACC', candleTimestamp: 300, isIndex: false, sortOrder: 2 },
+    { symbol: 'BANKNIFTY', candleTimestamp: 100, isIndex: true, sortOrder: 0 },
+  ]
+  assert.equal(names(sortGroups(rows, 'timeindex', 'desc')), 'ACC,NIFTY,TCS,BANKNIFTY')
+})

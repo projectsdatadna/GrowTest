@@ -415,7 +415,7 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1)
       const pageSize = Math.min(Math.max(Number.parseInt(req.query.pageSize, 10) || 25, 1), MAX_PAGE_SIZE)
       const group = req.query.group === undefined || req.query.group === '' ? null : String(req.query.group)
-      if (group !== null && !['index', 'stock'].includes(group)) return res.status(400).json({ error: 'group must be index or stock' })
+      if (group !== null && !['index', 'stock', 'all'].includes(group)) return res.status(400).json({ error: 'group must be index, stock or all' })
       const sort = req.query.sort ? String(req.query.sort) : DEFAULT_GROUP_SORT
       const order = req.query.order ? String(req.query.order) : DEFAULT_GROUP_ORDER
       if (!GROUP_SORTS.includes(sort)) return res.status(400).json({ error: `sort must be one of ${GROUP_SORTS.join(', ')}` })

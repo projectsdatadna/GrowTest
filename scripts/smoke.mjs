@@ -81,6 +81,7 @@ const ROUTES = [
   { method: 'GET', path: '/notifications/groups?section=15minute&group=stock&sort=alpha&order=asc&pageSize=5' },
   { method: 'GET', path: '/notifications/groups?section=15minute&group=stock&sort=price&order=desc&pageSize=5' },
   { method: 'GET', path: '/notifications/groups?section=15minute&sort=bogus', note: 'bad sort -> 400' },
+  { method: 'GET', path: '/notifications/groups?section=15minute&group=all&page=1&pageSize=5' },
   { method: 'GET', path: '/notifications/groups?section=15minute&group=bogus', note: 'bad group -> 400' },
   { method: 'GET', path: '/crossover-scanner/export.xlsx', assert: (_b, text) => text?.startsWith('PK') || 'expected an .xlsx (zip) body' },
   { method: 'GET', path: '/notifications/counts?from=2020-01-01T00:00:00.000Z&to=2030-01-01T00:00:00.000Z' },

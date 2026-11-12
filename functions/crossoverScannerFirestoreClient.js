@@ -420,6 +420,8 @@ export const SORT_CAP = 2000
 export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25, group = null, sort = DEFAULT_GROUP_SORT, order = DEFAULT_GROUP_ORDER } = {}) {
   if (!DEFAULT_ENABLED_INTERVALS.includes(section)) return { items: [], total: 0, indexTotal: 0, capped: false }
   // group: 'index' | 'stock' = just that slice; anything else = both (indices first).
+  // group 'all' = both slices merged by bar time (newest first), indices before stocks within a bar.
+  const byBar = group === 'all'
   const flags = group === 'index' ? [true] : group === 'stock' ? [false] : [true, false]
   const queries = flags.map((isIndex) => groupQuery(section, isIndex, filters))
   if (queries.some((q) => !q)) return { items: [], total: 0, indexTotal: 0, capped: false }
@@ -429,6 +431,12 @@ export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1
   const indexTotal = flags[0] === true ? counts[0] : 0
   const start = (page - 1) * pageSize
   const end = start + pageSize
+
+  if (byBar) {
+    const snapshots = await Promise.all(queries.map((query) => query.limit(SORT_CAP).get()))
+    const sorted = sortGroups(snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc)), 'timeindex', order)
+    return { items: sorted.slice(start, end), total, indexTotal, capped: counts.some((n) => n > SORT_CAP) }
+  }
 
   if (isDefaultGroupOrder(sort, order)) {
     // Newest bar first, then list order - served by Firestore. The page is an
