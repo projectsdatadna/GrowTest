@@ -18,6 +18,7 @@
 const IST_OFFSET_SECONDS = 5.5 * 3600
 const DAY = 86400
 const MARKET_CLOSE_OFFSET = 15 * 3600 + 30 * 60 // 15:30 IST, seconds after IST midnight
+const MARKET_OPEN_OFFSET = 9 * 3600 + 15 * 60 // 09:15 IST, seconds after IST midnight
 
 // lookbackDays: window loaded for indicator math - sized so SMA 50/200 (the
 // slowest crossover) has 200+ bars where Groww history allows. Measured live on
@@ -89,6 +90,10 @@ export function candleEnd(interval, start) {
 
   if (kind === 'intraday') {
     if (start >= close) return null
+    // Groww's 09:00 pre-open bar (null open, flat OHLC, token volume) ends at
+    // 09:15, before the session opens - not a trading bar. (The 1-hour 09:00
+    // and 4-hour 08:00 bars run past 09:15 and are real.)
+    if (start + seconds <= dayStart + MARKET_OPEN_OFFSET) return null
     return Math.min(start + seconds, close)
   }
   if (kind === 'day') return close
@@ -101,7 +106,11 @@ export function candleEnd(interval, start) {
 // close; here such a start maps to that day's close so the function stays
 // non-decreasing in `start`, which the range search below relies on).
 function monotoneBarEnd(interval, start) {
-  return candleEnd(interval, start) ?? istDayStart(start) + MARKET_CLOSE_OFFSET
+  const end = candleEnd(interval, start)
+  if (end != null) return end
+  const dayStart = istDayStart(start)
+  // A pre-open start maps to the open, a post-close start to the close.
+  return start < dayStart + MARKET_OPEN_OFFSET ? dayStart + MARKET_OPEN_OFFSET : dayStart + MARKET_CLOSE_OFFSET
 }
 
 /**

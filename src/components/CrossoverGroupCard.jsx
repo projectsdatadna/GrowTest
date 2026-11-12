@@ -3,8 +3,8 @@
  * crossed for one symbol on one bar of one timeframe (a `crossoverGroups` doc,
  * see functions/crossoverScanner.js buildCrossoverGroups). Stars = how many
  * distinct indicators crossed - the more, the more important. The right-hand
- * column shows the ADX (trend strength) at that bar vs the bar before, in plain
- * text with no colour cues.
+ * columns show the symbol's NRML margin and the ADX (trend strength) at that bar
+ * vs the bar before, in plain text with no colour cues.
  */
 
 import { DirectionBadge } from './NotificationContent'
@@ -49,6 +49,19 @@ export function AdxColumn({ adx }) {
   )
 }
 
+// NRML margin of the symbol (edited on the Crossover Scanner page); "-" when none is saved.
+export function MarginColumn({ margin }) {
+  const has = typeof margin === 'number' && Number.isFinite(margin)
+  return (
+    <div className="text-xs text-on-surface-variant md:w-28 md:shrink-0 md:border-l border-t md:border-t-0 border-outline-variant pt-xs md:pt-0 md:pl-sm flex flex-col gap-[2px]">
+      <div className="text-[11px] uppercase tracking-wide">NRML margin</div>
+      <div className="font-mono text-on-surface" title={has ? `NRML margin ₹${margin}` : 'No NRML margin saved - add it on the Crossover Scanner page'}>
+        {has ? `₹${margin.toLocaleString('en-IN')}` : '-'}
+      </div>
+    </div>
+  )
+}
+
 export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover }) {
   return (
     <div
@@ -81,7 +94,8 @@ export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover }
       </div>
       {/* middle column = the centre of the card */}
       <div className="flex items-center justify-center">{chartHover && <CardChartButton group={group} hover={chartHover} />}</div>
-      <div className="md:justify-self-end">
+      <div className="md:justify-self-end flex flex-col md:flex-row gap-sm md:gap-md">
+        <MarginColumn margin={group.nrmlMargin} />
         <AdxColumn adx={group.adx} />
       </div>
     </div>

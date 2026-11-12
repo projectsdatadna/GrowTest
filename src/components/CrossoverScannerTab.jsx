@@ -18,6 +18,7 @@ import {
   removeCrossoverScannerSymbol,
   bulkAddCrossoverScannerSymbols,
   saveCrossoverSymbolOrder,
+  saveCrossoverSymbolMargin,
   getCrossoverSettings,
   saveCrossoverSettings,
   getCrossoverStatus,
@@ -81,6 +82,61 @@ function BulkResultSummary({ results }) {
         </span>
       )}
     </div>
+  )
+}
+
+// Inline-editable NRML margin of one symbol. Saves on blur / Enter, Esc reverts,
+// an empty box clears it. Keeps its own draft so the status polling never
+// overwrites what is being typed.
+function MarginCell({ symbol, onSave }) {
+  const saved = symbol.nrmlMargin ?? ''
+  const [draft, setDraft] = useState(String(saved))
+  const [focused, setFocused] = useState(false)
+  const [state, setState] = useState('') // '' | 'saving' | 'error'
+  useEffect(() => {
+    if (!focused) setDraft(String(saved))
+  }, [saved, focused])
+
+  const commit = async () => {
+    setFocused(false)
+    const text = draft.replace(/[₹,\s]/g, '')
+    if (text === String(saved)) return setDraft(String(saved))
+    const value = text === '' ? null : Number(text)
+    if (value !== null && (!Number.isFinite(value) || value < 0)) {
+      setState('error')
+      return setDraft(String(saved))
+    }
+    setState('saving')
+    try {
+      await onSave(symbol.id, value)
+      setState('')
+    } catch {
+      setState('error')
+      setDraft(String(saved))
+    }
+  }
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={draft}
+      placeholder="-"
+      disabled={state === 'saving'}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') {
+          setDraft(String(saved))
+          e.currentTarget.blur()
+        }
+      }}
+      title={state === 'error' ? 'Could not save - enter a number, or leave empty to clear' : 'NRML margin'}
+      aria-label={`${symbol.symbol} NRML margin`}
+      className={`w-28 px-xs py-[2px] rounded border bg-transparent text-right text-sm text-on-surface ${state === 'error' ? 'border-bearish' : 'border-outline-variant'}`}
+    />
   )
 }
 
@@ -225,6 +281,12 @@ function CrossoverScannerTab({ onTabChange }) {
     await load()
   }
 
+  // Saves one symbol's NRML margin and mirrors it locally (the cell shows the new value at once).
+  const handleSaveMargin = async (id, value) => {
+    const { nrmlMargin } = await saveCrossoverSymbolMargin(id, value)
+    setSymbols((current) => current.map((s) => (s.id === id ? { ...s, nrmlMargin } : s)))
+  }
+
   const handleRemove = async (id) => {
     setError('')
     try {
@@ -302,7 +364,15 @@ function CrossoverScannerTab({ onTabChange }) {
       <section className="glass-panel rounded-xl p-md flex flex-col gap-md">
         <div className="flex items-center justify-between gap-md flex-wrap">
           <h3 className="text-sm font-semibold text-on-surface">Schedule</h3>
-          <TokenBanner token={status?.token} />
+          <div className="flex items-center gap-sm flex-wrap">
+            {status?.lastTickAt && (
+              <span className="text-xs text-on-surface-variant">
+                Last scheduler tick {timeAgo(status.lastTickAt)}
+                {status.lastTickDue === 0 ? ' · nothing due yet (a bar must close first)' : ''}
+              </span>
+            )}
+            <TokenBanner token={status?.token} />
+          </div>
         </div>
         <div className="grid gap-sm grid-cols-1 md:grid-cols-3 xl:grid-cols-5">
           {TIMEFRAME_ORDER.map((interval) => {
@@ -441,6 +511,7 @@ function CrossoverScannerTab({ onTabChange }) {
                 <tr className="text-left text-xs uppercase text-on-surface-variant">
                   <th className="py-xs w-6" />
                   <th className="py-xs">Symbol</th>
+                  <th className="py-xs pr-md whitespace-nowrap">NRML margin</th>
                   {visibleTimeframes.map((interval) => (
                     <th key={interval} className="py-xs pr-md whitespace-nowrap">
                       {TIMEFRAME_LABELS[interval]} · last bar
@@ -490,6 +561,9 @@ function CrossoverScannerTab({ onTabChange }) {
                     <td className="py-xs font-medium text-on-surface whitespace-nowrap">
                       {s.symbol} <span className="text-xs text-on-surface-variant">{s.exchange}</span>
                     </td>
+                    <td className="py-xs pr-md">
+                      <MarginCell symbol={s} onSave={handleSaveMargin} />
+                    </td>
                     {visibleTimeframes.map((interval) => (
                       <td key={interval} className="py-xs pr-md text-xs whitespace-nowrap">
                         <TimeframeStateCell state={s.scanState?.[interval]} />
@@ -504,7 +578,7 @@ function CrossoverScannerTab({ onTabChange }) {
                 ))}
                 {shownSymbols.length === 0 && (
                   <tr>
-                    <td colSpan={visibleTimeframes.length + 3} className="py-md text-center text-on-surface-variant">
+                    <td colSpan={visibleTimeframes.length + 4} className="py-md text-center text-on-surface-variant">
                       {symbols.length === 0 ? 'No symbols yet - search above or paste a list to add some.' : 'No symbols match the filter.'}
                     </td>
                   </tr>

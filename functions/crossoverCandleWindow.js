@@ -72,6 +72,19 @@ export function mergeWindow(stored, fetched, maxBars) {
 }
 
 /**
+ * Days of history to re-fetch on a normal scan: the recent `tailDays`, widened
+ * to reach back to the newest stored bar when the scanner was down longer than
+ * that (e.g. an expired Groww token over a few days) so the missed bars are
+ * refilled instead of leaving a permanent hole. Capped at `lookbackDays`.
+ * Pure - exported for offline tests.
+ */
+export function fetchSpanDays({ stored, tailDays, lookbackDays, now = new Date() }) {
+  if (stored.length === 0) return tailDays
+  const staleDays = Math.ceil((now.getTime() - stored[stored.length - 1].timestamp * 1000) / DAY_MS) + 1
+  return Math.min(lookbackDays, Math.max(tailDays, staleDays))
+}
+
+/**
  * The scanner's candle loader (same contract as refreshAndLoadCandles in
  * growwHistoricalData.js, which it replaces): read the window document; if it
  * has never been backfilled, fetch the whole lookback from Groww, otherwise
@@ -83,11 +96,12 @@ export async function refreshAndLoadWindow({ exchange, symbol, interval, groww_t
   const data = snapshot.exists ? snapshot.data() : null
 
   const needsBackfill = !data?.backfilledAt
-  const spanDays = needsBackfill ? lookbackDays : tailDays
+  const stored = data ? decodeWindow(data) : []
+  const spanDays = needsBackfill ? lookbackDays : fetchSpanDays({ stored, tailDays, lookbackDays, now })
   const rangeStart = new Date(now.getTime() - spanDays * DAY_MS)
 
   const fetched = await fetchCandlesFromGroww({ exchange, symbol, interval, rangeStart, rangeEnd: now, groww_token })
-  const merged = mergeWindow(data ? decodeWindow(data) : [], fetched, maxBars)
+  const merged = mergeWindow(stored, fetched, maxBars)
 
   await ref.set({
     symbol,

@@ -12,9 +12,10 @@
  *
  * Timeframe sections show crossovers MERGED: one card per symbol + bar with
  * every indicator that crossed, a star per indicator, and the ADX at that bar
- * (CrossoverGroupCard). Index symbols (NIFTY, BANKNIFTY, ...) are pinned first
- * in every section; the rest follow newest bar first, then the uploaded list
- * order. "Run now" scans immediately; "Export to Excel" downloads the
+ * (CrossoverGroupCard). Every timeframe lists Indices (NIFTY, BANKNIFTY, ...) and
+ * Stocks separately, each with its own count and pages; "Sort by" (time /
+ * alphabetic / stock value, asc or desc) orders the cards inside both. The default
+ * is newest bar first, then the uploaded list order. "Run now" scans immediately; "Export to Excel" downloads the
  * Notification List template filled for the chosen dates (default today).
  */
 
@@ -114,6 +115,20 @@ function sortSectionItems(items) {
 // Timeframe sections list merged crossover groups unless the type filter asks
 // for a non-crossover type (new candles / AI insights), which keep the per-item list.
 const isGroupedSection = (section, typeFilter) => section !== SYSTEM_KEY && (typeFilter === 'all' || typeFilter === 'crossover')
+
+// Grouped timeframe sections are shown as two slices, Indices and Stocks, each
+// with its own page and data under the key "<section>:<index|stock>".
+const GROUP_SLICES = [
+  { group: 'index', label: 'Indices' },
+  { group: 'stock', label: 'Stocks' },
+]
+const viewKeysOf = (section, typeFilter) => (isGroupedSection(section, typeFilter) ? GROUP_SLICES.map((s) => `${section}:${s.group}`) : [section])
+
+const SORT_OPTIONS = [
+  { key: 'time', label: 'Time' },
+  { key: 'alpha', label: 'Alphabetic' },
+  { key: 'price', label: 'Stock value' },
+]
 
 function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
@@ -302,6 +317,8 @@ function NotificationsTab({ onTabChange }) {
   const [adxStatus, setAdxStatus] = useState('any') // any | increase | decrease | flat
   const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
   const [toDate, setToDate] = useState('')
+  const [sortBy, setSortBy] = useState('time') // time | alpha | price
+  const [sortOrder, setSortOrder] = useState('desc') // asc | desc
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
@@ -334,13 +351,18 @@ function NotificationsTab({ onTabChange }) {
   const filtersKey = JSON.stringify(filters)
   const filtersRef = useRef(filters)
   filtersRef.current = filters
+  // Sorting only changes the order of the cards (the counts do not move), so it
+  // is part of the page key but not of `filters`.
+  const sortKey = `${sortBy}:${sortOrder}`
+  const sortRef = useRef({ sortBy, sortOrder })
+  sortRef.current = { sortBy, sortOrder }
   const typeFilterRef = useRef(typeFilter)
   typeFilterRef.current = typeFilter
 
   // A filter change goes back to page 1 everywhere.
   useEffect(() => {
     setPages({})
-  }, [filtersKey])
+  }, [filtersKey, sortKey])
 
   const loadCounts = useCallback(async () => {
     const key = JSON.stringify(filtersRef.current)
@@ -355,16 +377,20 @@ function NotificationsTab({ onTabChange }) {
     }
   }, [])
 
-  const loadSection = useCallback(async (section, page) => {
-    const key = `${JSON.stringify(filtersRef.current)}|${page}`
-    setSectionData((current) => ({ ...current, [section]: { ...current[section], key, loading: true, error: '' } }))
+  // `viewKey` = a section ("system", or a timeframe when the type filter shows
+  // plain notifications) or "<timeframe>:<index|stock>" for one slice of cards.
+  const loadSection = useCallback(async (viewKey, page) => {
+    const [section, group] = viewKey.split(':')
+    const { sortBy: sort, sortOrder: order } = sortRef.current
+    const key = `${JSON.stringify(filtersRef.current)}|${sort}:${order}|${page}`
+    setSectionData((current) => ({ ...current, [viewKey]: { ...current[viewKey], key, loading: true, error: '' } }))
     try {
       const grouped = isGroupedSection(section, typeFilterRef.current)
-      const data = grouped ? await getNotificationGroups(section, filtersRef.current, page, PAGE_SIZE) : await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
+      const data = grouped ? await getNotificationGroups(section, { ...filtersRef.current, group, sort, order }, page, PAGE_SIZE) : await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
       const items = grouped ? data.groups : data.notifications
-      setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { key, grouped, items, total: data.total, loading: false, error: '' } } : current))
+      setSectionData((current) => (current[viewKey]?.key === key ? { ...current, [viewKey]: { key, grouped, items, total: data.total, capped: Boolean(data.capped), loading: false, error: '' } } : current))
     } catch (err) {
-      setSectionData((current) => (current[section]?.key === key ? { ...current, [section]: { ...current[section], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } } : current))
+      setSectionData((current) => (current[viewKey]?.key === key ? { ...current, [viewKey]: { ...current[viewKey], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } } : current))
     }
   }, [])
 
@@ -377,10 +403,12 @@ function NotificationsTab({ onTabChange }) {
   // Open sections load their current page when opened / paged / re-filtered.
   useEffect(() => {
     for (const section of expanded) {
-      const page = pages[section] || 1
-      if (sectionData[section]?.key !== `${filtersKey}|${page}`) loadSection(section, page)
+      for (const viewKey of viewKeysOf(section, typeFilter)) {
+        const page = pages[viewKey] || 1
+        if (sectionData[viewKey]?.key !== `${filtersKey}|${sortKey}|${page}`) loadSection(viewKey, page)
+      }
     }
-  }, [expanded, pages, filtersKey, sectionData, loadSection])
+  }, [expanded, pages, filtersKey, sortKey, typeFilter, sectionData, loadSection])
 
   // Live: a new notification refreshes the open sections that show page 1 (later
   // pages are left alone so the page does not shift under the reader).
@@ -389,7 +417,9 @@ function NotificationsTab({ onTabChange }) {
     if (lastCursorRef.current === liveCursor) return
     lastCursorRef.current = liveCursor
     for (const section of expanded) {
-      if ((pages[section] || 1) === 1) loadSection(section, 1)
+      for (const viewKey of viewKeysOf(section, typeFilterRef.current)) {
+        if ((pages[viewKey] || 1) === 1) loadSection(viewKey, 1)
+      }
     }
   }, [liveCursor, expanded, pages, loadSection])
 
@@ -448,7 +478,7 @@ function NotificationsTab({ onTabChange }) {
     markAllNotificationsRead()
       .then(() => {
         loadCounts()
-        expanded.forEach((section) => loadSection(section, pages[section] || 1))
+        expanded.forEach((section) => viewKeysOf(section, typeFilterRef.current).forEach((viewKey) => loadSection(viewKey, pages[viewKey] || 1)))
       })
       .catch((err) => console.error('Failed to mark all notifications read:', err))
   }
@@ -473,7 +503,7 @@ function NotificationsTab({ onTabChange }) {
       return next
     })
 
-  const setSectionPage = (section, page) => setPages((current) => ({ ...current, [section]: page }))
+  const setSectionPage = (viewKey, page) => setPages((current) => ({ ...current, [viewKey]: page }))
 
   const unreadTotal = counts ? Object.values(counts).reduce((sum, c) => sum + c.unread, 0) : 0
   const grandTotal = counts ? Object.values(counts).reduce((sum, c) => sum + c.total, 0) : 0
@@ -565,6 +595,26 @@ function NotificationsTab({ onTabChange }) {
             Clear dates
           </button>
         )}
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md" title="Order of the cards inside every timeframe (Indices and Stocks each)">
+          Sort by
+          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={selectClass} aria-label="Sort cards by">
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button
+          type="button"
+          onClick={() => setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
+          className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs"
+          title={sortOrder === 'asc' ? 'Ascending - click for descending' : 'Descending - click for ascending'}
+          aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
+        >
+          <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : sortBy === 'price' ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : sortBy === 'price' ? 'High-Low' : 'Newest'}
+        </button>
       </div>
 
       {notice && <div className="text-sm text-on-surface-variant">{notice}</div>}
@@ -576,15 +626,14 @@ function NotificationsTab({ onTabChange }) {
 
       {visibleSections.map((key) => {
         const isCollapsed = !expanded.has(key)
+        const sliced = isGroupedSection(key, typeFilter)
         const page = pages[key] || 1
         const { total, unread, bullish = 0, bearish = 0, unreadBullish = 0, unreadBearish = 0, lastCrossover = null } = counts[key]
-        const data = sectionData[key]
-        const grouped = Boolean(data?.grouped)
-        // Groups arrive in server order (indices first); single items are sorted here.
-        const items = data?.items ? (grouped ? data.items : sortSectionItems(data.items)) : []
-        const unreadGroups = grouped ? items.filter((g) => !groupIsRead(g)) : []
+        // Timeframe sections of cards are shown as separate Indices / Stocks slices (below);
+        // System and the plain per-item lists keep the single list.
+        const data = sliced ? null : sectionData[key]
+        const items = data?.items ? sortSectionItems(data.items) : []
         let lastBar = null
-        let lastHeader = null
         return (
           <section key={key} className="glass-panel rounded-xl">
             <div className="flex items-center justify-between gap-md p-md">
@@ -602,38 +651,67 @@ function NotificationsTab({ onTabChange }) {
                   <CountCard label="Bearish" value={bearish} unread={unreadBearish} tone="bearish" />
                 </div>
               )}
-              {!isCollapsed && grouped && unreadGroups.length > 0 && (
-                <button type="button" onClick={() => markRead(unreadGroups.flatMap((g) => g.notificationIds || []), unreadGroups.map((g) => g.id))} className="text-xs text-primary hover:underline">
-                  Mark this page read
-                </button>
-              )}
-              {!isCollapsed && !grouped && items.some((n) => !n.read && !readIds.has(n.id)) && (
+              {!isCollapsed && !sliced && items.some((n) => !n.read && !readIds.has(n.id)) && (
                 <button type="button" onClick={() => markRead(items.filter((n) => !n.read && !readIds.has(n.id)).map((n) => n.id))} className="text-xs text-primary hover:underline">
                   Mark this page read
                 </button>
               )}
             </div>
 
-            {!isCollapsed && (
+            {!isCollapsed && sliced && (
+              <div className="px-md pb-md flex flex-col gap-md">
+                {GROUP_SLICES.map(({ group, label }) => {
+                  const viewKey = `${key}:${group}`
+                  const sliceData = sectionData[viewKey]
+                  const sliceItems = sliceData?.items || []
+                  const slicePage = pages[viewKey] || 1
+                  const sliceTotal = counts[key][group === 'index' ? 'indexTotal' : 'stockTotal']
+                  const unreadGroups = sliceItems.filter((g) => !groupIsRead(g))
+                  let lastHeader = null
+                  return (
+                    <div key={group}>
+                      <div className="flex items-center justify-between gap-sm border-b border-outline-variant pb-xs">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-on-surface">
+                          {label} <span className="font-normal text-on-surface-variant">{sliceTotal ?? sliceData?.total ?? ''}</span>
+                        </span>
+                        {unreadGroups.length > 0 && (
+                          <button type="button" onClick={() => markRead(unreadGroups.flatMap((g) => g.notificationIds || []), unreadGroups.map((g) => g.id))} className="text-xs text-primary hover:underline">
+                            Mark this page read
+                          </button>
+                        )}
+                      </div>
+                      {sliceData?.loading && sliceItems.length === 0 && <Spinner />}
+                      {sliceData?.error && <div className="text-sm text-bearish">{sliceData.error}</div>}
+                      {!sliceData?.loading && !sliceData?.error && sliceData && sliceItems.length === 0 && <div className="text-sm text-on-surface-variant pt-xs">No {label.toLowerCase()} crossovers match.</div>}
+                      <ul className="flex flex-col gap-xs">
+                        {sliceItems.map((g) => {
+                          // Sorted by time: a sub-header per bar time. Other sorts list the cards straight.
+                          const header = sortBy === 'time' ? `Crossed ${formatCrossoverTime(g)}` : null
+                          const showHeader = header !== null && header !== lastHeader
+                          lastHeader = header
+                          return (
+                            <li key={g.id}>
+                              {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
+                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} />
+                            </li>
+                          )
+                        })}
+                      </ul>
+                      <Pagination page={slicePage} total={sliceData?.total ?? sliceTotal ?? 0} onChange={(next) => setSectionPage(viewKey, next)} />
+                      {sliceData?.capped && <div className="text-[10px] text-on-surface-variant pt-xs">Sorted within the newest 2000 {label.toLowerCase()} cards of this timeframe.</div>}
+                    </div>
+                  )
+                })}
+                <div className="text-[10px] text-on-surface-variant">{total} crossovers · ★ = indicators that crossed on the same bar</div>
+              </div>
+            )}
+
+            {!isCollapsed && !sliced && (
               <div className="px-md pb-md">
                 {data?.loading && items.length === 0 && <Spinner />}
                 {data?.error && <div className="text-sm text-bearish">{data.error}</div>}
-                {grouped && !data?.loading && items.length === 0 && <div className="text-sm text-on-surface-variant">No crossovers match on this page.</div>}
                 <ul className="flex flex-col gap-xs">
-                  {grouped &&
-                    items.map((g) => {
-                      // Sub-headers: "Indices" once for the pinned index cards, then one per bar time.
-                      const header = g.isIndex ? 'Indices' : `Crossed ${formatCrossoverTime(g)}`
-                      const showHeader = header !== lastHeader
-                      lastHeader = header
-                      return (
-                        <li key={g.id}>
-                          {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                          <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} />
-                        </li>
-                      )
-                    })}
-                  {!grouped && items.map((n) => {
+                  {items.map((n) => {
                     const isRead = n.read || readIds.has(n.id)
                     const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null
                     const showBarHeader = barKey != null && barKey !== lastBar
@@ -661,7 +739,6 @@ function NotificationsTab({ onTabChange }) {
                   })}
                 </ul>
                 <Pagination page={page} total={data?.total ?? total} onChange={(next) => setSectionPage(key, next)} />
-                {grouped && data?.total != null && <div className="text-[10px] text-on-surface-variant pt-xs">{data.total} card{data.total === 1 ? '' : 's'} ({total} crossovers) · ★ = indicators that crossed on the same bar</div>}
               </div>
             )}
           </section>

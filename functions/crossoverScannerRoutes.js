@@ -17,6 +17,7 @@ import {
   getScannerSettings,
   saveScannerSettings,
   getRunStatus,
+  setScannerSymbolMargin,
   listAllNotifications,
   listNotificationsSince,
   queryNotificationsPage,
@@ -35,6 +36,7 @@ import {
   acquireManualRunLease,
   releaseManualRunLease,
 } from './crossoverScannerFirestoreClient.js'
+import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, GROUP_ORDERS, GROUP_SORTS } from './crossoverGroupSort.js'
 import { buildNotificationWorkbook } from './crossoverExport.js'
 import { buildCrossoverChart } from './crossoverChartData.js'
 import { readCandleWindow } from './crossoverCandleWindow.js'
@@ -204,6 +206,23 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
+  // NRML margin of one symbol (shown on the Notifications cards and in the
+  // export). A non-negative number, or null / '' to clear it.
+  app.put('/crossover-scanner/symbols/:id/margin', async (req, res) => {
+    try {
+      const raw = req.body?.nrmlMargin
+      const clear = raw === null || raw === ''
+      const value = clear ? null : Number(raw)
+      if (!clear && (typeof raw === 'boolean' || !Number.isFinite(value) || value < 0)) return res.status(400).json({ error: 'nrmlMargin must be a number >= 0, or empty to clear it' })
+      const found = await setScannerSymbolMargin(req.params.id, value)
+      if (!found) return res.status(404).json({ error: 'Symbol not found' })
+      res.json({ status: 'SUCCESS', nrmlMargin: value })
+    } catch (error) {
+      console.error('Error saving NRML margin:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
   app.delete('/crossover-scanner/symbols/:id', async (req, res) => {
     try {
       await deactivateScannerSymbol(req.params.id)
@@ -271,7 +290,7 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
         dueSymbols: symbols.filter((s) => isIntervalDue(interval, s.scanState?.[interval], nowSeconds)).length,
         lastRun: runStatus.intervals?.[interval] || null,
       }))
-      res.json({ status: 'SUCCESS', symbolCount: symbols.length, lastTickAt: runStatus.lastTickAt || null, token: runStatus.token || null, intervals })
+      res.json({ status: 'SUCCESS', symbolCount: symbols.length, lastTickAt: runStatus.lastTickAt || null, lastTickDue: runStatus.lastTickDue ?? null, token: runStatus.token || null, intervals })
     } catch (error) {
       console.error('Error reading crossover scanner status:', error.message)
       res.status(500).json({ error: error.message })
@@ -395,8 +414,18 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       if (error) return res.status(400).json({ error })
       const page = Math.max(Number.parseInt(req.query.page, 10) || 1, 1)
       const pageSize = Math.min(Math.max(Number.parseInt(req.query.pageSize, 10) || 25, 1), MAX_PAGE_SIZE)
-      const { items, total, indexTotal } = await queryCrossoverGroupsPage(section, filters, { page, pageSize })
-      res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, groups: items })
+      const group = req.query.group === undefined || req.query.group === '' ? null : String(req.query.group)
+      if (group !== null && !['index', 'stock'].includes(group)) return res.status(400).json({ error: 'group must be index or stock' })
+      const sort = req.query.sort ? String(req.query.sort) : DEFAULT_GROUP_SORT
+      const order = req.query.order ? String(req.query.order) : DEFAULT_GROUP_ORDER
+      if (!GROUP_SORTS.includes(sort)) return res.status(400).json({ error: `sort must be one of ${GROUP_SORTS.join(', ')}` })
+      if (!GROUP_ORDERS.includes(order)) return res.status(400).json({ error: `order must be one of ${GROUP_ORDERS.join(', ')}` })
+      const { items, total, indexTotal, capped } = await queryCrossoverGroupsPage(section, filters, { page, pageSize, group, sort, order })
+      // NRML margin lives on the scanner symbols (edited on the Scanner page), so it is
+      // attached at read time and a changed value shows up on the next load.
+      const margins = new Map((await listActiveScannerSymbols()).map((entry) => [`${entry.exchange}_${entry.symbol}`, entry.nrmlMargin ?? null]))
+      const groups = items.map((item) => ({ ...item, nrmlMargin: margins.get(`${item.exchange}_${item.symbol}`) ?? null }))
+      res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, capped, sort, order, groups })
     } catch (error) {
       console.error('Error listing notification groups:', error.message)
       res.status(500).json({ error: error.message })

@@ -1352,6 +1352,7 @@ async function runScheduledScan(label, gate) {
   const startedAt = Date.now()
   let result = await runDispatch({ groww_token, now })
   console.log(`${label} result:`, JSON.stringify(result))
+  if (result.due === 0) console.log(`${label}: tick ran at ${now.toISOString()}, no bar due yet (first 15-min bar closes 09:30 IST)`)
   for (let pass = 1; pass <= SETTLE_PASSES && result.notPublished > 0; pass++) {
     // Stay inside the 900 s function timeout: wait, then give the pass what is left of ~840 s.
     const remaining = 840000 - (Date.now() - startedAt) - SETTLE_WAIT_MS

@@ -94,6 +94,8 @@ function toPlotlyDate(timestampSeconds) {
 // for the 4 Hour interval specifically: Groww's 4-hour bars are timestamped
 // on a fixed 08:00/12:00 clock grid, not 9:15/13:15, so that assumption put
 // a real candle's own timestamp inside the span being hidden.
+const istDayIndex = (timestampSeconds) => Math.floor((timestampSeconds + 5.5 * 3600) / 86400)
+
 function computeRangebreaks(candles) {
   const rangebreaks = [{ bounds: ['sat', 'mon'] }]
   if (candles.length < 2) return rangebreaks
@@ -107,6 +109,11 @@ function computeRangebreaks(candles) {
     const currTs = candles[i].timestamp
     const gapSeconds = currTs - prevTs
     if (gapSeconds <= baseIntervalSeconds * 1.5) continue // normal spacing, nothing to collapse
+    // Two candles on the SAME IST day with a hole between them means bars are
+    // missing mid-session (not overnight / weekend / holiday). Leave that blank
+    // so the hole is visible instead of silently squeezing it out - the 4-hour
+    // 08:00 -> 12:00 step is the base interval, so it never reaches this line.
+    if (istDayIndex(prevTs) === istDayIndex(currTs)) continue
 
     // Leave a small pad on each side so the two real candles bounding this
     // break keep their own normal-looking width instead of sitting flush
