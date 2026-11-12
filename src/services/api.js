@@ -463,6 +463,17 @@ export const getCrossoverStatus = async () => {
 
 // Saves the table order as the display order everywhere (cards, overview,
 // export). `symbols` = symbol names in priority order.
+// NRML margin of one scanner symbol (number >= 0, or null / '' to clear it).
+export const saveCrossoverSymbolMargin = async (id, nrmlMargin) => {
+  try {
+    const response = await apiClient.put(`/crossover-scanner/symbols/${encodeURIComponent(id)}/margin`, { nrmlMargin })
+    return response.data
+  } catch (error) {
+    console.error('Error saving NRML margin:', error)
+    throw error
+  }
+}
+
 export const saveCrossoverSymbolOrder = async (symbols) => {
   try {
     const response = await apiClient.put('/crossover-scanner/symbols/order', { symbols })

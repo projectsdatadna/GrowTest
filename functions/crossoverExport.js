@@ -4,7 +4,7 @@
  *
  *   row 1: A1:C1 blank (merged), then one merged 6-column block per timeframe
  *          (15 Mins / 1 Hour / 4 Hour / Daily / Weekly)
- *   row 2: SYMBOL | Bullish/ Bearish | Price | Price | Crossover Time, then per
+ *   row 2: SYMBOL | Bullish/ Bearish | Price | Price | Crossover Time | NRML Margin, then per
  *          timeframe ADX Trend | RSI | DI | MACD | TSI | Stoch RSI Crossover
  *   row 3: hint row
  *   row 4+: ONE row per active scanner symbol (indices first, then list order)
@@ -35,7 +35,7 @@ const INDICATOR_COLUMNS = [
 ]
 const COLUMN_BY_LABEL = new Map(INDICATOR_COLUMNS.flatMap((col, i) => col.labels.map((label) => [label, i])))
 const BLOCK_WIDTH = 1 + INDICATOR_COLUMNS.length // ADX Trend + indicators
-const FIRST_BLOCK_COL = 6 // F
+const FIRST_BLOCK_COL = 7 // G (after the NRML Margin column, F)
 const ADX_TEXT = { increase: 'Increase', decrease: 'Decrease', flat: 'Flat' }
 
 const GREEN = 'FF1E8E3E'
@@ -76,7 +76,7 @@ function intervalData(entry, interval, fallback) {
  * -> card, only for symbols without a scan summary) -> row value arrays. Page
  * filters (indicator, direction, adx, from/to) narrow which crossovers count;
  * with any of them (or a symbol filter) symbols left without a crossover are
- * dropped. Each row: {values: [...35 cells], colors, hasCrossover}.
+ * dropped. Each row: {values: [...36 cells], colors, hasCrossover}.
  */
 export function buildExportRows(symbols, fallback = new Map(), filters = {}) {
   const wantedColumns = filters.indicator?.length ? new Set(filters.indicator.map((l) => COLUMN_BY_LABEL.get(l)).filter((c) => c !== undefined)) : null
@@ -114,7 +114,7 @@ export function buildExportRows(symbols, fallback = new Map(), filters = {}) {
     const bullish = picked.filter((p) => p.signal.direction === 'bullish').length
     const bearish = picked.length - bullish
     const bias = picked.length === 0 ? '' : bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Mixed'
-    const values = [entry.symbol, bias, finiteOrBlank(lastClose ?? newest?.signal.close), finiteOrBlank(newest?.signal.close), newest ? formatIst(newest.end) : '']
+    const values = [entry.symbol, bias, finiteOrBlank(lastClose ?? newest?.signal.close), finiteOrBlank(newest?.signal.close), newest ? formatIst(newest.end) : '', finiteOrBlank(entry.nrmlMargin)]
     const colors = {}
     for (const { adx, cells } of blocks) {
       values.push(adx)
@@ -137,7 +137,7 @@ function writeHeader(sheet) {
   const row1 = sheet.getRow(1)
   const row2 = sheet.getRow(2)
   const row3 = sheet.getRow(3)
-  ;['SYMBOL', 'Bullish/ Bearish', 'Price', 'Price', 'Crossover Time'].forEach((text, i) => {
+  ;['SYMBOL', 'Bullish/ Bearish', 'Price', 'Price', 'Crossover Time', 'NRML Margin'].forEach((text, i) => {
     row2.getCell(i + 1).value = text
   })
   TIMEFRAME_ORDER.forEach((interval, block) => {
@@ -181,6 +181,7 @@ export function renderWorkbook(rows, range = {}) {
   // Wide enough for "YES - Bearish · 06 Nov 26 15:15".
   sheet.getColumn(1).width = 16
   sheet.getColumn(5).width = 19.13
+  sheet.getColumn(6).width = 14
   for (let c = FIRST_BLOCK_COL; c <= FIRST_BLOCK_COL + TIMEFRAME_ORDER.length * BLOCK_WIDTH - 1; c++) sheet.getColumn(c).width = (c - FIRST_BLOCK_COL) % BLOCK_WIDTH === 0 ? 14 : 29
 
   writeHeader(sheet)
@@ -194,7 +195,7 @@ export function renderWorkbook(rows, range = {}) {
   })
   const legend = 4 + rows.length + 1
   const rangeText = range.from || range.to ? `Only crossovers between ${range.from ? istDay(new Date(range.from)) : '...'} and ${range.to ? istDay(new Date(range.to)) : '...'}. ` : ''
-  sheet.getCell(legend, 1).value = `One row per symbol. Each indicator shows its own latest crossover with the date and time it happened (IST): YES - Bullish (green) / YES - Bearish (red); NO = it has not crossed in the loaded history. ${rangeText}Crossover Time = the symbol's newest crossover; ADX Trend = ADX on the timeframe's latest bar.`
+  sheet.getCell(legend, 1).value = `One row per symbol. Each indicator shows its own latest crossover with the date and time it happened (IST): YES - Bullish (green) / YES - Bearish (red); NO = it has not crossed in the loaded history. ${rangeText}Crossover Time = the symbol's newest crossover; NRML Margin = the value saved on the Scanner page; ADX Trend = ADX on the timeframe's latest bar.`
   sheet.getCell(legend, 1).font = { ...BASE_FONT, italic: true }
   return workbook
 }

@@ -423,6 +423,7 @@ export async function runDispatch({ groww_token, now = new Date(), force = false
 
   await saveRunStatus({
     lastTickAt: now.toISOString(),
+    lastTickDue: tasks.length, // 0 = the tick ran but no bar had closed yet (e.g. 09:15)
     intervals: perInterval,
     ...(tokenRejected
       ? { token: { ok: false, message: 'Groww rejected the access token (expired or invalid)', at: now.toISOString() } }

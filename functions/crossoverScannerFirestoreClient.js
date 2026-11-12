@@ -11,6 +11,7 @@
 
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
+import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, isDefaultGroupOrder, sortGroups } from './crossoverGroupSort.js'
 import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION, candleStartRangeForEndRange } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
@@ -191,6 +192,16 @@ async function commitInBatches(items, apply) {
     items.slice(i, i + BATCH_LIMIT).forEach((item) => apply(batch, item))
     await batch.commit()
   }
+}
+
+// NRML margin shown on the Notifications cards and in the export; edited on the
+// Scanner page. null clears it.
+export async function setScannerSymbolMargin(id, nrmlMargin) {
+  const ref = db.collection(SYMBOLS_COLLECTION).doc(id)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) return false
+  await ref.update({ nrmlMargin })
+  return true
 }
 
 // Soft delete, same as the Historical Watchlist - keeps the doc but excludes
@@ -396,31 +407,50 @@ function serializeGroupDoc(doc) {
   return { id: doc.id, ...data, createdAt: data.createdAt?.toDate?.().toISOString() || null }
 }
 
+// Most groups read into memory for a non-default sort of one timeframe slice.
+export const SORT_CAP = 2000
+
 /**
- * One numbered page of a timeframe's crossover groups. Index groups always
- * come first: the page is an offset window over [index groups..., stock
- * groups...], so totals are exact and nothing repeats across pages.
+ * One numbered page of a timeframe's crossover groups, optionally just the
+ * Indices or just the Stocks slice (`group`). Without `group`, index groups come
+ * first. The page is an offset window over the chosen slices, so totals are
+ * exact and nothing repeats across pages. Default order is newest bar first;
+ * other `sort`/`order` values are applied in memory (see crossoverGroupSort.js).
  */
-export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25 } = {}) {
-  if (!DEFAULT_ENABLED_INTERVALS.includes(section)) return { items: [], total: 0, indexTotal: 0 }
-  const indexQuery = groupQuery(section, true, filters)
-  const stockQuery = groupQuery(section, false, filters)
-  if (!indexQuery || !stockQuery) return { items: [], total: 0, indexTotal: 0 }
+export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25, group = null, sort = DEFAULT_GROUP_SORT, order = DEFAULT_GROUP_ORDER } = {}) {
+  if (!DEFAULT_ENABLED_INTERVALS.includes(section)) return { items: [], total: 0, indexTotal: 0, capped: false }
+  // group: 'index' | 'stock' = just that slice; anything else = both (indices first).
+  const flags = group === 'index' ? [true] : group === 'stock' ? [false] : [true, false]
+  const queries = flags.map((isIndex) => groupQuery(section, isIndex, filters))
+  if (queries.some((q) => !q)) return { items: [], total: 0, indexTotal: 0, capped: false }
 
-  const [indexCount, stockCount] = await Promise.all([indexQuery.count().get(), stockQuery.count().get()])
-  const indexTotal = indexCount.data().count
-  const total = indexTotal + stockCount.data().count
-
+  const counts = await Promise.all(queries.map(async (q) => (await q.count().get()).data().count))
+  const total = counts.reduce((sum, n) => sum + n, 0)
+  const indexTotal = flags[0] === true ? counts[0] : 0
   const start = (page - 1) * pageSize
   const end = start + pageSize
-  const fetches = []
-  if (start < indexTotal) fetches.push(indexQuery.offset(start).limit(Math.min(end, indexTotal) - start).get())
-  if (end > indexTotal) {
-    const stockStart = Math.max(0, start - indexTotal)
-    fetches.push(stockQuery.offset(stockStart).limit(end - Math.max(start, indexTotal)).get())
+
+  if (isDefaultGroupOrder(sort, order)) {
+    // Newest bar first, then list order - served by Firestore. The page is an
+    // offset window over [slice 1 groups..., slice 2 groups...].
+    const fetches = []
+    let offset = 0
+    queries.forEach((query, i) => {
+      const sliceStart = offset
+      offset += counts[i]
+      const from = Math.max(start, sliceStart)
+      const to = Math.min(end, offset)
+      if (from < to) fetches.push(query.offset(from - sliceStart).limit(to - from).get())
+    })
+    const snapshots = await Promise.all(fetches)
+    return { items: snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc)), total, indexTotal, capped: false }
   }
-  const snapshots = await Promise.all(fetches)
-  return { items: snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc)), total, indexTotal }
+
+  // Any other order: read the newest SORT_CAP groups of each slice, sort in
+  // memory, then cut the page out of [sorted slice 1..., sorted slice 2...].
+  const snapshots = await Promise.all(queries.map((query) => query.limit(SORT_CAP).get()))
+  const sorted = snapshots.flatMap((snap) => sortGroups(snap.docs.map(serializeGroupDoc), sort, order))
+  return { items: sorted.slice(start, end), total, indexTotal, capped: counts.some((n) => n > SORT_CAP) }
 }
 
 // One merged card by id, or null.
@@ -582,7 +612,7 @@ async function countGroupsForSection(section, filters) {
   return { total, unread, bullish, bearish, unreadBullish, unreadBearish, lastCrossover }
 }
 
-export async function countNotificationsBySection(filters = {}) {
+async function countSectionNotifications(filters = {}) {
   const entries = await Promise.all(
     SECTION_KEYS.map(async (section) => {
       if (filters.adx) {
@@ -618,6 +648,24 @@ export async function countNotificationsBySection(filters = {}) {
     })
   )
   return Object.fromEntries(entries)
+}
+
+// Cards in the Indices / Stocks slice of a timeframe under the page filters
+// (the numbers on the two sub-sections).
+async function countGroupSlices(section, filters) {
+  const queries = [true, false].map((isIndex) => groupQuery(section, isIndex, filters))
+  if (queries.some((q) => !q)) return { indexTotal: 0, stockTotal: 0 }
+  const [indexTotal, stockTotal] = await Promise.all(queries.map(async (q) => (await q.count().get()).data().count))
+  return { indexTotal, stockTotal }
+}
+
+export async function countNotificationsBySection(filters = {}) {
+  const sections = await countSectionNotifications(filters)
+  const slices = await Promise.all(DEFAULT_ENABLED_INTERVALS.map((section) => countGroupSlices(section, filters)))
+  DEFAULT_ENABLED_INTERVALS.forEach((section, i) => {
+    if (sections[section]) Object.assign(sections[section], slices[i])
+  })
+  return sections
 }
 
 // ---------- bulk delete (Notifications page "Delete notifications") ----------
