@@ -1368,6 +1368,12 @@ export const crossoverScanDispatch = onSchedule(
   () => runScheduledScan('crossoverScanDispatch', isQuarterHourTick)
 )
 
+// First run of the day at 09:17 IST (isQuarterHourTick accepts 09:15-09:17 as the opening tick).
+export const crossoverScanOpening = onSchedule(
+  { schedule: '17 9 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
+  () => runScheduledScan('crossoverScanOpening', isQuarterHourTick)
+)
+
 export const crossoverScanCloseout = onSchedule(
   { schedule: '32 15-18 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
   () => runScheduledScan('crossoverScanCloseout', isCloseoutTick)

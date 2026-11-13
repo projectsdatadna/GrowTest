@@ -417,7 +417,7 @@ export const SORT_CAP = 2000
  * exact and nothing repeats across pages. Default order is newest bar first;
  * other `sort`/`order` values are applied in memory (see crossoverGroupSort.js).
  */
-export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25, group = null, sort = DEFAULT_GROUP_SORT, order = DEFAULT_GROUP_ORDER } = {}) {
+export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25, group = null, sort = DEFAULT_GROUP_SORT, order = DEFAULT_GROUP_ORDER, margins = null } = {}) {
   if (!DEFAULT_ENABLED_INTERVALS.includes(section)) return { items: [], total: 0, indexTotal: 0, capped: false }
   // group: 'index' | 'stock' = just that slice; anything else = both (indices first).
   // group 'all' = both slices merged by bar time (newest first), indices before stocks within a bar.
@@ -457,7 +457,12 @@ export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1
   // Any other order: read the newest SORT_CAP groups of each slice, sort in
   // memory, then cut the page out of [sorted slice 1..., sorted slice 2...].
   const snapshots = await Promise.all(queries.map((query) => query.limit(SORT_CAP).get()))
-  const sorted = snapshots.flatMap((snap) => sortGroups(snap.docs.map(serializeGroupDoc), sort, order))
+  // NRML margin lives on the scanner symbols, so the caller passes a lookup for that sort.
+  const withMargin = (doc) => {
+    const item = serializeGroupDoc(doc)
+    return sort === 'nrml' && margins ? { ...item, nrmlMargin: margins.get(`${item.exchange}_${item.symbol}`) ?? null } : item
+  }
+  const sorted = snapshots.flatMap((snap) => sortGroups(snap.docs.map(withMargin), sort, order))
   return { items: sorted.slice(start, end), total, indexTotal, capped: counts.some((n) => n > SORT_CAP) }
 }
 

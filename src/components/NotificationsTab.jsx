@@ -122,55 +122,14 @@ const GROUP_SLICES = [
   { group: 'index', label: 'Indices' },
   { group: 'stock', label: 'Stocks' },
 ]
-// Sorted by time, a timeframe is ONE view ("<tf>:all") split by bar time and, inside
-// each bar, Indices / Stocks. Other sorts use the two slices.
-const ALL_SLICE = { group: 'all', label: 'By crossover time' }
-const viewKeysOf = (section, typeFilter, sort = 'time') =>
-  isGroupedSection(section, typeFilter) ? (sort === 'time' ? [`${section}:all`] : GROUP_SLICES.map((s) => `${section}:${s.group}`)) : [section]
-
-// Cards of one page grouped per bar time (they arrive newest bar first, indices first).
-function BarGroups({ items, groupIsRead, onOpen, chartHover }) {
-  const bars = []
-  for (const g of items) {
-    let bar = bars[bars.length - 1]
-    if (!bar || bar.ts !== g.candleTimestamp) {
-      bar = { ts: g.candleTimestamp, header: `Crossed ${formatCrossoverTime(g)}`, indices: [], stocks: [] }
-      bars.push(bar)
-    }
-    ;(g.isIndex ? bar.indices : bar.stocks).push(g)
-  }
-  const renderCards = (label, cards) =>
-    cards.length > 0 && (
-      <div>
-        <div className="text-[11px] font-semibold uppercase tracking-wide text-on-surface-variant pt-xs pb-xs">
-          {label} <span className="font-normal">{cards.length}</span>
-        </div>
-        <ul className="flex flex-col gap-xs">
-          {cards.map((g) => (
-            <li key={g.id}>
-              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={onOpen} chartHover={chartHover} />
-            </li>
-          ))}
-        </ul>
-      </div>
-    )
-  return (
-    <div className="flex flex-col gap-md">
-      {bars.map((bar) => (
-        <div key={bar.ts} className="rounded-lg border border-outline-variant/50 p-sm">
-          <div className="text-xs font-semibold text-on-surface pb-xs">{bar.header}</div>
-          {renderCards('Indices', bar.indices)}
-          {renderCards('Stocks', bar.stocks)}
-        </div>
-      ))}
-    </div>
-  )
-}
+const viewKeysOf = (section, typeFilter) =>
+  isGroupedSection(section, typeFilter) ? GROUP_SLICES.map((s) => `${section}:${s.group}`) : [section]
 
 const SORT_OPTIONS = [
   { key: 'time', label: 'Time' },
   { key: 'alpha', label: 'Alphabetic' },
   { key: 'price', label: 'Stock value' },
+  { key: 'nrml', label: 'NRML margin' },
 ]
 
 function downloadBlob(blob, filename) {
@@ -360,7 +319,7 @@ function NotificationsTab({ onTabChange }) {
   const [adxStatus, setAdxStatus] = useState('any') // any | increase | decrease | flat
   const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
   const [toDate, setToDate] = useState('')
-  const [sortBy, setSortBy] = useState('time') // time | alpha | price
+  const [sortBy, setSortBy] = useState('time') // time | alpha | price | nrml
   const [sortOrder, setSortOrder] = useState('desc') // asc | desc
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
@@ -368,6 +327,7 @@ function NotificationsTab({ onTabChange }) {
   const chartHover = useCardChartHover()
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
+  const [sliceTab, setSliceTab] = useState({}) // section -> 'index' | 'stock' (default index)
   const [pages, setPages] = useState({}) // section -> current page (default 1)
   const [counts, setCounts] = useState(null) // section -> {total, unread}
   const [sectionData, setSectionData] = useState({}) // section -> {key, items, total, loading, error}
@@ -446,7 +406,7 @@ function NotificationsTab({ onTabChange }) {
   // Open sections load their current page when opened / paged / re-filtered.
   useEffect(() => {
     for (const section of expanded) {
-      for (const viewKey of viewKeysOf(section, typeFilter, sortBy)) {
+      for (const viewKey of viewKeysOf(section, typeFilter)) {
         const page = pages[viewKey] || 1
         if (sectionData[viewKey]?.key !== `${filtersKey}|${sortKey}|${page}`) loadSection(viewKey, page)
       }
@@ -460,7 +420,7 @@ function NotificationsTab({ onTabChange }) {
     if (lastCursorRef.current === liveCursor) return
     lastCursorRef.current = liveCursor
     for (const section of expanded) {
-      for (const viewKey of viewKeysOf(section, typeFilterRef.current, sortRef.current.sortBy)) {
+      for (const viewKey of viewKeysOf(section, typeFilterRef.current)) {
         if ((pages[viewKey] || 1) === 1) loadSection(viewKey, 1)
       }
     }
@@ -521,7 +481,7 @@ function NotificationsTab({ onTabChange }) {
     markAllNotificationsRead()
       .then(() => {
         loadCounts()
-        expanded.forEach((section) => viewKeysOf(section, typeFilterRef.current, sortRef.current.sortBy).forEach((viewKey) => loadSection(viewKey, pages[viewKey] || 1)))
+        expanded.forEach((section) => viewKeysOf(section, typeFilterRef.current).forEach((viewKey) => loadSection(viewKey, pages[viewKey] || 1)))
       })
       .catch((err) => console.error('Failed to mark all notifications read:', err))
   }
@@ -657,7 +617,7 @@ function NotificationsTab({ onTabChange }) {
           aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
         >
           <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : sortBy === 'price' ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : sortBy === 'price' ? 'High-Low' : 'Newest'}
+          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : (sortBy === 'price' || sortBy === 'nrml') ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : (sortBy === 'price' || sortBy === 'nrml') ? 'High-Low' : 'Newest'}
         </button>
       </div>
 
@@ -704,12 +664,30 @@ function NotificationsTab({ onTabChange }) {
 
             {!isCollapsed && sliced && (
               <div className="px-md pb-md flex flex-col gap-md">
-                {(sortBy === 'time' ? [ALL_SLICE] : GROUP_SLICES).map(({ group, label }) => {
+                <div role="tablist" className="flex gap-xs border-b border-outline-variant">
+                  {GROUP_SLICES.map(({ group, label }) => {
+                    const active = (sliceTab[key] || 'index') === group
+                    const n = counts[key][group === 'index' ? 'indexTotal' : 'stockTotal']
+                    return (
+                      <button
+                        key={group}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setSliceTab((current) => ({ ...current, [key]: group }))}
+                        className={`px-md py-xs text-xs font-semibold uppercase tracking-wide border-b-2 -mb-px ${active ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
+                      >
+                        {label} <span className="font-normal">{n ?? ''}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {GROUP_SLICES.filter((s) => s.group === (sliceTab[key] || 'index')).map(({ group, label }) => {
                   const viewKey = `${key}:${group}`
                   const sliceData = sectionData[viewKey]
                   const sliceItems = sliceData?.items || []
                   const slicePage = pages[viewKey] || 1
-                  const sliceTotal = group === 'all' ? total : counts[key][group === 'index' ? 'indexTotal' : 'stockTotal']
+                  const sliceTotal = counts[key][group === 'index' ? 'indexTotal' : 'stockTotal']
                   const unreadGroups = sliceItems.filter((g) => !groupIsRead(g))
                   let lastHeader = null
                   return (
@@ -729,9 +707,6 @@ function NotificationsTab({ onTabChange }) {
                       {sliceData?.error && <div className="text-sm text-bearish">{sliceData.error}</div>}
                       {!sliceData?.loading && !sliceData?.error && sliceData && sliceItems.length === 0 && <div className="text-sm text-on-surface-variant pt-xs">No {label.toLowerCase()} crossovers match.</div>}
                       <div className={sliceData?.loading && sliceItems.length > 0 ? 'opacity-50 pointer-events-none transition-opacity' : ''}>
-                      {group === 'all' ? (
-                        <BarGroups items={sliceItems} groupIsRead={groupIsRead} onOpen={openGroup} chartHover={chartHover} />
-                      ) : (
                       <ul className="flex flex-col gap-xs">
                         {sliceItems.map((g) => {
                           // Sorted by time: a sub-header per bar time. Other sorts list the cards straight.
@@ -746,7 +721,6 @@ function NotificationsTab({ onTabChange }) {
                           )
                         })}
                       </ul>
-                      )}
                       </div>
                       <Pagination page={slicePage} total={sliceData?.total ?? sliceTotal ?? 0} onChange={(next) => setSectionPage(viewKey, next)} />
                       {sliceData?.capped && <div className="text-[10px] text-on-surface-variant pt-xs">Sorted within the newest 2000 {label.toLowerCase()} cards of this timeframe.</div>}

@@ -87,20 +87,18 @@ function BulkResultSummary({ results }) {
 }
 
 // NRML margin of one symbol: read-only text; the pencil asks for confirmation
-// before the box becomes editable. Saves on blur / Enter, Esc cancels, an empty
-// box clears the value. Keeps its own draft so status polling never overwrites it.
+// before the box becomes editable. The tick button / Enter saves; Esc or clicking
+// away discards. An empty box clears the value. Keeps its own draft so status polling never overwrites it.
 function MarginCell({ symbol, onSave }) {
   const saved = symbol.nrmlMargin ?? ''
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(String(saved))
   const [state, setState] = useState('') // '' | 'saving' | 'error'
   const [confirming, setConfirming] = useState(false)
-  const cancelled = useRef(false)
   const inputRef = useRef(null)
 
   const startEdit = () => {
     setConfirming(false)
-    cancelled.current = false
     setDraft(String(saved))
     setState('')
     setEditing(true)
@@ -111,8 +109,9 @@ function MarginCell({ symbol, onSave }) {
     if (editing) inputRef.current?.select()
   }, [editing])
 
+  const cancel = () => setEditing(false)
+
   const commit = async () => {
-    if (cancelled.current) return setEditing(false)
     const text = draft.replace(/[₹,\s]/g, '')
     if (text === String(saved)) return setEditing(false)
     const value = text === '' ? null : Number(text)
@@ -165,24 +164,33 @@ function MarginCell({ symbol, onSave }) {
   }
 
   return (
-    <input
-      ref={inputRef}
-      type="text"
-      inputMode="decimal"
-      value={draft}
-      placeholder="-"
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') e.currentTarget.blur()
-        if (e.key === 'Escape') {
-          cancelled.current = true
-          e.currentTarget.blur()
-        }
-      }}
-      aria-label={`${symbol.symbol} NRML margin`}
-      className="w-28 px-xs py-[2px] rounded border border-primary bg-transparent text-right text-sm text-on-surface"
-    />
+    <span className="inline-flex items-center justify-end gap-xs">
+      <input
+        ref={inputRef}
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        placeholder="-"
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={cancel}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit()
+          if (e.key === 'Escape') cancel()
+        }}
+        aria-label={`${symbol.symbol} NRML margin`}
+        className="w-24 px-xs py-[2px] rounded border border-primary bg-transparent text-right text-sm text-on-surface"
+      />
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={commit}
+        className="text-bullish hover:opacity-80"
+        aria-label={`Save ${symbol.symbol} NRML margin`}
+        title="Save"
+      >
+        <span className="material-symbols-outlined text-[18px]">check</span>
+      </button>
+    </span>
   )
 }
 

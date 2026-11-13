@@ -420,10 +420,10 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       const order = req.query.order ? String(req.query.order) : DEFAULT_GROUP_ORDER
       if (!GROUP_SORTS.includes(sort)) return res.status(400).json({ error: `sort must be one of ${GROUP_SORTS.join(', ')}` })
       if (!GROUP_ORDERS.includes(order)) return res.status(400).json({ error: `order must be one of ${GROUP_ORDERS.join(', ')}` })
-      const { items, total, indexTotal, capped } = await queryCrossoverGroupsPage(section, filters, { page, pageSize, group, sort, order })
       // NRML margin lives on the scanner symbols (edited on the Scanner page), so it is
       // attached at read time and a changed value shows up on the next load.
       const margins = new Map((await listActiveScannerSymbols()).map((entry) => [`${entry.exchange}_${entry.symbol}`, entry.nrmlMargin ?? null]))
+      const { items, total, indexTotal, capped } = await queryCrossoverGroupsPage(section, filters, { page, pageSize, group, sort, order, margins })
       const groups = items.map((item) => ({ ...item, nrmlMargin: margins.get(`${item.exchange}_${item.symbol}`) ?? null }))
       res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, capped, sort, order, groups })
     } catch (error) {

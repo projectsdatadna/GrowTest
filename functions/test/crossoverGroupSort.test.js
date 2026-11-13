@@ -39,3 +39,14 @@ test('timeindex: newest bar first, indices before stocks inside a bar', () => {
   ]
   assert.equal(names(sortGroups(rows, 'timeindex', 'desc')), 'ACC,NIFTY,TCS,BANKNIFTY')
 })
+
+test('nrml margin: sorts by margin, cards without one always last', () => {
+  const rows = [
+    { symbol: 'TCS', nrmlMargin: 500 },
+    { symbol: 'ACC', nrmlMargin: null },
+    { symbol: 'INFY', nrmlMargin: 1500 },
+    { symbol: 'BEL', nrmlMargin: 100 },
+  ]
+  assert.equal(names(sortGroups(rows, 'nrml', 'asc')), 'BEL,TCS,INFY,ACC')
+  assert.equal(names(sortGroups(rows, 'nrml', 'desc')), 'INFY,TCS,BEL,ACC')
+})
