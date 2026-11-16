@@ -18,7 +18,8 @@
  * regular freshness check is not enough).
  */
 
-import { refreshAndLoadWindow } from './crossoverCandleWindow.js'
+import { refreshAndLoadWindow, readCandleWindow } from './crossoverCandleWindow.js'
+import { computeDayChange } from './crossoverDayChange.js'
 import { computeIndicatorSpec } from './technicalIndicators.js'
 import { computeAdxTrend } from './adxTrendIndicator.js'
 import {
@@ -273,7 +274,17 @@ export async function scanSymbolInterval({
   }
 
   // One group (card) per bar: every indicator that crossed on it.
-  for (const group of buildCrossoverGroups(found, { isIndex, sortOrder })) {
+  // Previous-day close for the Daily Change column: the stored 1day window
+  // (or this scan's own candles on the daily timeframe). Never blocks a scan.
+  let dailyCandles = interval === '1day' ? closed : []
+  if (found.length > 0 && interval !== '1day') {
+    try {
+      dailyCandles = await readCandleWindow({ exchange, symbol, interval: '1day' })
+    } catch (error) {
+      console.error(`crossoverScanner: daily window read failed for ${exchange}:${symbol}:`, error.message)
+    }
+  }
+  for (const group of buildCrossoverGroups(found, { isIndex, sortOrder, dailyCandles })) {
     await persistGroup(crossoverGroupId(group), group)
   }
 
@@ -296,7 +307,7 @@ export async function scanSymbolInterval({
  * Merges one scan's crossovers into one group per bar (pure, tested offline).
  * stars = number of distinct indicators that crossed on the bar.
  */
-export function buildCrossoverGroups(found, { isIndex = false, sortOrder = UNLISTED_SORT_ORDER } = {}) {
+export function buildCrossoverGroups(found, { isIndex = false, sortOrder = UNLISTED_SORT_ORDER, dailyCandles = [] } = {}) {
   const byBar = new Map()
   for (const f of found) {
     if (!byBar.has(f.candleTimestamp)) byBar.set(f.candleTimestamp, [])
@@ -310,6 +321,7 @@ export function buildCrossoverGroups(found, { isIndex = false, sortOrder = UNLIS
     const bullishCount = indicators.filter((i) => i.direction === 'bullish').length
     const bearishCount = indicators.length - bullishCount
     const first = items[0]
+    const change = computeDayChange({ closePrice: first.closePrice, candleTimestamp, interval: first.interval, dailyCandles })
     return {
       symbol: first.symbol,
       exchange: first.exchange,
@@ -318,6 +330,9 @@ export function buildCrossoverGroups(found, { isIndex = false, sortOrder = UNLIS
       timeframeLabel: first.timeframeLabel ?? TIMEFRAMES[first.interval]?.label ?? null,
       candleTimestamp,
       closePrice: first.closePrice ?? null,
+      prevClose: change?.prevClose ?? null,
+      dayChange: change?.dayChange ?? null,
+      dayChangePct: change?.dayChangePct ?? null,
       isIndex,
       sortOrder,
       indicators,

@@ -56,8 +56,9 @@ import { isEntryDue, processDueEntry, generateHistoricalWatchlistInsight } from 
 import { syncInstrumentMaster, searchInstruments } from './instrumentMasterSync.js'
 import { registerCrossoverScannerRoutes } from './crossoverScannerRoutes.js'
 import { runDispatch, recordScannerTokenFailure } from './crossoverScanner.js'
-import { deleteOldReadNotifications } from './crossoverScannerFirestoreClient.js'
+import { deleteOldReadNotifications, listActiveScannerSymbols, scannerDb } from './crossoverScannerFirestoreClient.js'
 import { isCloseoutTick, isQuarterHourTick } from './crossoverTimeframes.js'
+import { runOptionChainSnapshotTick, isOptionChainTick, deleteOldSnapshots } from './optionChainIntervalSnapshots.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
 const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
@@ -1380,6 +1381,29 @@ export const crossoverScanCloseout = onSchedule(
 )
 
 /**
+ * Option-chain snapshots for the Notifications "Option chain" hover: a compact
+ * chain (ATM +/- 10 strikes) per optionable scanner symbol every 15 minutes,
+ * 09:15-15:30 IST. Separate from the scan so its Groww calls never eat the scan budget.
+ */
+export const optionChainSnapshotTick = onSchedule(
+  { schedule: '0,15,30,45 9-15 * * 1-5', timeZone: 'Asia/Kolkata', timeoutSeconds: 900, memory: '512MiB' },
+  async () => {
+    const now = new Date()
+    if (!isOptionChainTick(now)) return
+    let groww_token
+    try {
+      groww_token = await getGrowwAccessToken()
+    } catch (error) {
+      console.error('optionChainSnapshotTick: failed to obtain Groww access token:', error.message)
+      return
+    }
+    const [symbols, underlyings] = await Promise.all([listActiveScannerSymbols(), getUnderlyingSymbols()])
+    const stats = await runOptionChainSnapshotTick({ db: scannerDb, symbols, optionable: new Set(underlyings), groww_token, now, deadline: Date.now() + 840000 })
+    console.log('optionChainSnapshotTick result:', JSON.stringify(stats))
+  }
+)
+
+/**
  * Notifications retention - with ~230 scanner symbols a few hundred
  * notifications accumulate every day. Deletes READ notifications older than 30
  * days (unread ones are never touched) once a day, well outside market hours.
@@ -1389,5 +1413,7 @@ export const notificationsCleanup = onSchedule(
   async () => {
     const deleted = await deleteOldReadNotifications({ olderThanDays: 30 })
     console.log(`notificationsCleanup: deleted ${deleted} read notification(s) older than 30 days`)
+    const snapshots = await deleteOldSnapshots(scannerDb)
+    console.log(`notificationsCleanup: deleted ${snapshots} old option-chain snapshot(s)`)
   }
 )

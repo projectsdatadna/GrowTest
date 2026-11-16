@@ -39,6 +39,8 @@ import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTim
 import Spinner from './Spinner'
 import CrossoverGroupCard from './CrossoverGroupCard'
 import { useCardChartHover } from './CardChartHover'
+import { useOptionChainHover } from './OptionChainHover'
+import { useDayChangeQuotes, quoteKey } from './useDayChangeQuotes'
 import RunScanButton from './RunScanButton'
 
 // Crossover indicators, matching the labels the scanner stores in
@@ -325,6 +327,7 @@ function NotificationsTab({ onTabChange }) {
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
   const chartHover = useCardChartHover()
+  const optionChainHover = useOptionChainHover()
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
   const [sliceTab, setSliceTab] = useState({}) // section -> 'index' | 'stock' (default index)
@@ -332,6 +335,12 @@ function NotificationsTab({ onTabChange }) {
   const [counts, setCounts] = useState(null) // section -> {total, unread}
   const [sectionData, setSectionData] = useState({}) // section -> {key, items, total, loading, error}
   const [error, setError] = useState('')
+  // Cards of the open sections: their symbols get a live Daily Change from the quote API.
+  const visibleGroups = useMemo(
+    () => Object.entries(sectionData).filter(([viewKey, data]) => data.grouped && expanded.has(viewKey.split(':')[0])).flatMap(([, data]) => data.items || []),
+    [sectionData, expanded]
+  )
+  const dayQuotes = useDayChangeQuotes(visibleGroups)
 
   useEffect(() => {
     const id = setTimeout(() => setSymbol(symbolInput.trim().toUpperCase()), SYMBOL_DEBOUNCE_MS)
@@ -517,6 +526,7 @@ function NotificationsTab({ onTabChange }) {
   return (
     <div className="flex flex-col gap-lg">
       {chartHover.popover}
+      {optionChainHover.popover}
       <div className="flex items-center justify-between gap-md flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Notifications</h2>
@@ -716,7 +726,7 @@ function NotificationsTab({ onTabChange }) {
                           return (
                             <li key={g.id}>
                               {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} />
+                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} />
                             </li>
                           )
                         })}

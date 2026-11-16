@@ -9,6 +9,7 @@
 
 import { DirectionBadge } from './NotificationContent'
 import { CardChartButton } from './CardChartHover'
+import { OptionChainButton } from './OptionChainHover'
 import { formatCrossoverTime, formatLines, timeframeLabel } from './crossoverFormat'
 
 // Crossover indicators the scanner runs (CROSSOVER_SPECS) - the star scale.
@@ -62,11 +63,32 @@ export function MarginColumn({ margin }) {
   )
 }
 
-export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover }) {
+// Daily change column: live value from Groww's quote API (day_change /
+// day_change_perc); until it arrives (or if the quote fails) the value computed
+// from the stored daily candles is shown, marked with a dotted underline.
+function DayChange({ quote, group }) {
+  const live = quote ?? null
+  const change = live ? live.dayChange : group.dayChange
+  const pct = live ? live.dayChangePct : group.dayChangePct
+  if (change == null || pct == null) return <span className="text-[11px] font-mono text-on-surface-variant" title="Daily change unavailable">-</span>
+  const up = change >= 0
+  const sign = up ? '+' : ''
+  const source = live ? 'Live from Groww quote' : 'Close vs previous day close (quote unavailable)'
+  return (
+    <span
+      className={`text-[11px] font-mono ${up ? 'text-bullish' : 'text-bearish'} ${live ? '' : 'underline decoration-dotted'}`}
+      title={`Daily change ${sign}${change.toFixed(2)} (${sign}${pct.toFixed(2)}%) · ${source}`}
+    >
+      {up ? '▲' : '▼'} {sign}{change.toFixed(2)} ({sign}{pct.toFixed(2)}%)
+    </span>
+  )
+}
+
+export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover, optionChainHover, quote }) {
   return (
     <div
       onClick={() => !isRead && onOpen(group)}
-      className={`px-sm py-xs rounded-lg text-sm flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] gap-sm ${isRead ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
+      className={`px-sm py-xs rounded-lg text-sm flex flex-col md:grid md:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto_minmax(0,1fr)] gap-sm ${isRead ? 'text-on-surface-variant' : 'text-on-surface bg-surface-container-highest cursor-pointer'}`}
     >
       <div className="flex-1 min-w-0 flex flex-col gap-[2px]">
         <div className="flex items-center justify-between gap-sm flex-wrap">
@@ -79,7 +101,6 @@ export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover }
               <span className="text-bullish">▲{group.bullishCount}</span> <span className="text-bearish">▼{group.bearishCount}</span>
             </span>
           </span>
-          <span className="text-[10px] text-on-surface-variant">{formatCrossoverTime(group)}</span>
         </div>
         <ul className="text-xs text-on-surface-variant flex flex-col gap-[2px]">
           {group.indicators.map((indicator) => (
@@ -92,8 +113,19 @@ export default function CrossoverGroupCard({ group, isRead, onOpen, chartHover }
         </ul>
         <div className="text-xs text-on-surface-variant">Close ₹{group.closePrice}</div>
       </div>
-      {/* middle column = the centre of the card */}
-      <div className="flex items-center justify-center">{chartHover && <CardChartButton group={group} hover={chartHover} />}</div>
+      {/* daily change and time stamp columns, before the chart */}
+      <div className="text-xs text-on-surface-variant flex flex-col justify-center gap-[2px] md:border-l border-t md:border-t-0 border-outline-variant pt-xs md:pt-0 md:px-md">
+        <div className="text-[11px] uppercase tracking-wide">Daily change</div>
+        <DayChange quote={quote} group={group} />
+      </div>
+      <div className="text-xs text-on-surface-variant flex flex-col justify-center gap-[2px] md:border-l border-t md:border-t-0 border-outline-variant pt-xs md:pt-0 md:px-md">
+        <div className="text-[11px] uppercase tracking-wide">Time</div>
+        <div className="font-mono text-on-surface">{formatCrossoverTime(group)}</div>
+      </div>
+      {/* centre columns: chart, option chain */}
+      <div className="flex items-center justify-center md:border-l border-t md:border-t-0 border-outline-variant pt-xs md:pt-0 md:px-md">{chartHover && <CardChartButton group={group} hover={chartHover} />}</div>
+      {/* option-chain change column, right after the chart button */}
+      <div className="flex items-center justify-center md:border-l border-t md:border-t-0 border-outline-variant pt-xs md:pt-0 md:px-md">{optionChainHover && <OptionChainButton group={group} hover={optionChainHover} />}</div>
       <div className="md:justify-self-end flex flex-col md:flex-row gap-sm md:gap-md">
         <MarginColumn margin={group.nrmlMargin} />
         <AdxColumn adx={group.adx} />

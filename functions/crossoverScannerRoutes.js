@@ -30,6 +30,7 @@ import {
   listOverview,
   setSymbolOrder,
   getCrossoverGroup,
+  scannerDb,
   queryCrossoverGroupsPage,
   markCrossoverGroupsRead,
   markAllNotificationsAndGroupsRead,
@@ -40,9 +41,11 @@ import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, GROUP_ORDERS, GROUP_SORTS } fr
 import { buildNotificationWorkbook } from './crossoverExport.js'
 import { buildCrossoverChart } from './crossoverChartData.js'
 import { readCandleWindow } from './crossoverCandleWindow.js'
+import { getCardOptionChainDiff } from './optionChainIntervalSnapshots.js'
+import { fetchDayChangeQuotes } from './growwQuotes.js'
 import { runDispatch, isIntervalDue, CROSSOVER_SPECS } from './crossoverScanner.js'
 import { searchInstruments } from './instrumentMasterSync.js'
-import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestExpectedBarEnd } from './crossoverTimeframes.js'
+import { TIMEFRAMES, TIMEFRAME_ORDER, MIN_AGREEMENT_RANGE, isTimeframe, latestExpectedBarEnd, candleEnd } from './crossoverTimeframes.js'
 
 const SYMBOL_PATTERN = /^[A-Z0-9&-]{1,20}$/
 const MAX_BULK_SYMBOLS = 300
@@ -456,6 +459,52 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       })
     } catch (error) {
       console.error('Error building card chart:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Live Daily Change / Daily Change % from Groww's quote API for the symbols on
+  // screen: ?symbols=NSE:RELIANCE,NSE:NIFTY (max 40). Cached ~30 s server-side.
+  app.get('/notifications/quotes', async (req, res) => {
+    try {
+      const items = String(req.query.symbols || '')
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => {
+          const [exchange, symbol] = s.includes(':') ? s.split(':') : ['NSE', s]
+          return { exchange: exchange.toUpperCase(), symbol }
+        })
+        .filter((i) => /^[A-Z]{2,5}$/.test(i.exchange) && /^[A-Za-z0-9&_-]{1,40}$/.test(i.symbol))
+      if (items.length === 0) return res.status(400).json({ error: 'Missing or invalid symbols (use NSE:SYMBOL,...)' })
+      if (items.length > 40) return res.status(400).json({ error: 'At most 40 symbols per request' })
+      const quotes = await fetchDayChangeQuotes(items, await getGrowwAccessToken())
+      res.json({ status: 'SUCCESS', quotes, asOf: new Date().toISOString() })
+    } catch (error) {
+      console.error('Error fetching quotes:', error.message)
+      res.status(error.statusCode || 500).json({ error: error.message })
+    }
+  })
+
+  // Option-chain change for one card: the snapshot at the card's bar end vs one
+  // card-interval earlier (previous, current, difference, %; flagged at +/-5%).
+  // Pure arithmetic over stored snapshots - no AI, no live Groww call.
+  app.get('/notifications/groups/:id/option-chain', async (req, res) => {
+    try {
+      const group = await getCrossoverGroup(req.params.id)
+      if (!group) return res.status(404).json({ error: 'Crossover card not found' })
+      const threshold = Number(req.query.threshold)
+      const result = await getCardOptionChainDiff({
+        db: scannerDb,
+        symbol: group.symbol,
+        interval: group.interval,
+        barEnd: candleEnd(group.interval, group.candleTimestamp),
+        ...(Number.isFinite(threshold) && threshold > 0 ? { thresholdPct: threshold } : {}),
+      })
+      res.set('Cache-Control', 'private, max-age=60')
+      res.json({ status: 'SUCCESS', group: { id: group.id, symbol: group.symbol, interval: group.interval, candleTimestamp: group.candleTimestamp }, ...result })
+    } catch (error) {
+      console.error('Error building option-chain change:', error.message)
       res.status(500).json({ error: error.message })
     }
   })
