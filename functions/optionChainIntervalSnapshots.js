@@ -27,6 +27,9 @@ const GROWW_API_BASE_URL = 'https://api.groww.in/v1'
 // Seconds each card interval looks back for its "previous" snapshot.
 export const LOOKBACK_SECONDS = { '15minute': 900, '1hour': 3600, '4hour': 14400, '1day': 86400, '1week': 7 * 86400 }
 
+// Metric key in a stored snapshot -> label in the diff rows.
+const DIFF_METRICS = [['oi', 'OI'], ['ltp', 'LTP'], ['iv', 'IV'], ['delta', 'Delta'], ['gamma', 'Gamma'], ['theta', 'Theta'], ['vega', 'Vega'], ['rho', 'Rho']]
+
 const round = (n, dp = 2) => (Number.isFinite(n) ? Math.round(n * 10 ** dp) / 10 ** dp : null)
 const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null)
 
@@ -66,7 +69,19 @@ export function compactChain(strikes, underlyingLtp, each = DEFAULT_STRIKES_EACH
   prices.forEach((p, i) => {
     if (Math.abs(p - underlyingLtp) < Math.abs(prices[atm] - underlyingLtp)) atm = i
   })
-  const side = (leg) => (leg ? { ltp: num(leg.ltp), oi: num(leg.open_interest), iv: num(leg.greeks?.iv) } : null)
+  const side = (leg) =>
+    leg
+      ? {
+          ltp: num(leg.ltp),
+          oi: num(leg.open_interest),
+          iv: num(leg.greeks?.iv),
+          delta: num(leg.greeks?.delta),
+          gamma: num(leg.greeks?.gamma),
+          theta: num(leg.greeks?.theta),
+          vega: num(leg.greeks?.vega),
+          rho: num(leg.greeks?.rho),
+        }
+      : null
   return prices.slice(Math.max(0, atm - each), atm + each + 1).map((p) => {
     const data = strikes[String(p)] ?? strikes[p.toFixed(1)] ?? {}
     return { strike: p, ce: side(data.CE), pe: side(data.PE) }
@@ -86,7 +101,7 @@ export function buildOptionChainDiff(prev, curr, thresholdPct = DEFAULT_THRESHOL
   const rows = []
   for (const strike of strikes) {
     for (const [side, label] of [['ce', 'CE'], ['pe', 'PE']]) {
-      for (const [metric, name] of [['oi', 'OI'], ['ltp', 'LTP'], ['iv', 'IV']]) {
+      for (const [metric, name] of DIFF_METRICS) {
         const p = before.get(strike)?.[side]?.[metric] ?? null
         const c = after.get(strike)?.[side]?.[metric] ?? null
         if (p == null && c == null) continue
