@@ -41,6 +41,7 @@ import CrossoverGroupCard from './CrossoverGroupCard'
 import { useCardChartHover } from './CardChartHover'
 import { useOptionChainHover } from './OptionChainHover'
 import { useDayChangeQuotes, quoteKey } from './useDayChangeQuotes'
+import { sameItems } from './liveRefresh'
 import RunScanButton from './RunScanButton'
 
 // Crossover indicators, matching the labels the scanner stores in
@@ -60,6 +61,12 @@ const TYPE_FILTERS = [
 const SYSTEM_KEY = 'system'
 const SECTION_ORDER = [...TIMEFRAME_ORDER, SYSTEM_KEY]
 const PAGE_SIZE = 25
+// Live updates (a scan creates hundreds of crossovers within 1-3 minutes) are
+// coalesced into one counts + page-1 refresh: after the feed has been quiet for
+// DEBOUNCE, but never later than MAX_WAIT after the first change.
+// The feed polls every 5 s, so the debounce must be longer than that to coalesce.
+const LIVE_REFRESH_DEBOUNCE_MS = 8000
+const LIVE_REFRESH_MAX_WAIT_MS = 20000
 const SYMBOL_DEBOUNCE_MS = 300
 
 function sectionLabel(key) {
@@ -391,26 +398,48 @@ function NotificationsTab({ onTabChange }) {
 
   // `viewKey` = a section ("system", or a timeframe when the type filter shows
   // plain notifications) or "<timeframe>:<index|stock>" for one slice of cards.
-  const loadSection = useCallback(async (viewKey, page) => {
+  // `silent` = a live refresh of a slice that already shows cards: no spinner or
+  // dimming, cards are swapped in place, and nothing re-renders if they are identical.
+  const inFlightRef = useRef(new Map()) // viewKey -> request key currently loading
+  const loadSection = useCallback(async (viewKey, page, { silent = false } = {}) => {
     const [section, group] = viewKey.split(':')
     const { sortBy: sort, sortOrder: order } = sortRef.current
     const key = `${JSON.stringify(filtersRef.current)}|${sort}:${order}|${page}`
-    setSectionData((current) => ({ ...current, [viewKey]: { ...current[viewKey], key, loading: true, error: '' } }))
+    if (silent && inFlightRef.current.get(viewKey) === key) return
+    inFlightRef.current.set(viewKey, key)
+    setSectionData((current) => {
+      const existing = current[viewKey]
+      if (silent && existing?.items?.length > 0 && existing.key === key) return current
+      return { ...current, [viewKey]: { ...existing, key, loading: true, error: '' } }
+    })
     try {
       const grouped = isGroupedSection(section, typeFilterRef.current)
       const data = grouped ? await getNotificationGroups(section, { ...filtersRef.current, group, sort, order }, page, PAGE_SIZE) : await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
       const items = grouped ? data.groups : data.notifications
-      setSectionData((current) => (current[viewKey]?.key === key ? { ...current, [viewKey]: { key, grouped, items, total: data.total, capped: Boolean(data.capped), loading: false, error: '' } } : current))
+      setSectionData((current) => {
+        const existing = current[viewKey]
+        if (existing?.key !== key) return current
+        const capped = Boolean(data.capped)
+        if (silent && !existing.loading && !existing.error && existing.total === data.total && existing.capped === capped && sameItems(existing.items, items)) return current
+        return { ...current, [viewKey]: { key, grouped, items, total: data.total, capped, loading: false, error: '' } }
+      })
     } catch (err) {
-      setSectionData((current) => (current[viewKey]?.key === key ? { ...current, [viewKey]: { ...current[viewKey], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } } : current))
+      setSectionData((current) => {
+        if (current[viewKey]?.key !== key) return current
+        // A failed background refresh keeps the cards on screen and stays quiet.
+        if (silent && current[viewKey]?.items?.length > 0) return current
+        return { ...current, [viewKey]: { ...current[viewKey], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } }
+      })
+    } finally {
+      if (inFlightRef.current.get(viewKey) === key) inFlightRef.current.delete(viewKey)
     }
   }, [])
 
-  // Counts: on mount, when filters change, and whenever the live feed or the
-  // unread badge moves (new crossover arrived / something marked read).
+  // Counts: on mount and whenever the filters change (immediate). Live changes
+  // (new crossover / unread badge) go through the coalesced refresh below.
   useEffect(() => {
     loadCounts()
-  }, [filtersKey, liveCursor, unreadBadge, loadCounts])
+  }, [filtersKey, loadCounts])
 
   // Open sections load their current page when opened / paged / re-filtered.
   useEffect(() => {
@@ -422,18 +451,36 @@ function NotificationsTab({ onTabChange }) {
     }
   }, [expanded, pages, filtersKey, sortKey, sortBy, typeFilter, sectionData, loadSection])
 
-  // Live: a new notification refreshes the open sections that show page 1 (later
-  // pages are left alone so the page does not shift under the reader).
-  const lastCursorRef = useRef(liveCursor)
+  // Live: new notifications move the feed cursor and the unread badge. Both feed
+  // ONE debounced refresh (counts + page 1 of the open sections, silently) instead
+  // of reloading the whole tab on every 5 s poll during a scan burst. Sections on
+  // page 2+ are left alone so the page does not shift under the reader.
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
+  const pagesRef = useRef(pages)
+  pagesRef.current = pages
+  const liveRefresh = useRef({ timer: null, firstAt: 0 })
+  const lastLiveSignal = useRef({ liveCursor, unreadBadge })
   useEffect(() => {
-    if (lastCursorRef.current === liveCursor) return
-    lastCursorRef.current = liveCursor
-    for (const section of expanded) {
-      for (const viewKey of viewKeysOf(section, typeFilterRef.current)) {
-        if ((pages[viewKey] || 1) === 1) loadSection(viewKey, 1)
+    const last = lastLiveSignal.current
+    if (last.liveCursor === liveCursor && last.unreadBadge === unreadBadge) return
+    lastLiveSignal.current = { liveCursor, unreadBadge }
+    const state = liveRefresh.current
+    const now = Date.now()
+    if (!state.firstAt) state.firstAt = now
+    clearTimeout(state.timer)
+    const wait = Math.max(0, Math.min(LIVE_REFRESH_DEBOUNCE_MS, state.firstAt + LIVE_REFRESH_MAX_WAIT_MS - now))
+    state.timer = setTimeout(() => {
+      liveRefresh.current = { timer: null, firstAt: 0 }
+      loadCounts()
+      for (const section of expandedRef.current) {
+        for (const viewKey of viewKeysOf(section, typeFilterRef.current)) {
+          if ((pagesRef.current[viewKey] || 1) === 1) loadSection(viewKey, 1, { silent: true })
+        }
       }
-    }
-  }, [liveCursor, expanded, pages, loadSection])
+    }, wait)
+  }, [liveCursor, unreadBadge, loadCounts, loadSection])
+  useEffect(() => () => clearTimeout(liveRefresh.current.timer), [])
 
   // ids = notification ids, groupIds = merged-card ids (a card's notifications
   // are marked read with it, so the bell count stays right).

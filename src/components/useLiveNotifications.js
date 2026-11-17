@@ -19,6 +19,7 @@ import { mergeNotifications, setCursorIfEmpty } from '../store/liveNotifications
 const LIVE_POLL_MS = 5000
 const MAX_BACKOFF_MS = 30000
 const RESYNC_MS = 60000
+const UNREAD_THROTTLE_MS = 10000
 const INITIAL_LIMIT = 500
 
 export default function useLiveNotifications() {
@@ -31,10 +32,30 @@ export default function useLiveNotifications() {
     let failures = 0
     let polling = false
 
-    const refreshUnreadCount = () =>
+    const loadUnreadCount = () =>
       getUnreadNotificationCount()
         .then(({ count }) => dispatch(setUnreadCount(count || 0)))
         .catch((error) => console.error('Failed to load unread count:', error))
+
+    // During a scan burst every poll brings new items; refresh the badge at most
+    // once per UNREAD_THROTTLE_MS (leading call now, one trailing call after).
+    let lastUnreadAt = 0
+    let unreadTimer = null
+    const refreshUnreadCount = () => {
+      const wait = lastUnreadAt + UNREAD_THROTTLE_MS - Date.now()
+      if (wait <= 0) {
+        lastUnreadAt = Date.now()
+        return loadUnreadCount()
+      }
+      if (!unreadTimer) {
+        unreadTimer = setTimeout(() => {
+          unreadTimer = null
+          lastUnreadAt = Date.now()
+          loadUnreadCount()
+        }, wait)
+      }
+      return Promise.resolve()
+    }
 
     const fullLoad = async () => {
       const { notifications } = await getNotifications(INITIAL_LIMIT)
@@ -93,6 +114,7 @@ export default function useLiveNotifications() {
     return () => {
       stopped = true
       clearTimeout(timer)
+      clearTimeout(unreadTimer)
       clearInterval(resync)
       document.removeEventListener('visibilitychange', onVisible)
     }

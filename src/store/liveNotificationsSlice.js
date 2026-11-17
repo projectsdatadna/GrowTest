@@ -1,5 +1,6 @@
 import { createSlice } from '@reduxjs/toolkit'
 import { markNotificationsReadLocally } from './historicalWatchlistSlice'
+import { mergeFeedItems } from '../components/liveRefresh'
 
 // The single live notification feed shared by the bell and the
 // Notifications page (see useLiveNotifications). Server-owned and never
@@ -22,12 +23,10 @@ const liveNotificationsSlice = createSlice({
     // stays read (a poll in flight must not resurrect a dismissed alert).
     mergeNotifications(state, action) {
       const { items = [] } = action.payload
-      const known = new Map(state.items.map((n) => [n.id, n]))
-      for (const n of items) {
-        const existing = known.get(n.id)
-        known.set(n.id, existing?.read ? { ...n, read: true } : n)
-      }
-      state.items = [...known.values()].sort(byNewest).slice(0, MAX_ITEMS)
+      // An unchanged poll leaves state.items untouched, so the Notifications tab
+      // does not re-render every 5 s with nothing new.
+      const merged = mergeFeedItems(state.items, items)
+      if (merged.changed) state.items = merged.items.sort(byNewest).slice(0, MAX_ITEMS)
       const newest = items.reduce((max, n) => (n.createdAt && n.createdAt > max ? n.createdAt : max), state.cursor || '')
       state.cursor = newest || state.cursor
       state.loaded = true
