@@ -39,6 +39,8 @@ import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTim
 import Spinner from './Spinner'
 import CrossoverGroupCard from './CrossoverGroupCard'
 import { useCardChartHover } from './CardChartHover'
+import { useOptionChainHover } from './OptionChainHover'
+import { useDayChangeQuotes, quoteKey } from './useDayChangeQuotes'
 import RunScanButton from './RunScanButton'
 
 // Crossover indicators, matching the labels the scanner stores in
@@ -122,12 +124,14 @@ const GROUP_SLICES = [
   { group: 'index', label: 'Indices' },
   { group: 'stock', label: 'Stocks' },
 ]
-const viewKeysOf = (section, typeFilter) => (isGroupedSection(section, typeFilter) ? GROUP_SLICES.map((s) => `${section}:${s.group}`) : [section])
+const viewKeysOf = (section, typeFilter) =>
+  isGroupedSection(section, typeFilter) ? GROUP_SLICES.map((s) => `${section}:${s.group}`) : [section]
 
 const SORT_OPTIONS = [
   { key: 'time', label: 'Time' },
   { key: 'alpha', label: 'Alphabetic' },
   { key: 'price', label: 'Stock value' },
+  { key: 'nrml', label: 'NRML margin' },
 ]
 
 function downloadBlob(blob, filename) {
@@ -317,18 +321,26 @@ function NotificationsTab({ onTabChange }) {
   const [adxStatus, setAdxStatus] = useState('any') // any | increase | decrease | flat
   const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
   const [toDate, setToDate] = useState('')
-  const [sortBy, setSortBy] = useState('time') // time | alpha | price
+  const [sortBy, setSortBy] = useState('time') // time | alpha | price | nrml
   const [sortOrder, setSortOrder] = useState('desc') // asc | desc
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
   const chartHover = useCardChartHover()
+  const optionChainHover = useOptionChainHover()
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
+  const [sliceTab, setSliceTab] = useState({}) // section -> 'index' | 'stock' (default index)
   const [pages, setPages] = useState({}) // section -> current page (default 1)
   const [counts, setCounts] = useState(null) // section -> {total, unread}
   const [sectionData, setSectionData] = useState({}) // section -> {key, items, total, loading, error}
   const [error, setError] = useState('')
+  // Cards of the open sections: their symbols get a live Daily Change from the quote API.
+  const visibleGroups = useMemo(
+    () => Object.entries(sectionData).filter(([viewKey, data]) => data.grouped && expanded.has(viewKey.split(':')[0])).flatMap(([, data]) => data.items || []),
+    [sectionData, expanded]
+  )
+  const dayQuotes = useDayChangeQuotes(visibleGroups)
 
   useEffect(() => {
     const id = setTimeout(() => setSymbol(symbolInput.trim().toUpperCase()), SYMBOL_DEBOUNCE_MS)
@@ -408,7 +420,7 @@ function NotificationsTab({ onTabChange }) {
         if (sectionData[viewKey]?.key !== `${filtersKey}|${sortKey}|${page}`) loadSection(viewKey, page)
       }
     }
-  }, [expanded, pages, filtersKey, sortKey, typeFilter, sectionData, loadSection])
+  }, [expanded, pages, filtersKey, sortKey, sortBy, typeFilter, sectionData, loadSection])
 
   // Live: a new notification refreshes the open sections that show page 1 (later
   // pages are left alone so the page does not shift under the reader).
@@ -514,6 +526,7 @@ function NotificationsTab({ onTabChange }) {
   return (
     <div className="flex flex-col gap-lg">
       {chartHover.popover}
+      {optionChainHover.popover}
       <div className="flex items-center justify-between gap-md flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Notifications</h2>
@@ -605,6 +618,7 @@ function NotificationsTab({ onTabChange }) {
             ))}
           </select>
         </label>
+        {Object.values(sectionData).some((d) => d?.loading) && <Spinner className="text-primary" />}
         <button
           type="button"
           onClick={() => setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
@@ -613,7 +627,7 @@ function NotificationsTab({ onTabChange }) {
           aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
         >
           <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : sortBy === 'price' ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : sortBy === 'price' ? 'High-Low' : 'Newest'}
+          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : (sortBy === 'price' || sortBy === 'nrml') ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : (sortBy === 'price' || sortBy === 'nrml') ? 'High-Low' : 'Newest'}
         </button>
       </div>
 
@@ -660,7 +674,25 @@ function NotificationsTab({ onTabChange }) {
 
             {!isCollapsed && sliced && (
               <div className="px-md pb-md flex flex-col gap-md">
-                {GROUP_SLICES.map(({ group, label }) => {
+                <div role="tablist" className="flex gap-xs border-b border-outline-variant">
+                  {GROUP_SLICES.map(({ group, label }) => {
+                    const active = (sliceTab[key] || 'index') === group
+                    const n = counts[key][group === 'index' ? 'indexTotal' : 'stockTotal']
+                    return (
+                      <button
+                        key={group}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setSliceTab((current) => ({ ...current, [key]: group }))}
+                        className={`px-md py-xs text-xs font-semibold uppercase tracking-wide border-b-2 -mb-px ${active ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
+                      >
+                        {label} <span className="font-normal">{n ?? ''}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {GROUP_SLICES.filter((s) => s.group === (sliceTab[key] || 'index')).map(({ group, label }) => {
                   const viewKey = `${key}:${group}`
                   const sliceData = sectionData[viewKey]
                   const sliceItems = sliceData?.items || []
@@ -674,6 +706,7 @@ function NotificationsTab({ onTabChange }) {
                         <span className="text-xs font-semibold uppercase tracking-wide text-on-surface">
                           {label} <span className="font-normal text-on-surface-variant">{sliceTotal ?? sliceData?.total ?? ''}</span>
                         </span>
+                        {sliceData?.loading && sliceItems.length > 0 && <Spinner className="text-primary" />}
                         {unreadGroups.length > 0 && (
                           <button type="button" onClick={() => markRead(unreadGroups.flatMap((g) => g.notificationIds || []), unreadGroups.map((g) => g.id))} className="text-xs text-primary hover:underline">
                             Mark this page read
@@ -683,6 +716,7 @@ function NotificationsTab({ onTabChange }) {
                       {sliceData?.loading && sliceItems.length === 0 && <Spinner />}
                       {sliceData?.error && <div className="text-sm text-bearish">{sliceData.error}</div>}
                       {!sliceData?.loading && !sliceData?.error && sliceData && sliceItems.length === 0 && <div className="text-sm text-on-surface-variant pt-xs">No {label.toLowerCase()} crossovers match.</div>}
+                      <div className={sliceData?.loading && sliceItems.length > 0 ? 'opacity-50 pointer-events-none transition-opacity' : ''}>
                       <ul className="flex flex-col gap-xs">
                         {sliceItems.map((g) => {
                           // Sorted by time: a sub-header per bar time. Other sorts list the cards straight.
@@ -692,11 +726,12 @@ function NotificationsTab({ onTabChange }) {
                           return (
                             <li key={g.id}>
                               {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} />
+                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} />
                             </li>
                           )
                         })}
                       </ul>
+                      </div>
                       <Pagination page={slicePage} total={sliceData?.total ?? sliceTotal ?? 0} onChange={(next) => setSectionPage(viewKey, next)} />
                       {sliceData?.capped && <div className="text-[10px] text-on-surface-variant pt-xs">Sorted within the newest 2000 {label.toLowerCase()} cards of this timeframe.</div>}
                     </div>
@@ -710,7 +745,8 @@ function NotificationsTab({ onTabChange }) {
               <div className="px-md pb-md">
                 {data?.loading && items.length === 0 && <Spinner />}
                 {data?.error && <div className="text-sm text-bearish">{data.error}</div>}
-                <ul className="flex flex-col gap-xs">
+                {data?.loading && items.length > 0 && <Spinner className="text-primary" />}
+                <ul className={`flex flex-col gap-xs ${data?.loading && items.length > 0 ? 'opacity-50 pointer-events-none transition-opacity' : ''}`}>
                   {items.map((n) => {
                     const isRead = n.read || readIds.has(n.id)
                     const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null

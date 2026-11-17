@@ -29,3 +29,24 @@ test('does not mutate its input; only time/desc is the Firestore default order',
   assert.equal(isDefaultGroupOrder('time', 'asc'), false)
   assert.equal(isDefaultGroupOrder('alpha', 'desc'), false)
 })
+
+test('timeindex: newest bar first, indices before stocks inside a bar', () => {
+  const rows = [
+    { symbol: 'TCS', candleTimestamp: 200, isIndex: false, sortOrder: 1 },
+    { symbol: 'NIFTY', candleTimestamp: 200, isIndex: true, sortOrder: 9 },
+    { symbol: 'ACC', candleTimestamp: 300, isIndex: false, sortOrder: 2 },
+    { symbol: 'BANKNIFTY', candleTimestamp: 100, isIndex: true, sortOrder: 0 },
+  ]
+  assert.equal(names(sortGroups(rows, 'timeindex', 'desc')), 'ACC,NIFTY,TCS,BANKNIFTY')
+})
+
+test('nrml margin: sorts by margin, cards without one always last', () => {
+  const rows = [
+    { symbol: 'TCS', nrmlMargin: 500 },
+    { symbol: 'ACC', nrmlMargin: null },
+    { symbol: 'INFY', nrmlMargin: 1500 },
+    { symbol: 'BEL', nrmlMargin: 100 },
+  ]
+  assert.equal(names(sortGroups(rows, 'nrml', 'asc')), 'BEL,TCS,INFY,ACC')
+  assert.equal(names(sortGroups(rows, 'nrml', 'desc')), 'INFY,TCS,BEL,ACC')
+})

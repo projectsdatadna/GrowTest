@@ -526,6 +526,31 @@ export const exportNotificationsExcel = async (filters = {}) => {
   }
 }
 
+// Live Daily Change / Daily Change % (Groww quote API) for up to 40 symbols:
+// items = [{exchange, symbol}] -> { "NSE:RELIANCE": {dayChange, dayChangePct, lastPrice, prevClose} | null }.
+export const getDayChangeQuotes = async (items) => {
+  try {
+    const symbols = items.map((i) => `${i.exchange}:${i.symbol}`).join(',')
+    const response = await apiClient.get('/notifications/quotes', { params: { symbols }, timeout: 60000 })
+    return response.data.quotes || {}
+  } catch (error) {
+    console.error('Error fetching day-change quotes:', error)
+    throw error
+  }
+}
+
+// Option-chain change behind one crossover card's hover: snapshot at the card's
+// bar vs one card-interval earlier (previous, current, difference, %).
+export const getCrossoverGroupOptionChain = async (groupId, { all = false } = {}) => {
+  try {
+    const response = await apiClient.get(`/notifications/groups/${encodeURIComponent(groupId)}/option-chain`, { params: all ? { all: 1 } : {} })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching option chain change:', error)
+    throw error
+  }
+}
+
 // Hover chart of one crossover card: stored candles around the crossover bar
 // plus the series for its indicators.
 export const getCrossoverGroupChart = async (groupId) => {

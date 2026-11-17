@@ -7,10 +7,11 @@
  *   sort  'time'  - crossover bar time (candleTimestamp), then list order
  *         'alpha' - symbol A-Z
  *         'price' - stock value: the close price of the crossover bar
+ *         'nrml'  - NRML margin of the symbol (cards without one sort last)
  *   order 'asc' | 'desc'
  */
 
-export const GROUP_SORTS = ["time", "alpha", "price"];
+export const GROUP_SORTS = ["time", "alpha", "price", "nrml"];
 export const GROUP_ORDERS = ["asc", "desc"];
 export const DEFAULT_GROUP_SORT = "time";
 export const DEFAULT_GROUP_ORDER = "desc";
@@ -47,6 +48,20 @@ export function sortGroups(
         );
       return dir * (a.closePrice - b.closePrice) || bySymbol(a, b);
     },
+    nrml: (a, b) => {
+      if (!isNum(a.nrmlMargin) || !isNum(b.nrmlMargin))
+        return (
+          (isNum(b.nrmlMargin) ? 1 : 0) - (isNum(a.nrmlMargin) ? 1 : 0) ||
+          bySymbol(a, b)
+        );
+      return dir * (a.nrmlMargin - b.nrmlMargin) || bySymbol(a, b);
+    },
+    // Bar time, then indices before stocks within one bar, then list order.
+    timeindex: (a, b) =>
+      dir * (a.candleTimestamp - b.candleTimestamp) ||
+      (b.isIndex ? 1 : 0) - (a.isIndex ? 1 : 0) ||
+      byList(a, b) ||
+      bySymbol(a, b),
     time: (a, b) =>
       dir * (a.candleTimestamp - b.candleTimestamp) ||
       byList(a, b) ||
