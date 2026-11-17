@@ -500,6 +500,7 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
         interval: group.interval,
         barEnd: candleEnd(group.interval, group.candleTimestamp),
         ...(Number.isFinite(threshold) && threshold > 0 ? { thresholdPct: threshold } : {}),
+        ...(req.query.all === '1' ? { strikesEachSide: null } : {}),
       })
       res.set('Cache-Control', 'private, max-age=60')
       res.json({ status: 'SUCCESS', group: { id: group.id, symbol: group.symbol, interval: group.interval, candleTimestamp: group.candleTimestamp }, ...result })

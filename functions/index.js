@@ -58,7 +58,7 @@ import { registerCrossoverScannerRoutes } from './crossoverScannerRoutes.js'
 import { runDispatch, recordScannerTokenFailure } from './crossoverScanner.js'
 import { deleteOldReadNotifications, listActiveScannerSymbols, scannerDb } from './crossoverScannerFirestoreClient.js'
 import { isCloseoutTick, isQuarterHourTick } from './crossoverTimeframes.js'
-import { runOptionChainSnapshotTick, isOptionChainTick, deleteOldSnapshots } from './optionChainIntervalSnapshots.js'
+import { runOptionChainSnapshotTick, isOptionChainTick } from './optionChainIntervalSnapshots.js'
 
 const AZURE_OPENAI_API_KEY_SECRET = defineSecret('AZURE_OPENAI_API_KEY')
 const AZURE_OPENAI_ENDPOINT_SECRET = defineSecret('AZURE_OPENAI_ENDPOINT')
@@ -1413,7 +1413,5 @@ export const notificationsCleanup = onSchedule(
   async () => {
     const deleted = await deleteOldReadNotifications({ olderThanDays: 30 })
     console.log(`notificationsCleanup: deleted ${deleted} read notification(s) older than 30 days`)
-    const snapshots = await deleteOldSnapshots(scannerDb)
-    console.log(`notificationsCleanup: deleted ${snapshots} old option-chain snapshot(s)`)
   }
 )

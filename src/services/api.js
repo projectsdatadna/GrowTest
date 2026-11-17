@@ -541,9 +541,9 @@ export const getDayChangeQuotes = async (items) => {
 
 // Option-chain change behind one crossover card's hover: snapshot at the card's
 // bar vs one card-interval earlier (previous, current, difference, %).
-export const getCrossoverGroupOptionChain = async (groupId) => {
+export const getCrossoverGroupOptionChain = async (groupId, { all = false } = {}) => {
   try {
-    const response = await apiClient.get(`/notifications/groups/${encodeURIComponent(groupId)}/option-chain`)
+    const response = await apiClient.get(`/notifications/groups/${encodeURIComponent(groupId)}/option-chain`, { params: all ? { all: 1 } : {} })
     return response.data
   } catch (error) {
     console.error('Error fetching option chain change:', error)

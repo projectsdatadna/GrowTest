@@ -50,16 +50,18 @@ export function OptionChainPanel({ group }) {
   const [state, setState] = useState({ loading: true, error: null, data: null })
   const [metric, setMetric] = useState('OI')
   const [flaggedOnly, setFlaggedOnly] = useState(true)
+  const [allStrikes, setAllStrikes] = useState(false) // default: ATM ±10; every stored strike when ticked
 
   useEffect(() => {
     let cancelled = false
-    getCrossoverGroupOptionChain(group.id)
+    setState((current) => ({ ...current, loading: true }))
+    getCrossoverGroupOptionChain(group.id, { all: allStrikes })
       .then((data) => !cancelled && setState({ loading: false, error: null, data }))
       .catch((error) => !cancelled && setState({ loading: false, error: error.response?.data?.error || error.message, data: null }))
     return () => {
       cancelled = true
     }
-  }, [group.id])
+  }, [group.id, allStrikes])
 
   if (state.loading) return <div className="text-xs text-on-surface-variant py-md">Loading option chain…</div>
   if (state.error) return <div className="text-xs text-bearish py-md">Could not load option chain: {state.error}</div>
@@ -93,6 +95,9 @@ export function OptionChainPanel({ group }) {
               </button>
             ))}
           </div>
+          <label className="flex items-center gap-xs text-on-surface-variant" title="Off: ATM ±10 strikes. On: every stored strike of this expiry">
+            <input type="checkbox" checked={allStrikes} onChange={(e) => setAllStrikes(e.target.checked)} />All strikes{data.totalStrikes ? ` (${data.totalStrikes})` : ''}
+          </label>
           <label className={`flex items-center gap-xs text-on-surface-variant ${isGreek ? 'opacity-50' : ''}`} title={isGreek ? 'Filter applies to OI / LTP / IV' : undefined}>
             <input type="checkbox" checked={flaggedOnly} disabled={isGreek} onChange={(e) => setFlaggedOnly(e.target.checked)} />±{data.thresholdPct}% only
           </label>

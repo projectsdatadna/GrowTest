@@ -2993,5 +2993,11 @@
       ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "optionChainIntervalSnapshots",
+      "fieldPath": "strikes",
+      "indexes": []
+    }
+  ]
 }

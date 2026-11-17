@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { tickOf, pickNearestExpiry, compactChain, buildOptionChainDiff } from '../optionChainIntervalSnapshots.js'
+import { tickOf, pickNearestExpiry, compactChain, buildOptionChainDiff, previousExpectedTick, limitRowsToAtm } from '../optionChainIntervalSnapshots.js'
 
 const leg = (ltp, oi, iv, greeks = {}) => ({ ltp, open_interest: oi, greeks: { iv, ...greeks } })
 
@@ -60,4 +60,27 @@ test('diff includes Greeks rows; a zero previous value gives no %', () => {
   assert.equal(find('Gamma').pct, null)
   assert.equal(find('Gamma').flag, false)
   assert.equal(find('Theta'), undefined)
+})
+
+test('compactChain with no limit keeps every strike', () => {
+  const strikes = {}
+  for (let k = 100; k <= 500; k += 10) strikes[k] = { CE: leg(1, 1, 0.1), PE: leg(1, 1, 0.1) }
+  assert.equal(compactChain(strikes, 300).length, 41)
+  assert.equal(compactChain(strikes, 300, 5).length, 11)
+})
+
+test('previousExpectedTick: none for the 09:15 IST tick, else 15 minutes earlier', () => {
+  const ist = (h, m) => Date.UTC(2025, 0, 6, h, m) / 1000 - 19800
+  assert.equal(previousExpectedTick(ist(9, 15)), null)
+  assert.equal(previousExpectedTick(ist(9, 30)), ist(9, 15))
+  assert.equal(previousExpectedTick(ist(15, 30)), ist(15, 15))
+})
+
+test('limitRowsToAtm keeps ATM +/- N strikes and reports the total', () => {
+  const rows = []
+  for (let k = 100; k <= 300; k += 10) rows.push({ strike: k, side: 'CE', metric: 'OI' })
+  const out = limitRowsToAtm(rows, 201, 2)
+  assert.deepEqual([...new Set(out.rows.map((r) => r.strike))], [180, 190, 200, 210, 220])
+  assert.equal(out.totalStrikes, 21)
+  assert.equal(limitRowsToAtm(rows, 201, null).rows.length, 21)
 })
