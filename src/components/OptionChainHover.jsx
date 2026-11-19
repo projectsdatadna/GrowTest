@@ -28,15 +28,22 @@ const fmt = (value, metric) => {
 }
 const signed = (value, metric) => (value == null ? '-' : `${value > 0 ? '+' : ''}${fmt(value, metric)}`)
 const tone = (diff) => (diff > 0 ? 'text-bullish' : diff < 0 ? 'text-bearish' : 'text-on-surface-variant')
+const signalTone = (signal) => (signal === 'bullish' ? 'text-bullish' : signal === 'bearish' ? 'text-bearish' : 'text-on-surface-variant')
+const isSignificant = (cell) => cell && cell.significance !== 'noise' && cell.significance !== 'insufficient-data'
+const MAX_INTERPRETATIONS = 12
 
-function SideCells({ cell, metric, threshold }) {
+function SideCells({ cell, metric, threshold, dim }) {
   if (!cell) return <td className="px-xs text-center text-on-surface-variant" colSpan={4}>-</td>
+  const dimCls = dim ? 'opacity-40' : ''
   return (
     <>
-      <td className="px-xs text-right font-mono">{fmt(cell.prev, metric)}</td>
-      <td className="px-xs text-right font-mono">{fmt(cell.curr, metric)}</td>
-      <td className={`px-xs text-right font-mono ${tone(cell.diff)}`}>{signed(cell.diff, metric)}</td>
-      <td className={`px-xs text-right font-mono ${tone(cell.diff)} ${cell.flag ? 'font-semibold bg-surface-container-highest rounded' : ''}`} title={cell.flag ? `Moved ${threshold}% or more` : undefined}>
+      <td className={`px-xs text-right font-mono ${dimCls}`}>{fmt(cell.prev, metric)}</td>
+      <td className={`px-xs text-right font-mono ${dimCls}`}>{fmt(cell.curr, metric)}</td>
+      <td className={`px-xs text-right font-mono ${tone(cell.diff)} ${dimCls}`}>{signed(cell.diff, metric)}</td>
+      <td
+        className={`px-xs text-right font-mono ${tone(cell.diff)} ${dimCls} ${cell.flag ? 'font-semibold bg-surface-container-highest rounded' : ''}`}
+        title={cell.message || (cell.flag ? `Moved ${threshold}% or more` : undefined)}
+      >
         {cell.pct == null ? '-' : `${cell.pct > 0 ? '+' : ''}${cell.pct}%`}
       </td>
     </>
@@ -74,9 +81,18 @@ export function OptionChainPanel({ group }) {
     byStrike.get(row.strike)[row.side] = row
   }
   const isGreek = GREEK_METRICS.has(metric)
-  const filterActive = flaggedOnly && !isGreek
-  const strikes = [...byStrike.entries()].filter(([, sides]) => !filterActive || sides.CE?.flag || sides.PE?.flag)
-  const flaggedCount = [...byStrike.values()].reduce((n, s) => n + (s.CE?.flag ? 1 : 0) + (s.PE?.flag ? 1 : 0), 0)
+  const passes = (cell) => (isGreek ? isSignificant(cell) : cell?.flag)
+  // Greeks: the table always shows every strike - "Significant only" only dims non-significant
+  // rows, it never removes them (OI/LTP/IV keep the original filter-out behavior).
+  const strikes = [...byStrike.entries()].filter(([, sides]) => isGreek || !flaggedOnly || passes(sides.CE) || passes(sides.PE))
+  const flaggedCount = [...byStrike.values()].reduce((n, s) => n + (passes(s.CE) ? 1 : 0) + (passes(s.PE) ? 1 : 0), 0)
+  const interpretations = isGreek
+    ? [...byStrike.entries()]
+        .flatMap(([strike, sides]) =>
+          ['CE', 'PE'].filter((side) => isSignificant(sides[side])).map((side) => ({ strike, side, cell: sides[side] }))
+        )
+        .sort((a, b) => a.strike - b.strike)
+    : []
 
   return (
     <div className="text-xs">
@@ -84,7 +100,10 @@ export function OptionChainPanel({ group }) {
         <div className="text-on-surface">
           <span className="font-medium">{group.symbol}</span> option chain · expiry {data.expiry}
           <div className="text-[11px] text-on-surface-variant">
-            {istTime(data.prevTick)} → {istTime(data.currTick)} · spot {fmt(data.prevUnderlying, 'LTP')} → {fmt(data.currUnderlying, 'LTP')}
+            {istTime(data.prevTick)} → {istTime(data.currTick)} · spot{' '}
+            <span className={`font-bold ${tone(data.currUnderlying - data.prevUnderlying)}`}>
+              {fmt(data.prevUnderlying, 'LTP')} → {fmt(data.currUnderlying, 'LTP')}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-sm flex-wrap">
@@ -98,14 +117,33 @@ export function OptionChainPanel({ group }) {
           <label className="flex items-center gap-xs text-on-surface-variant" title="Off: ATM ±10 strikes. On: every stored strike of this expiry">
             <input type="checkbox" checked={allStrikes} onChange={(e) => setAllStrikes(e.target.checked)} />All strikes{data.totalStrikes ? ` (${data.totalStrikes})` : ''}
           </label>
-          <label className={`flex items-center gap-xs text-on-surface-variant ${isGreek ? 'opacity-50' : ''}`} title={isGreek ? 'Filter applies to OI / LTP / IV' : undefined}>
-            <input type="checkbox" checked={flaggedOnly} disabled={isGreek} onChange={(e) => setFlaggedOnly(e.target.checked)} />±{data.thresholdPct}% only
+          <label className="flex items-center gap-xs text-on-surface-variant" title={isGreek ? 'Dims strikes below the moderate/strong threshold; every strike stays visible' : undefined}>
+            <input type="checkbox" checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} />
+            {isGreek ? 'Emphasize significant' : `±${data.thresholdPct}% only`}
           </label>
         </div>
       </div>
       {data.expiryChanged && <div className="text-[11px] text-bearish mb-xs">Expiry rolled over between the two snapshots; compare with care.</div>}
+      {isGreek && interpretations.length > 0 && (
+        <div className="mb-xs rounded-lg border border-outline-variant p-xs">
+          <div className="text-[11px] font-medium text-on-surface mb-[2px]">Interpretations</div>
+          <ul className="space-y-[1px]">
+            {interpretations.slice(0, MAX_INTERPRETATIONS).map(({ strike, side, cell }) => (
+              <li
+                key={`${strike}-${side}`}
+                className={`font-bold ${signalTone(cell.signal)} ${metric === 'Rho' ? 'text-[10px] opacity-70' : 'text-[11px]'}`}
+              >
+                {strike} {side} — {cell.message}
+              </li>
+            ))}
+          </ul>
+          {interpretations.length > MAX_INTERPRETATIONS && (
+            <div className="text-[11px] text-on-surface-variant">+{interpretations.length - MAX_INTERPRETATIONS} more</div>
+          )}
+        </div>
+      )}
       <div className="text-[11px] text-on-surface-variant mb-xs">
-        {flaggedCount} {metric} move(s) of ±{data.thresholdPct}% or more{isGreek ? ' (highlighted; the filter does not apply to Greeks)' : ''}
+        {flaggedCount} {metric} move(s) {isGreek ? 'classified moderate/strong' : `of ±${data.thresholdPct}% or more`}
       </div>
       <table className="w-full border-separate border-spacing-y-[1px]">
         <thead className="text-on-surface-variant sticky top-0 bg-surface-container">
@@ -121,14 +159,14 @@ export function OptionChainPanel({ group }) {
         <tbody>
           {strikes.length === 0 && (
             <tr><td colSpan={9} className="text-center py-sm text-on-surface-variant">{isGreek
-                ? `No ${metric} data for these snapshots yet (Greeks are captured from the latest ticks only).`
+                ? `No ${metric} data for these snapshots yet.`
                 : `No ${metric} moves of ±${data.thresholdPct}% or more.`}</td></tr>
           )}
           {strikes.map(([strike, sides]) => (
             <tr key={strike} className="hover:bg-surface-container-highest">
-              <SideCells cell={sides.CE} metric={metric} threshold={data.thresholdPct} />
+              <SideCells cell={sides.CE} metric={metric} threshold={data.thresholdPct} dim={isGreek && flaggedOnly && !passes(sides.CE)} />
               <td className="px-xs text-center font-mono font-medium text-on-surface">{strike}</td>
-              <SideCells cell={sides.PE} metric={metric} threshold={data.thresholdPct} />
+              <SideCells cell={sides.PE} metric={metric} threshold={data.thresholdPct} dim={isGreek && flaggedOnly && !passes(sides.PE)} />
             </tr>
           ))}
         </tbody>
