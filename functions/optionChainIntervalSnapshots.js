@@ -16,7 +16,7 @@
 import axios from 'axios'
 import { fetchFilteredOptionChain } from './growwOptionChain.js'
 import { paced } from './growwPacer.js'
-import { decorateGreekRows } from './greekInterpretation.js'
+import { decorateInterpretedRows } from './greekInterpretation.js'
 
 export const SNAPSHOT_COLLECTION = 'optionChainIntervalSnapshots'
 export const META_COLLECTION = 'optionChainIntervalMeta'
@@ -297,7 +297,7 @@ export async function getCardOptionChainDiff({ db, symbol, interval, barEnd, thr
     currTick: curr.tick,
     prevUnderlying: prev.underlyingLtp,
     currUnderlying: curr.underlyingLtp,
-    ...limitRowsToAtm(decorateGreekRows(buildOptionChainDiff(prev, curr, thresholdPct)), curr.underlyingLtp, strikesEachSide),
+    ...limitRowsToAtm(decorateInterpretedRows(buildOptionChainDiff(prev, curr, thresholdPct)), curr.underlyingLtp, strikesEachSide),
     strikesEachSide,
   }
 }

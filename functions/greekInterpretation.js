@@ -17,6 +17,9 @@ export const GREEK_INTERPRETATION_CONFIG = {
   theta: { mode: 'relative', noise: 10, strong: 25, minMagnitude: 0.05 },
   vega: { mode: 'relative', noise: 10, strong: 25, minMagnitude: 0.01 },
   rho: { mode: 'relative', noise: 10, strong: 25, minMagnitude: 0.01 },
+  oi: { mode: 'relative', noise: 5, strong: 15, minMagnitude: 50 },
+  ltp: { mode: 'relative', noise: 5, strong: 15, minMagnitude: 0.5 },
+  iv: { mode: 'relative', noise: 5, strong: 15, minMagnitude: 0.5 },
 }
 
 /** Classifies the size of a change as noise / moderate / strong / insufficient-data. */
@@ -89,27 +92,62 @@ export function interpretRho({ diff, significance }) {
     : { status: 'RHO_FALLING', signal: 'bearish', message: 'Interest-rate sensitivity is reducing.' }
 }
 
-const GREEK_RULES = {
+export function interpretOi({ diff, significance }) {
+  if (isFlat(significance) || diff == null) {
+    return { status: 'OI_STABLE', signal: 'neutral', message: 'Open interest remains relatively unchanged.' }
+  }
+  return diff > 0
+    ? { status: 'OI_RISING', signal: 'neutral', message: 'Open interest is building up.' }
+    : { status: 'OI_FALLING', signal: 'neutral', message: 'Open interest is unwinding.' }
+}
+
+export function interpretLtp({ side, diff, significance }) {
+  if (isFlat(significance) || diff == null) {
+    return { status: 'PREMIUM_STABLE', signal: 'neutral', message: 'Premium remains relatively unchanged.' }
+  }
+  if (side === 'CE') {
+    return diff > 0
+      ? { status: 'CALL_PREMIUM_RISING', signal: 'bullish', message: 'Call premium is rising.' }
+      : { status: 'CALL_PREMIUM_FALLING', signal: 'bearish', message: 'Call premium is falling.' }
+  }
+  return diff > 0
+    ? { status: 'PUT_PREMIUM_RISING', signal: 'bearish', message: 'Put premium is rising.' }
+    : { status: 'PUT_PREMIUM_FALLING', signal: 'bullish', message: 'Put premium is falling.' }
+}
+
+export function interpretIv({ diff, significance }) {
+  if (isFlat(significance) || diff == null) {
+    return { status: 'IV_STABLE', signal: 'neutral', message: 'Implied volatility remains relatively unchanged.' }
+  }
+  return diff > 0
+    ? { status: 'IV_RISING', signal: 'neutral', message: 'Implied volatility is increasing.' }
+    : { status: 'IV_FALLING', signal: 'neutral', message: 'Implied volatility is decreasing.' }
+}
+
+const METRIC_RULES = {
   Delta: { key: 'delta', interpret: interpretDelta },
   Gamma: { key: 'gamma', interpret: interpretGamma },
   Theta: { key: 'theta', interpret: interpretTheta },
   Vega: { key: 'vega', interpret: interpretVega },
   Rho: { key: 'rho', interpret: interpretRho },
+  OI: { key: 'oi', interpret: interpretOi },
+  LTP: { key: 'ltp', interpret: interpretLtp },
+  IV: { key: 'iv', interpret: interpretIv },
 }
 
-/** For a Delta/Gamma/Theta/Vega/Rho diff row, returns {status, signal, message, significance}; null for other metrics. */
-export function interpretGreekRow({ metric, side, prev, curr, diff, pct }) {
-  const rule = GREEK_RULES[metric]
+/** For an OI/LTP/IV/Greek diff row, returns {status, signal, message, significance}; null for an unrecognized metric. */
+export function interpretMetricRow({ metric, side, prev, curr, diff, pct }) {
+  const rule = METRIC_RULES[metric]
   if (!rule) return null
   const cfg = GREEK_INTERPRETATION_CONFIG[rule.key]
   const significance = classifyMagnitude({ mode: cfg.mode, prev, curr, diff, pct, cfg })
   return { ...rule.interpret({ side, diff, significance }), significance }
 }
 
-/** Decorates Delta/Gamma/Theta/Vega/Rho rows from buildOptionChainDiff() with interpretation fields; other rows pass through unchanged. */
-export function decorateGreekRows(rows) {
+/** Decorates OI/LTP/IV/Greek rows from buildOptionChainDiff() with interpretation fields; other rows pass through unchanged. */
+export function decorateInterpretedRows(rows) {
   return rows.map((row) => {
-    const interpretation = interpretGreekRow(row)
+    const interpretation = interpretMetricRow(row)
     return interpretation ? { ...row, ...interpretation } : row
   })
 }

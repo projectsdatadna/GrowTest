@@ -8,8 +8,11 @@ import {
   interpretTheta,
   interpretVega,
   interpretRho,
-  interpretGreekRow,
-  decorateGreekRows,
+  interpretOi,
+  interpretLtp,
+  interpretIv,
+  interpretMetricRow,
+  decorateInterpretedRows,
 } from '../greekInterpretation.js'
 import { buildOptionChainDiff } from '../optionChainIntervalSnapshots.js'
 
@@ -101,24 +104,67 @@ test('interpretRho: rising/falling/stable', () => {
   assert.equal(interpretRho({ diff: 0, significance: 'noise' }).status, 'RHO_STABLE')
 })
 
-test('interpretGreekRow: dispatches by metric name and passes through non-Greek metrics as null', () => {
-  const delta = interpretGreekRow({ metric: 'Delta', side: 'CE', prev: 0.45, curr: 0.52, diff: 0.07, pct: 15.6 })
+test('interpretOi: rising/falling/stable, always neutral signal', () => {
+  assert.deepEqual(interpretOi({ diff: 60, significance: 'strong' }), {
+    status: 'OI_RISING',
+    signal: 'neutral',
+    message: 'Open interest is building up.',
+  })
+  assert.equal(interpretOi({ diff: -60, significance: 'moderate' }).status, 'OI_FALLING')
+  assert.equal(interpretOi({ diff: 2, significance: 'noise' }).status, 'OI_STABLE')
+  assert.equal(interpretOi({ diff: null, significance: 'insufficient-data' }).status, 'OI_STABLE')
+})
+
+test('interpretLtp: CE/PE premium rising/falling, stable', () => {
+  assert.deepEqual(interpretLtp({ side: 'CE', diff: 1.5, significance: 'strong' }), {
+    status: 'CALL_PREMIUM_RISING',
+    signal: 'bullish',
+    message: 'Call premium is rising.',
+  })
+  assert.equal(interpretLtp({ side: 'CE', diff: -1.5, significance: 'moderate' }).status, 'CALL_PREMIUM_FALLING')
+  assert.deepEqual(interpretLtp({ side: 'PE', diff: 1.5, significance: 'strong' }), {
+    status: 'PUT_PREMIUM_RISING',
+    signal: 'bearish',
+    message: 'Put premium is rising.',
+  })
+  assert.equal(interpretLtp({ side: 'PE', diff: -1.5, significance: 'moderate' }).status, 'PUT_PREMIUM_FALLING')
+  assert.equal(interpretLtp({ side: 'CE', diff: 0.01, significance: 'noise' }).status, 'PREMIUM_STABLE')
+})
+
+test('interpretIv: rising/falling/stable, always neutral signal', () => {
+  assert.equal(interpretIv({ diff: 1.2, significance: 'strong' }).status, 'IV_RISING')
+  assert.equal(interpretIv({ diff: -1.2, significance: 'moderate' }).status, 'IV_FALLING')
+  assert.equal(interpretIv({ diff: 0.05, significance: 'noise' }).status, 'IV_STABLE')
+  assert.equal(interpretIv({ diff: 1.2, significance: 'strong' }).signal, 'neutral')
+})
+
+test('interpretMetricRow: dispatches by metric name, including OI/LTP/IV; null for unrecognized metrics', () => {
+  const delta = interpretMetricRow({ metric: 'Delta', side: 'CE', prev: 0.45, curr: 0.52, diff: 0.07, pct: 15.6 })
   assert.equal(delta.status, 'CALL_SENSITIVITY_STRENGTHENING')
   assert.equal(delta.significance, 'strong')
 
-  assert.equal(interpretGreekRow({ metric: 'OI', side: 'CE', prev: 100, curr: 110, diff: 10, pct: 10 }), null)
-  assert.equal(interpretGreekRow({ metric: 'LTP', side: 'PE', prev: 1, curr: 2, diff: 1, pct: 100 }), null)
-  assert.equal(interpretGreekRow({ metric: 'IV', side: 'CE', prev: 10, curr: 11, diff: 1, pct: 10 }), null)
+  const oi = interpretMetricRow({ metric: 'OI', side: 'CE', prev: 1000, curr: 1200, diff: 200, pct: 20 })
+  assert.equal(oi.status, 'OI_RISING')
+  assert.equal(oi.significance, 'strong')
+
+  const ltp = interpretMetricRow({ metric: 'LTP', side: 'PE', prev: 10, curr: 12, diff: 2, pct: 20 })
+  assert.equal(ltp.status, 'PUT_PREMIUM_RISING')
+
+  const iv = interpretMetricRow({ metric: 'IV', side: 'CE', prev: 10, curr: 11.5, diff: 1.5, pct: 15 })
+  assert.equal(iv.status, 'IV_RISING')
+
+  assert.equal(interpretMetricRow({ metric: 'Unknown', side: 'CE', prev: 1, curr: 2, diff: 1, pct: 100 }), null)
 })
 
-test('decorateGreekRows: Greek rows gain interpretation fields, others pass through unchanged', () => {
+test('decorateInterpretedRows: every recognized-metric row gains interpretation fields', () => {
   const rows = [
     { strike: 100, side: 'CE', metric: 'OI', prev: 1000, curr: 940, diff: -60, pct: -6, flag: true },
     { strike: 100, side: 'CE', metric: 'Delta', prev: 0.45, curr: 0.52, diff: 0.07, pct: 15.56, flag: true },
     { strike: 100, side: 'PE', metric: 'Gamma', prev: 0.0001, curr: 0.0004, diff: 0.0003, pct: 300, flag: true },
   ]
-  const decorated = decorateGreekRows(rows)
-  assert.deepEqual(decorated[0], rows[0])
+  const decorated = decorateInterpretedRows(rows)
+  assert.equal(decorated[0].status, 'OI_FALLING')
+  assert.equal(decorated[0].prev, 1000)
   assert.equal(decorated[1].status, 'CALL_SENSITIVITY_STRENGTHENING')
   assert.equal(decorated[1].significance, 'strong')
   assert.equal(decorated[1].prev, 0.45)
@@ -127,13 +173,18 @@ test('decorateGreekRows: Greek rows gain interpretation fields, others pass thro
   assert.equal(decorated[2].status, 'GAMMA_STABLE')
 })
 
-test('composition: buildOptionChainDiff -> decorateGreekRows end to end', () => {
+test('composition: buildOptionChainDiff -> decorateInterpretedRows end to end', () => {
   const prev = { strikes: [{ strike: 100, ce: { ltp: 10, oi: 1000, iv: 20, delta: 0.45, gamma: 0.002, theta: -10, vega: 5, rho: 0.1 }, pe: null }] }
   const curr = { strikes: [{ strike: 100, ce: { ltp: 10.5, oi: 940, iv: 21, delta: 0.52, gamma: 0.0016, theta: -12, vega: 4, rho: 0.1 }, pe: null }] }
-  const decorated = decorateGreekRows(buildOptionChainDiff(prev, curr))
+  const decorated = decorateInterpretedRows(buildOptionChainDiff(prev, curr))
   const find = (metric) => decorated.find((r) => r.side === 'CE' && r.metric === metric)
 
-  assert.equal(find('OI').status, undefined) // untouched
+  const oi = find('OI')
+  assert.equal(oi.status, 'OI_FALLING') // 1000 -> 940
+  const ltp = find('LTP')
+  assert.equal(ltp.status, 'CALL_PREMIUM_RISING') // 10 -> 10.5
+  const iv = find('IV')
+  assert.equal(iv.status, 'IV_RISING') // 20 -> 21
   const delta = find('Delta')
   assert.equal(delta.status, 'CALL_SENSITIVITY_STRENGTHENING')
   assert.equal(delta.diff, 0.07)

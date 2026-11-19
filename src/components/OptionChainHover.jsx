@@ -10,9 +10,9 @@ import { getCrossoverGroupOptionChain } from '../services/api'
 import { CardChartButton, useCardChartHover } from './CardChartHover'
 
 const METRICS = ['OI', 'LTP', 'IV', 'Delta', 'Gamma', 'Theta', 'Vega', 'Rho']
-// Greeks near zero (gamma 0, tiny deltas) give huge/undefined %, so the "±5% only" filter skips them.
-const GREEK_METRICS = new Set(['Delta', 'Gamma', 'Theta', 'Vega', 'Rho'])
 const DECIMALS = { OI: 0, LTP: 2, IV: 4, Delta: 4, Gamma: 4, Theta: 2, Vega: 4, Rho: 4 }
+// Delta/Gamma/Theta/Vega/Rho always show the full decimal precision; OI/LTP/IV trim trailing zeros.
+const FIXED_DECIMAL_METRICS = new Set(['Delta', 'Gamma', 'Theta', 'Vega', 'Rho'])
 const POPOVER_WIDTH = 720
 
 const REASONS = {
@@ -24,7 +24,7 @@ const REASONS = {
 const fmt = (value, metric) => {
   if (value == null) return '-'
   const dp = DECIMALS[metric] ?? 2
-  return value.toLocaleString('en-IN', { minimumFractionDigits: GREEK_METRICS.has(metric) ? dp : 0, maximumFractionDigits: dp })
+  return value.toLocaleString('en-IN', { minimumFractionDigits: FIXED_DECIMAL_METRICS.has(metric) ? dp : 0, maximumFractionDigits: dp })
 }
 const signed = (value, metric) => (value == null ? '-' : `${value > 0 ? '+' : ''}${fmt(value, metric)}`)
 const tone = (diff) => (diff > 0 ? 'text-bullish' : diff < 0 ? 'text-bearish' : 'text-on-surface-variant')
@@ -80,19 +80,16 @@ export function OptionChainPanel({ group }) {
     if (!byStrike.has(row.strike)) byStrike.set(row.strike, {})
     byStrike.get(row.strike)[row.side] = row
   }
-  const isGreek = GREEK_METRICS.has(metric)
-  const passes = (cell) => (isGreek ? isSignificant(cell) : cell?.flag)
-  // Greeks: the table always shows every strike - "Significant only" only dims non-significant
-  // rows, it never removes them (OI/LTP/IV keep the original filter-out behavior).
-  const strikes = [...byStrike.entries()].filter(([, sides]) => isGreek || !flaggedOnly || passes(sides.CE) || passes(sides.PE))
+  const passes = (cell) => isSignificant(cell)
+  // The table always shows every strike - "Emphasize significant" only dims non-significant
+  // rows, it never removes them.
+  const strikes = [...byStrike.entries()]
   const flaggedCount = [...byStrike.values()].reduce((n, s) => n + (passes(s.CE) ? 1 : 0) + (passes(s.PE) ? 1 : 0), 0)
-  const interpretations = isGreek
-    ? [...byStrike.entries()]
-        .flatMap(([strike, sides]) =>
-          ['CE', 'PE'].filter((side) => isSignificant(sides[side])).map((side) => ({ strike, side, cell: sides[side] }))
-        )
-        .sort((a, b) => a.strike - b.strike)
-    : []
+  const interpretations = [...byStrike.entries()]
+    .flatMap(([strike, sides]) =>
+      ['CE', 'PE'].filter((side) => isSignificant(sides[side])).map((side) => ({ strike, side, cell: sides[side] }))
+    )
+    .sort((a, b) => a.strike - b.strike)
 
   return (
     <div className="text-xs">
@@ -117,14 +114,14 @@ export function OptionChainPanel({ group }) {
           <label className="flex items-center gap-xs text-on-surface-variant" title="Off: ATM ±10 strikes. On: every stored strike of this expiry">
             <input type="checkbox" checked={allStrikes} onChange={(e) => setAllStrikes(e.target.checked)} />All strikes{data.totalStrikes ? ` (${data.totalStrikes})` : ''}
           </label>
-          <label className="flex items-center gap-xs text-on-surface-variant" title={isGreek ? 'Dims strikes below the moderate/strong threshold; every strike stays visible' : undefined}>
+          <label className="flex items-center gap-xs text-on-surface-variant" title="Dims strikes below the moderate/strong threshold; every strike stays visible">
             <input type="checkbox" checked={flaggedOnly} onChange={(e) => setFlaggedOnly(e.target.checked)} />
-            {isGreek ? 'Emphasize significant' : `±${data.thresholdPct}% only`}
+            Emphasize significant
           </label>
         </div>
       </div>
       {data.expiryChanged && <div className="text-[11px] text-bearish mb-xs">Expiry rolled over between the two snapshots; compare with care.</div>}
-      {isGreek && interpretations.length > 0 && (
+      {interpretations.length > 0 && (
         <div className="mb-xs rounded-lg border border-outline-variant p-xs">
           <div className="text-[11px] font-medium text-on-surface mb-[2px]">Interpretations</div>
           <ul className="space-y-[1px]">
@@ -143,7 +140,7 @@ export function OptionChainPanel({ group }) {
         </div>
       )}
       <div className="text-[11px] text-on-surface-variant mb-xs">
-        {flaggedCount} {metric} move(s) {isGreek ? 'classified moderate/strong' : `of ±${data.thresholdPct}% or more`}
+        {flaggedCount} {metric} move(s) classified moderate/strong
       </div>
       <table className="w-full border-separate border-spacing-y-[1px]">
         <thead className="text-on-surface-variant sticky top-0 bg-surface-container">
@@ -158,15 +155,13 @@ export function OptionChainPanel({ group }) {
         </thead>
         <tbody>
           {strikes.length === 0 && (
-            <tr><td colSpan={9} className="text-center py-sm text-on-surface-variant">{isGreek
-                ? `No ${metric} data for these snapshots yet.`
-                : `No ${metric} moves of ±${data.thresholdPct}% or more.`}</td></tr>
+            <tr><td colSpan={9} className="text-center py-sm text-on-surface-variant">No {metric} data for these snapshots yet.</td></tr>
           )}
           {strikes.map(([strike, sides]) => (
             <tr key={strike} className="hover:bg-surface-container-highest">
-              <SideCells cell={sides.CE} metric={metric} threshold={data.thresholdPct} dim={isGreek && flaggedOnly && !passes(sides.CE)} />
+              <SideCells cell={sides.CE} metric={metric} threshold={data.thresholdPct} dim={flaggedOnly && !passes(sides.CE)} />
               <td className="px-xs text-center font-mono font-medium text-on-surface">{strike}</td>
-              <SideCells cell={sides.PE} metric={metric} threshold={data.thresholdPct} dim={isGreek && flaggedOnly && !passes(sides.PE)} />
+              <SideCells cell={sides.PE} metric={metric} threshold={data.thresholdPct} dim={flaggedOnly && !passes(sides.PE)} />
             </tr>
           ))}
         </tbody>
