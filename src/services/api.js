@@ -700,83 +700,32 @@ export const markNotificationsRead = async (ids, groupIds = []) => {
 
 export default apiClient
 
-// ---------- documents (PDF / Excel / CSV library) ----------
+// ---------- files + chat (the chat widget) ----------
 
-import { createSseParser } from './sse'
+/** The message to show for a failed request: the server's own error text if it sent one. */
+export const errorText = (error) => error?.response?.data?.error || error?.message || 'Something went wrong'
 
-const fail = (what) => (error) => {
-  console.error(`Error ${what}:`, error)
-  throw error
-}
+export const MAX_UPLOAD_BYTES = 9 * 1024 * 1024
+export const UPLOAD_EXTENSIONS = ['pdf', 'xlsx', 'csv']
 
-export async function sha256Hex(file) {
-  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-/**
- * Upload one file: hash -> ask for an upload URL (duplicates are detected here) -> PUT straight to
- * Cloud Storage -> index it. onStage('hashing'|'uploading'|'processing'), onProgress(0..1).
- * Resolves { duplicate, document, fii? }.
- */
-export async function uploadDocument(file, { docType, reportDate, title, tags }, { onStage = () => {}, onProgress = () => {} } = {}) {
-  onStage('hashing')
-  const sha256 = await sha256Hex(file)
-  const created = await assistantClient
-    .post('/docs/upload-url', { fileName: file.name, sizeBytes: file.size, sha256, docType, reportDate: reportDate || undefined, title: title || undefined, tags })
+/** Uploads one file as the raw request body (stored in Firestore). Resolves { duplicate, file }. */
+export const uploadFile = (file, { reportDate, onProgress } = {}) =>
+  assistantClient
+    .post('/files', file, {
+      headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), ...(reportDate ? { 'X-Report-Date': reportDate } : {}) },
+      onUploadProgress: (e) => e.total && onProgress?.(e.loaded / e.total),
+      timeout: 180000,
+      maxBodyLength: Infinity,
+    })
     .then((r) => r.data)
-    .catch(fail('requesting upload URL'))
-  if (created.duplicate) return { duplicate: true, document: created.document }
 
-  onStage('uploading')
-  await axios
-    .put(created.uploadUrl, file, { headers: { 'Content-Type': file.type || 'application/octet-stream' }, onUploadProgress: (e) => e.total && onProgress(e.loaded / e.total), maxBodyLength: Infinity })
-    .catch(fail('uploading file'))
+export const listFiles = () => assistantClient.get('/files').then((r) => r.data.files)
+export const updateFile = (id, fields) => assistantClient.patch(`/files/${id}`, fields).then((r) => r.data.file)
+export const deleteFile = (id) => assistantClient.delete(`/files/${id}`).then((r) => r.data)
+export const fileDownloadUrl = (id) => `${ASSISTANT_BASE_URL}/files/${id}/download`
 
-  onStage('processing')
-  const processed = await assistantClient.post(`/docs/${created.docId}/process`, {}, { timeout: 600000 }).then((r) => r.data).catch(fail('indexing document'))
-  return { duplicate: false, document: processed.document, fii: processed.fii }
-}
+/** One question (+ the conversation and file ids) -> the full answer. Can take a while with big PDFs. */
+export const sendChat = ({ message, conversationId, fileIds }) =>
+  assistantClient.post('/chat', { message, conversationId: conversationId || undefined, fileIds: fileIds?.length ? fileIds : undefined }, { timeout: 300000 }).then((r) => r.data)
 
-export const listDocuments = (params = {}) => assistantClient.get('/docs', { params }).then((r) => r.data).catch(fail('listing documents'))
-export const updateDocument = (id, fields) => assistantClient.patch(`/docs/${id}`, fields, { timeout: 600000 }).then((r) => r.data).catch(fail('updating document'))
-export const deleteDocument = (id) => assistantClient.delete(`/docs/${id}`).then((r) => r.data).catch(fail('deleting document'))
-export const documentDownloadUrl = (id) => `${ASSISTANT_BASE_URL}/docs/${id}/download`
-
-// ---------- FII reports ----------
-
-export const getFiiDates = () => assistantClient.get('/fii/dates').then((r) => r.data).catch(fail('loading FII dates'))
-export const compareFiiReports = (body) => assistantClient.post('/fii/compare', body, { timeout: 180000 }).then((r) => r.data).catch(fail('comparing FII reports'))
-
-// ---------- chatbot ----------
-
-export const listChatThreads = () => assistantClient.get('/chat/threads').then((r) => r.data).catch(fail('listing conversations'))
-export const getChatMessages = (threadId) => assistantClient.get(`/chat/threads/${threadId}/messages`).then((r) => r.data).catch(fail('loading conversation'))
-export const deleteChatThread = (threadId) => assistantClient.delete(`/chat/threads/${threadId}`).then((r) => r.data).catch(fail('deleting conversation'))
-
-/**
- * Ask a question; the answer streams in. onEvent(name, data) gets thread, filter, sources, tool,
- * reset, delta, done and error events (see functions/assistantRoutes.js). Resolves when the
- * stream ends; pass an AbortSignal to stop it.
- */
-export async function streamChat({ message, threadId, mode, scope }, onEvent, signal) {
-  const response = await fetch(`${ASSISTANT_BASE_URL}/chat`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
-    body: JSON.stringify({ message, threadId: threadId || undefined, mode, scope }),
-    signal,
-  })
-  if (!response.ok) {
-    const body = await response.json().catch(() => ({}))
-    throw new Error(body.error || `Chat request failed (${response.status})`)
-  }
-  const parser = createSseParser(onEvent)
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    parser.feed(decoder.decode(value, { stream: true }))
-  }
-  parser.end()
-}
+export const getConversation = (id) => assistantClient.get(`/chat/conversations/${id}`).then((r) => r.data)

@@ -128,15 +128,3 @@ export function extractDateFilter(question, { now = new Date() } = {}) {
   }
   return result
 }
-
-/** Merge the question's dates with an explicit scope ({from,to,docType,docIds}); the scope wins. */
-export function mergeScope(extracted, scope = {}) {
-  const filter = { docType: scope.docType || null, docIds: scope.docIds?.length ? scope.docIds : null, dates: null, from: null, to: null, latest: false }
-  if (scope.from || scope.to) {
-    filter.from = scope.from || null
-    filter.to = scope.to || null
-  } else if (extracted.dates.length) filter.dates = extracted.dates
-  else if (extracted.range) ({ from: filter.from, to: filter.to } = extracted.range)
-  else filter.latest = extracted.latest
-  return filter
-}

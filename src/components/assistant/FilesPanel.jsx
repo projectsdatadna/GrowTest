@@ -1,0 +1,78 @@
+/**
+ * "My files": everything stored (kept permanently, with its report date). Attach a file to the current
+ * chat, fix its report date, download it, or delete it (deleted files stop being used; the bytes stay).
+ */
+
+import { useEffect, useState } from 'react'
+import { listFiles, updateFile, deleteFile, fileDownloadUrl, errorText } from '../../services/api'
+import Spinner from '../Spinner'
+
+const formatSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
+const dateField = 'bg-surface-container border border-terminal-border rounded px-xs py-[1px] text-[11px] text-on-surface'
+
+function FileRow({ file, inChat, attached, onAttach, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const run = async (fn) => {
+    setBusy(true)
+    setError('')
+    try {
+      await fn()
+    } catch (err) {
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <li className="rounded-lg border border-outline-variant px-sm py-xs text-xs flex flex-col gap-[2px]">
+      <div className="flex items-center gap-xs">
+        <span className="flex-1 min-w-0 truncate text-on-surface" title={file.fileName}>{file.title}</span>
+        <span className="text-[11px] text-on-surface-variant shrink-0">{formatSize(file.sizeBytes)}</span>
+      </div>
+      <div className="flex items-center gap-xs flex-wrap text-[11px] text-on-surface-variant">
+        <label className="flex items-center gap-xs">
+          Report date
+          <input type="date" defaultValue={file.reportDate || ''} onBlur={(e) => e.target.value !== (file.reportDate || '') && run(async () => { await updateFile(file.id, { reportDate: e.target.value || null }); onChanged() })} aria-label={`Report date of ${file.title}`} className={dateField} />
+        </label>
+        <span className="ml-auto flex items-center gap-sm">
+          {busy && <Spinner />}
+          {inChat ? <span>In this chat</span> : attached ? <span>Attached</span> : <button type="button" onClick={() => onAttach(file)} className="text-primary hover:underline">Attach</button>}
+          <a href={fileDownloadUrl(file.id)} className="text-primary hover:underline" aria-label={`Download ${file.title}`}>Download</a>
+          <button type="button" onClick={() => window.confirm(`Delete “${file.title}”? It will no longer be used in chats.`) && run(async () => { await deleteFile(file.id); onChanged() })} className="text-bearish hover:underline">Delete</button>
+        </span>
+      </div>
+      {error && <div className="text-bearish">{error}</div>}
+    </li>
+  )
+}
+
+export default function FilesPanel({ conversationFileIds, attachedIds, onAttach }) {
+  const [files, setFiles] = useState(null)
+  const [error, setError] = useState('')
+  const [bump, setBump] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    listFiles()
+      .then((list) => !cancelled && (setFiles(list), setError('')))
+      .catch((err) => !cancelled && setError(errorText(err)))
+    return () => {
+      cancelled = true
+    }
+  }, [bump])
+
+  return (
+    <div className="flex-1 min-h-0 overflow-y-auto p-sm flex flex-col gap-xs">
+      <p className="text-[11px] text-on-surface-variant">Files are kept permanently with their report date. A date in your question (“compare with 10 Nov”) attaches the file with that date automatically.</p>
+      {error && <div className="text-sm text-bearish">{error}</div>}
+      {!files && !error && <Spinner />}
+      {files && files.length === 0 && <div className="text-sm text-on-surface-variant">No files yet. Use the paperclip in the chat to upload one.</div>}
+      <ul className="flex flex-col gap-xs">
+        {files?.map((file) => (
+          <FileRow key={`${file.id}:${file.reportDate}`} file={file} inChat={conversationFileIds.includes(file.id)} attached={attachedIds.includes(file.id)} onAttach={onAttach} onChanged={() => setBump((b) => b + 1)} />
+        ))}
+      </ul>
+    </div>
+  )
+}

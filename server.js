@@ -51,10 +51,8 @@ import { processDueEntry, generateHistoricalWatchlistInsight } from './functions
 import { generateWatchlistAnalysis } from './functions/watchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './functions/instrumentMasterSync.js'
 import { registerCrossoverScannerRoutes } from './functions/crossoverScannerRoutes.js'
-import { registerDocumentRoutes } from './functions/documentRoutes.js'
-import { registerFiiRoutes } from './functions/fiiRoutes.js'
-import { registerAssistantRoutes } from './functions/assistantRoutes.js'
-import { registerMcpRoutes } from './functions/mcpServer.js'
+import { registerFileRoutes } from './functions/fileRoutes.js'
+import { registerChatRoutes } from './functions/chatRoutes.js'
 
 dotenv.config()
 
@@ -1448,12 +1446,9 @@ app.post('/historical-watchlist/:id/trigger-fetch', async (req, res) => {
 // before the 404 handler below.
 registerCrossoverScannerRoutes(app, { getGrowwAccessToken })
 
-// Document library (upload / ingest / list). Local server only for now - see documentRoutes.js.
-registerDocumentRoutes(app)
-registerFiiRoutes(app)
-registerAssistantRoutes(app, { getGrowwAccessToken })
-// MCP endpoint for other agents (Claude Desktop / Code): only exists when MCP_AUTH_TOKEN is set.
-registerMcpRoutes(app, { getGrowwAccessToken })
+// File library + chat with the stored files (shared with the production function, see functions/assistantApi.js).
+registerFileRoutes(app)
+registerChatRoutes(app)
 
 /**
  * Error handlers
