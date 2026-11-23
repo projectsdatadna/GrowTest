@@ -127,6 +127,8 @@ const NAV_ITEMS = [
   { key: 'crossover-scanner', label: 'Crossover Scanner', icon: 'swap_vert', functional: true },
   { key: 'overview', label: 'Overview', icon: 'grid_view', functional: true },
   { key: 'notifications', label: 'Notifications', icon: 'notifications_active', functional: true },
+  { key: 'fii-reports', label: 'FII Reports', icon: 'description', functional: true },
+  { key: 'assistant', label: 'Assistant', icon: 'smart_toy', functional: true },
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {

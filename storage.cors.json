@@ -1,0 +1,8 @@
+[
+  {
+    "origin": ["http://localhost:3001", "http://localhost:5173", "https://groww-dashboard.web.app", "https://groww-dashboard.firebaseapp.com"],
+    "method": ["PUT", "POST", "GET", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Content-Range", "x-goog-resumable", "x-goog-meta-*"],
+    "maxAgeSeconds": 3600
+  }
+]

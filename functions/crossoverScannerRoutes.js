@@ -37,6 +37,8 @@ import {
   acquireManualRunLease,
   releaseManualRunLease,
 } from './crossoverScannerFirestoreClient.js'
+import { readSymbolSheetFromBuffer } from './marginSheet.js'
+import { importSymbolSheet } from './symbolSheetImport.js'
 import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, GROUP_ORDERS, GROUP_SORTS } from './crossoverGroupSort.js'
 import { buildNotificationWorkbook } from './crossoverExport.js'
 import { buildCrossoverChart } from './crossoverChartData.js'
@@ -222,6 +224,28 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       res.json({ status: 'SUCCESS', nrmlMargin: value })
     } catch (error) {
       console.error('Error saving NRML margin:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
+  // Symbol sheet (SYMBOL | Margin | Price | Lot Size) as base64 xlsx: sets lot size,
+  // sheet price and NRML margin on the scanner symbols. dryRun previews the counts
+  // and unmatched symbols without saving; overwrite replaces margins already set.
+  app.post('/crossover-scanner/symbols/import-sheet', async (req, res) => {
+    try {
+      const { fileBase64, overwrite = false, dryRun = false } = req.body || {}
+      if (typeof fileBase64 !== 'string' || !fileBase64) return res.status(400).json({ error: 'fileBase64 (the .xlsx file, base64) is required' })
+      let parsed
+      try {
+        parsed = await readSymbolSheetFromBuffer(Buffer.from(fileBase64, 'base64'))
+      } catch {
+        return res.status(400).json({ error: 'Could not read the file - upload an .xlsx workbook' })
+      }
+      if (!parsed) return res.status(400).json({ error: 'No sheet with a SYMBOL column and a Margin / Price / Lot Size column was found' })
+      const result = await importSymbolSheet(parsed.rows, { overwrite: overwrite === true, dryRun: dryRun === true })
+      res.json({ status: 'SUCCESS', sheetName: parsed.sheetName, ...result })
+    } catch (error) {
+      console.error('Error importing symbol sheet:', error.message)
       res.status(500).json({ error: error.message })
     }
   })
@@ -425,9 +449,15 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       if (!GROUP_ORDERS.includes(order)) return res.status(400).json({ error: `order must be one of ${GROUP_ORDERS.join(', ')}` })
       // NRML margin lives on the scanner symbols (edited on the Scanner page), so it is
       // attached at read time and a changed value shows up on the next load.
-      const margins = new Map((await listActiveScannerSymbols()).map((entry) => [`${entry.exchange}_${entry.symbol}`, entry.nrmlMargin ?? null]))
+      const activeSymbols = await listActiveScannerSymbols()
+      const margins = new Map(activeSymbols.map((entry) => [`${entry.exchange}_${entry.symbol}`, entry.nrmlMargin ?? null]))
       const { items, total, indexTotal, capped } = await queryCrossoverGroupsPage(section, filters, { page, pageSize, group, sort, order, margins })
-      const groups = items.map((item) => ({ ...item, nrmlMargin: margins.get(`${item.exchange}_${item.symbol}`) ?? null }))
+      // Lot size + sheet price (from the uploaded symbol sheet) feed the suggested Stoploss / Target columns.
+      const sheetData = new Map(activeSymbols.map((entry) => [`${entry.exchange}_${entry.symbol}`, { lotSize: entry.lotSize ?? null, sheetPrice: entry.sheetPrice ?? null }]))
+      const groups = items.map((item) => {
+        const key = `${item.exchange}_${item.symbol}`
+        return { ...item, nrmlMargin: margins.get(key) ?? null, lotSize: sheetData.get(key)?.lotSize ?? null, sheetPrice: sheetData.get(key)?.sheetPrice ?? null }
+      })
       res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, capped, sort, order, groups })
     } catch (error) {
       console.error('Error listing notification groups:', error.message)

@@ -1,0 +1,10 @@
+rules_version = '2';
+// Uploaded documents are private: the app reads and writes them only through the
+// backend (Admin SDK, which bypasses these rules) and one-time resumable upload URLs.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

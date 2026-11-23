@@ -43,6 +43,7 @@ import { useOptionChainHover } from './OptionChainHover'
 import { useDayChangeQuotes, quoteKey } from './useDayChangeQuotes'
 import { sameItems } from './liveRefresh'
 import RunScanButton from './RunScanButton'
+import StopTargetControls, { useStopTargetAmounts } from './StopTargetControls'
 
 // Crossover indicators, matching the labels the scanner stores in
 // `indicatorLabel` (functions/crossoverScanner.js CROSSOVER_SPECS).
@@ -333,6 +334,7 @@ function NotificationsTab({ onTabChange }) {
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
+  const stopTarget = useStopTargetAmounts()
   const chartHover = useCardChartHover()
   const optionChainHover = useOptionChainHover()
   // Sections start collapsed; only the ones the user opens are tracked.
@@ -512,6 +514,11 @@ function NotificationsTab({ onTabChange }) {
     if (ok) refreshAll()
   }
 
+  const handleSheetImported = ({ updated }) => {
+    setNotice(`Lot size sheet imported: ${updated} symbol${updated === 1 ? '' : 's'} updated.`)
+    refreshAll()
+  }
+
   const handleExport = async () => {
     if (exporting) return
     setExporting(true)
@@ -655,6 +662,7 @@ function NotificationsTab({ onTabChange }) {
             Clear dates
           </button>
         )}
+        <StopTargetControls amounts={stopTarget} inputClass={selectClass} onImported={handleSheetImported} />
         <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md" title="Order of the cards inside every timeframe (Indices and Stocks each)">
           Sort by
           <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={selectClass} aria-label="Sort cards by">
@@ -773,7 +781,7 @@ function NotificationsTab({ onTabChange }) {
                           return (
                             <li key={g.id}>
                               {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} />
+                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} slAmount={stopTarget.slAmount} targetAmount={stopTarget.targetAmount} />
                             </li>
                           )
                         })}

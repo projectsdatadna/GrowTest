@@ -1165,6 +1165,10 @@ export const growtestApi = onRequest(
   app
 )
 
+// Document assistant (uploads, RAG chat, FII comparison, agent): its own function so long indexing /
+// agent runs do not share growtestApi's 120 s / 256 MiB. Heavy imports are lazy - see assistantApi.js.
+export { growtestAssistantApi } from './assistantApi.js'
+
 /**
  * Watchlist tracking - runs every 15 minutes, unattended, independent of any
  * browser being open. Guards itself to 9:15-15:30 IST on trading weekdays

@@ -204,6 +204,14 @@ export async function setScannerSymbolMargin(id, nrmlMargin) {
   return true
 }
 
+// Lot size / sheet price / margin from the uploaded symbol sheet (see
+// symbolSheetImport.js). Only the given fields are written; never clears.
+export async function setScannerSymbolSheetData(id, fields) {
+  const allowed = {}
+  for (const key of ['nrmlMargin', 'lotSize', 'sheetPrice', 'sheetUpdatedAt']) if (fields[key] !== undefined) allowed[key] = fields[key]
+  await db.collection(SYMBOLS_COLLECTION).doc(id).update(allowed)
+}
+
 // Soft delete, same as the Historical Watchlist - keeps the doc but excludes
 // it from future scans.
 export async function deactivateScannerSymbol(id) {

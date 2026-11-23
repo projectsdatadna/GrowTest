@@ -23,3 +23,56 @@ test('sheet rows: header skipped, symbols upper-cased, blank margin kept as null
     { symbol: 'PIIND', margin: 71842 },
   ])
 })
+
+import { readSymbolSheetRows, readSymbolSheetFromWorkbook } from '../marginSheet.js'
+import { planSymbolSheetImport } from '../symbolSheetImport.js'
+
+test('symbol sheet: columns found by header name in any order; blanks null; duplicates merged', () => {
+  const sheet = new ExcelJS.Workbook().addWorksheet('Sheet2')
+  sheet.addRows([
+    ['Lot Size', 'SYMBOL', 'Price', 'Margin'],
+    [1150, 'vedl', 237.85, 62266],
+    [175, 'PIIND', '1,591.70', '66,265'],
+    [null, 'NIFTY', null, null],
+    [1200, 'VEDL', null, null],
+    [0, 'BAD', -1, 'n/a'],
+  ])
+  assert.deepEqual(readSymbolSheetRows(sheet), [
+    { symbol: 'VEDL', margin: 62266, price: 237.85, lotSize: 1200 },
+    { symbol: 'PIIND', margin: 66265, price: 1591.7, lotSize: 175 },
+    { symbol: 'NIFTY', margin: null, price: null, lotSize: null },
+    { symbol: 'BAD', margin: null, price: null, lotSize: null },
+  ])
+})
+
+test('symbol sheet: workbook lookup skips sheets without the headers (Sheet1 formulas vs Sheet2 data)', () => {
+  const workbook = new ExcelJS.Workbook()
+  workbook.addWorksheet('Sheet1').addRows([['Stoploss', 7500], ['Target', 17000], [null, 'Lot Size', 'Stoploss', 'Stoploss %']])
+  workbook.addWorksheet('Sheet2').addRows([['SYMBOL', 'Margin', 'Price', 'Lot Size'], ['VEDL', 62266, 237.85, 1150]])
+  const found = readSymbolSheetFromWorkbook(workbook)
+  assert.equal(found.sheetName, 'Sheet2')
+  assert.deepEqual(found.rows, [{ symbol: 'VEDL', margin: 62266, price: 237.85, lotSize: 1150 }])
+  assert.equal(readSymbolSheetFromWorkbook(new ExcelJS.Workbook()), null)
+})
+
+test('import plan: lot size + sheet price always refresh, margin only when unset or --overwrite, unmatched reported', () => {
+  const active = [
+    { symbol: 'VEDL', exchange: 'NSE', nrmlMargin: 50000, lotSize: 1000 },
+    { symbol: 'PIIND', exchange: 'NSE', nrmlMargin: null },
+    { symbol: 'ITC', exchange: 'NSE', nrmlMargin: 92172, lotSize: 1725, sheetPrice: 300.95 },
+  ]
+  const rows = [
+    { symbol: 'VEDL', margin: 62266, price: 237.85, lotSize: 1150 },
+    { symbol: 'PIIND', margin: 66265, price: 1591.7, lotSize: 175 },
+    { symbol: 'ITC', margin: 92172, price: 300.95, lotSize: 1725 },
+    { symbol: 'GONE', margin: 1, price: 1, lotSize: 1 },
+  ]
+  const keep = planSymbolSheetImport(rows, active)
+  assert.deepEqual(keep.unmatched, ['GONE'])
+  assert.deepEqual(keep.keptMargin, ['VEDL'])
+  assert.deepEqual(keep.updates.find((u) => u.symbol === 'VEDL').fields, { lotSize: 1150, sheetPrice: 237.85 })
+  assert.deepEqual(keep.updates.find((u) => u.symbol === 'PIIND').fields, { nrmlMargin: 66265, lotSize: 175, sheetPrice: 1591.7 })
+  assert.equal(keep.updates.find((u) => u.symbol === 'ITC').changed, false)
+  const over = planSymbolSheetImport(rows, active, { overwrite: true })
+  assert.equal(over.updates.find((u) => u.symbol === 'VEDL').fields.nrmlMargin, 62266)
+})

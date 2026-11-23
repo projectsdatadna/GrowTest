@@ -9,6 +9,12 @@ const apiClient = axios.create({
   },
 })
 
+// Documents / FII / chatbot live on the same server locally. In production they are served by a
+// dedicated long-running function (uploads and agent runs outlast the main API's limits), so
+// they have their own base URL, falling back to the main one.
+export const ASSISTANT_BASE_URL = import.meta.env.VITE_ASSISTANT_API_BASE_URL || API_BASE_URL
+const assistantClient = axios.create({ baseURL: ASSISTANT_BASE_URL, headers: { 'Content-Type': 'application/json' } })
+
 // Persist the Groww access token pasted in from the Greek Analysis tab -
 // every Groww-dependent route (including the unattended watchlistTick
 // scheduler) reads this same stored value server-side.
@@ -474,6 +480,22 @@ export const saveCrossoverSymbolMargin = async (id, nrmlMargin) => {
   }
 }
 
+// Symbol sheet (SYMBOL | Margin | Price | Lot Size, .xlsx) -> lot size, sheet price and
+// NRML margin on the scanner symbols. dryRun previews without saving. The file
+// goes as base64 in the JSON body (the sheet is a few KB).
+export const importSymbolSheet = async (file, { overwrite = true, dryRun = false } = {}) => {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    const response = await apiClient.post('/crossover-scanner/symbols/import-sheet', { fileBase64: btoa(binary), overwrite, dryRun }, { timeout: 60000 })
+    return response.data
+  } catch (error) {
+    console.error('Error importing symbol sheet:', error)
+    throw error
+  }
+}
+
 export const saveCrossoverSymbolOrder = async (symbols) => {
   try {
     const response = await apiClient.put('/crossover-scanner/symbols/order', { symbols })
@@ -677,3 +699,84 @@ export const markNotificationsRead = async (ids, groupIds = []) => {
 }
 
 export default apiClient
+
+// ---------- documents (PDF / Excel / CSV library) ----------
+
+import { createSseParser } from './sse'
+
+const fail = (what) => (error) => {
+  console.error(`Error ${what}:`, error)
+  throw error
+}
+
+export async function sha256Hex(file) {
+  const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer())
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * Upload one file: hash -> ask for an upload URL (duplicates are detected here) -> PUT straight to
+ * Cloud Storage -> index it. onStage('hashing'|'uploading'|'processing'), onProgress(0..1).
+ * Resolves { duplicate, document, fii? }.
+ */
+export async function uploadDocument(file, { docType, reportDate, title, tags }, { onStage = () => {}, onProgress = () => {} } = {}) {
+  onStage('hashing')
+  const sha256 = await sha256Hex(file)
+  const created = await assistantClient
+    .post('/docs/upload-url', { fileName: file.name, sizeBytes: file.size, sha256, docType, reportDate: reportDate || undefined, title: title || undefined, tags })
+    .then((r) => r.data)
+    .catch(fail('requesting upload URL'))
+  if (created.duplicate) return { duplicate: true, document: created.document }
+
+  onStage('uploading')
+  await axios
+    .put(created.uploadUrl, file, { headers: { 'Content-Type': file.type || 'application/octet-stream' }, onUploadProgress: (e) => e.total && onProgress(e.loaded / e.total), maxBodyLength: Infinity })
+    .catch(fail('uploading file'))
+
+  onStage('processing')
+  const processed = await assistantClient.post(`/docs/${created.docId}/process`, {}, { timeout: 600000 }).then((r) => r.data).catch(fail('indexing document'))
+  return { duplicate: false, document: processed.document, fii: processed.fii }
+}
+
+export const listDocuments = (params = {}) => assistantClient.get('/docs', { params }).then((r) => r.data).catch(fail('listing documents'))
+export const updateDocument = (id, fields) => assistantClient.patch(`/docs/${id}`, fields, { timeout: 600000 }).then((r) => r.data).catch(fail('updating document'))
+export const deleteDocument = (id) => assistantClient.delete(`/docs/${id}`).then((r) => r.data).catch(fail('deleting document'))
+export const documentDownloadUrl = (id) => `${ASSISTANT_BASE_URL}/docs/${id}/download`
+
+// ---------- FII reports ----------
+
+export const getFiiDates = () => assistantClient.get('/fii/dates').then((r) => r.data).catch(fail('loading FII dates'))
+export const compareFiiReports = (body) => assistantClient.post('/fii/compare', body, { timeout: 180000 }).then((r) => r.data).catch(fail('comparing FII reports'))
+
+// ---------- chatbot ----------
+
+export const listChatThreads = () => assistantClient.get('/chat/threads').then((r) => r.data).catch(fail('listing conversations'))
+export const getChatMessages = (threadId) => assistantClient.get(`/chat/threads/${threadId}/messages`).then((r) => r.data).catch(fail('loading conversation'))
+export const deleteChatThread = (threadId) => assistantClient.delete(`/chat/threads/${threadId}`).then((r) => r.data).catch(fail('deleting conversation'))
+
+/**
+ * Ask a question; the answer streams in. onEvent(name, data) gets thread, filter, sources, tool,
+ * reset, delta, done and error events (see functions/assistantRoutes.js). Resolves when the
+ * stream ends; pass an AbortSignal to stop it.
+ */
+export async function streamChat({ message, threadId, mode, scope }, onEvent, signal) {
+  const response = await fetch(`${ASSISTANT_BASE_URL}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ message, threadId: threadId || undefined, mode, scope }),
+    signal,
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}))
+    throw new Error(body.error || `Chat request failed (${response.status})`)
+  }
+  const parser = createSseParser(onEvent)
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    parser.feed(decoder.decode(value, { stream: true }))
+  }
+  parser.end()
+}
