@@ -9,7 +9,7 @@
 
 import { extractDateFilter } from './dateFilter.js'
 import { systemPrompt } from './prompts.js'
-import { parseXlsx, parseCsvBuffer } from '../ingest/parseSheet.js'
+import { parseXlsx } from '../ingest/parseSheet.js'
 import { groupFamilies, versionInfo, currentAndPrevious, effectiveDate, istDay } from './fileFamily.js'
 
 export const MAX_FILES_PER_REQUEST = 5

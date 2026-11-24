@@ -15,7 +15,7 @@ import express from 'express'
 import * as defaultStore from './filesFirestoreClient.js'
 import { validateUpload, sniffContent, extensionOf, MAX_FILE_BYTES } from './ingest/uploadRequest.js'
 import { isoDate } from './ingest/reportDate.js'
-import { parseXlsx, parseCsvBuffer } from './ingest/parseSheet.js'
+import { parseXlsx } from './ingest/parseSheet.js'
 import { versionInfo } from './assistant/fileFamily.js'
 
 const ID = /^[A-Za-z0-9]{10,40}$/
@@ -64,12 +64,17 @@ export function registerFileRoutes(app, { store = defaultStore } = {}) {
       const extension = extensionOf(value.fileName)
       const sniffed = sniffContent(buffer, extension)
       if (sniffed) return res.status(422).json({ error: sniffed })
-      if (value.kind === 'sheet') {
+      if (extension === 'csv') {
+        // A CSV goes to the model as plain text (assistant/chatEngine.js sheetToText), so it is not parsed here:
+        // a strict parser would reject files the model reads fine. Only blank files are refused.
+        if (!buffer.toString('utf8').replace(/^﻿/, '').trim()) return res.status(422).json({ error: 'The spreadsheet has no data' })
+      } else if (value.kind === 'sheet') {
+        // An .xlsx is converted to tables for the model, so it has to be readable.
         try {
-          const parsed = extension === 'xlsx' ? await parseXlsx(buffer) : parseCsvBuffer(buffer)
+          const parsed = await parseXlsx(buffer)
           if (!parsed.pages.length) return res.status(422).json({ error: 'The spreadsheet has no data' })
-        } catch {
-          return res.status(422).json({ error: 'Could not read the spreadsheet' })
+        } catch (err) {
+          return res.status(422).json({ error: `Could not read the spreadsheet: ${err.message}`.slice(0, 300) })
         }
       }
       const sha256 = crypto.createHash('sha256').update(buffer).digest('hex')

@@ -57,7 +57,8 @@ export async function parseXlsx(buffer) {
 
 export function parseCsvBuffer(buffer) {
   const text = buffer.toString('utf8').replace(/^﻿/, '')
-  const rows = parseCsv(text, { relax_column_count: true, skip_empty_lines: true, bom: true })
+  // relax_quotes: NSE's participant-wise OI file starts with a title like ""Participant wise ... 2026"",,,, which a strict parser rejects.
+  const rows = parseCsv(text, { relax_column_count: true, relax_quotes: true, skip_empty_lines: true, bom: true })
   const pages = rowsToPages(rows, 'CSV', 1)
   return { pageCount: pages.length, pages, needsOcr: false }
 }

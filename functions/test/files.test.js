@@ -73,6 +73,25 @@ test('sheet parsing: markdown tables, header repeated every 40 rows, formulas re
   assert.match(csv.pages[0].text, /\| VEDL \| 1150 \|/)
 })
 
+// NSE's participant-wise OI file: the title row is wrapped in doubled quotes and padded with commas, and the rows below have a different width.
+const NSE_PARTICIPANT_OI = [
+  '""Participant wise Open Interest (no. of contracts) in Equity Derivatives as on Nov 17, 2026"",,,,,,,,,,,,,,',
+  'Client Type,Future Index Long,Future Index Short,Future Stock Long,Future Stock Short       ,Total Long Contracts      ,Total Short Contracts',
+  'Client,170907,115613,3180794,391846,11749181,8263239',
+  'FII,65568,130691,3629602,2645357,6157158,5025104',
+  'TOTAL,318229,318229,7990802,7990802,24000000,24000000',
+  '',
+].join('\r\n')
+
+test('csv parsing: the NSE participant OI file (doubled quotes in the title row) is readable, and its numbers are kept as written', () => {
+  const parsed = parseCsvBuffer(Buffer.from(NSE_PARTICIPANT_OI))
+  assert.equal(parsed.pageCount, 1)
+  assert.match(parsed.pages[0].text, /Participant wise Open Interest/)
+  assert.match(parsed.pages[0].text, /\| FII \| 65568 \| 130691 \| 3629602 \| 2645357 \| 6157158 \| 5025104 \|/)
+  // ordinary quoted fields still work
+  assert.match(parseCsvBuffer(Buffer.from('Name,Note\n"Tata, Sons","say ""hi"""\n')).pages[0].text, /\| Tata, Sons \| say "hi" \|/)
+})
+
 // ---- routes, with an in-memory store ----
 function memoryStore() {
   const files = new Map()
@@ -137,10 +156,20 @@ test('POST /files: spreadsheets are checked for readability; csv and xlsx accept
   const { base, close } = await start()
   assert.equal((await upload(base, 'rates.csv', Buffer.from('Symbol,Lot\nVEDL,1150\n'))).status, 201)
   assert.equal((await upload(base, 'empty.csv', Buffer.from('\n\n'))).status, 422)
+  const nse = await upload(base, 'fao_participant_oi_17112026.csv', Buffer.from(NSE_PARTICIPANT_OI))
+  assert.equal(nse.status, 201)
+  assert.equal((await nse.json()).file.reportDate, '2026-11-17')
   const workbook = new ExcelJS.Workbook()
   workbook.addWorksheet('S').addRows([['a', 'b'], [1, 2]])
   assert.equal((await upload(base, 'ok 2025-11-14.xlsx', Buffer.from(await workbook.xlsx.writeBuffer()))).status, 201)
-  assert.equal((await upload(base, 'corrupt.xlsx', Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('garbage')]))).status, 422)
+  const corrupt = await upload(base, 'corrupt.xlsx', Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('garbage')]))
+  assert.equal(corrupt.status, 422)
+  assert.match((await corrupt.json()).error, /^Could not read the spreadsheet: .+/)
+  // A CSV is sent to the model as text, so one that a strict CSV parser rejects (unterminated quote) is still accepted.
+  const messy = 'Symbol,Note\nNIFTY,"unterminated\nBANKNIFTY,ok\n'
+  assert.throws(() => parseCsvBuffer(Buffer.from(messy)))
+  assert.equal((await upload(base, 'messy_17112026.csv', Buffer.from(messy))).status, 201)
+  assert.equal((await upload(base, 'blank.csv', Buffer.from('﻿  \r\n'))).status, 422)
   close()
 })
 
