@@ -496,6 +496,18 @@ export const importSymbolSheet = async (file, { overwrite = true, dryRun = false
   }
 }
 
+// Lot size typed on a Notifications card (whole number > 0; null / '' resets it). Resolves
+// { symbol, lotSize, lotSizeSource } - the lot size now in effect and where it comes from.
+export const saveCrossoverSymbolLotSize = async (id, lotSize) => {
+  try {
+    const response = await apiClient.put(`/crossover-scanner/symbols/${encodeURIComponent(id)}/lot-size`, { lotSize })
+    return response.data
+  } catch (error) {
+    console.error('Error saving lot size:', error)
+    throw error
+  }
+}
+
 export const saveCrossoverSymbolOrder = async (symbols) => {
   try {
     const response = await apiClient.put('/crossover-scanner/symbols/order', { symbols })

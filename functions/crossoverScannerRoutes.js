@@ -18,6 +18,7 @@ import {
   saveScannerSettings,
   getRunStatus,
   setScannerSymbolMargin,
+  setScannerSymbolLotSizeOverride,
   listAllNotifications,
   listNotificationsSince,
   queryNotificationsPage,
@@ -38,6 +39,7 @@ import {
   releaseManualRunLease,
 } from './crossoverScannerFirestoreClient.js'
 import { readSymbolSheetFromBuffer } from './marginSheet.js'
+import { resolveLotSize, validateLotSizeInput } from './lotSizes.js'
 import { importSymbolSheet } from './symbolSheetImport.js'
 import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, GROUP_ORDERS, GROUP_SORTS } from './crossoverGroupSort.js'
 import { buildNotificationWorkbook } from './crossoverExport.js'
@@ -250,6 +252,22 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
     }
   })
 
+  // Lot size of one symbol, typed on a Notifications card (feeds the suggested Stoploss / Target). A whole number
+  // greater than 0 sets it; null / '' clears it again (back to the uploaded sheet, then the built-in table).
+  // Returns the lot size now in effect and where it comes from.
+  app.put('/crossover-scanner/symbols/:id/lot-size', async (req, res) => {
+    try {
+      const { error, value } = validateLotSizeInput(req.body?.lotSize)
+      if (error) return res.status(400).json({ error })
+      const entry = await setScannerSymbolLotSizeOverride(req.params.id, value)
+      if (!entry) return res.status(404).json({ error: 'Symbol not found' })
+      res.json({ status: 'SUCCESS', symbol: entry.symbol, ...resolveLotSize(entry) })
+    } catch (error) {
+      console.error('Error saving lot size:', error.message)
+      res.status(500).json({ error: error.message })
+    }
+  })
+
   app.delete('/crossover-scanner/symbols/:id', async (req, res) => {
     try {
       await deactivateScannerSymbol(req.params.id)
@@ -452,11 +470,12 @@ export function registerCrossoverScannerRoutes(app, { getGrowwAccessToken }) {
       const activeSymbols = await listActiveScannerSymbols()
       const margins = new Map(activeSymbols.map((entry) => [`${entry.exchange}_${entry.symbol}`, entry.nrmlMargin ?? null]))
       const { items, total, indexTotal, capped } = await queryCrossoverGroupsPage(section, filters, { page, pageSize, group, sort, order, margins })
-      // Lot size + sheet price (from the uploaded symbol sheet) feed the suggested Stoploss / Target columns.
-      const sheetData = new Map(activeSymbols.map((entry) => [`${entry.exchange}_${entry.symbol}`, { lotSize: entry.lotSize ?? null, sheetPrice: entry.sheetPrice ?? null }]))
+      // Lot size (typed on the card > uploaded sheet > built-in table, see lotSizes.js) + sheet price feed the suggested Stoploss / Target column.
+      const sheetData = new Map(activeSymbols.map((entry) => [`${entry.exchange}_${entry.symbol}`, { ...resolveLotSize(entry), sheetPrice: entry.sheetPrice ?? null }]))
       const groups = items.map((item) => {
         const key = `${item.exchange}_${item.symbol}`
-        return { ...item, nrmlMargin: margins.get(key) ?? null, lotSize: sheetData.get(key)?.lotSize ?? null, sheetPrice: sheetData.get(key)?.sheetPrice ?? null }
+        const data = sheetData.get(key) ?? { lotSize: null, lotSizeSource: null, sheetPrice: null }
+        return { ...item, nrmlMargin: margins.get(key) ?? null, lotSize: data.lotSize, lotSizeSource: data.lotSizeSource, sheetPrice: data.sheetPrice }
       })
       res.json({ status: 'SUCCESS', section, page, pageSize, total, indexTotal, capped, sort, order, groups })
     } catch (error) {

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { computeStopTarget, pickStockPrice, parseAmount } from '../stopTargetCalc.js'
+import { computeStopTarget, pickStockPrice, parseAmount, describeStopTarget } from '../stopTargetCalc.js'
 
 const near = (actual, expected) => assert.ok(Math.abs(actual - expected) < 1e-6, `${actual} !~ ${expected}`)
 
@@ -23,12 +23,29 @@ test('missing inputs give null, not NaN/Infinity', () => {
   assert.equal(computeStopTarget({ slAmount: 0, targetAmount: 100, lotSize: 10, price: 50 }).stoploss, null)
 })
 
-test('price priority live > sheet > close; amount parsing', () => {
-  assert.deepEqual(pickStockPrice({ quote: { lastPrice: 10 }, sheetPrice: 20, closePrice: 30 }), { price: 10, source: 'live' })
-  assert.deepEqual(pickStockPrice({ quote: null, sheetPrice: 20, closePrice: 30 }), { price: 20, source: 'sheet' })
-  assert.deepEqual(pickStockPrice({ quote: {}, sheetPrice: null, closePrice: 30 }), { price: 30, source: 'close' })
+test('price priority: live quote, then the bar close, then the (possibly stale) sheet price; amount parsing', () => {
+  assert.deepEqual(pickStockPrice({ quote: { lastPrice: 10 }, closePrice: 30, sheetPrice: 20 }), { price: 10, source: 'live' })
+  assert.deepEqual(pickStockPrice({ quote: null, closePrice: 30, sheetPrice: 20 }), { price: 30, source: 'close' }, 'a card with no live quote uses the bar close, not the older sheet price')
+  assert.deepEqual(pickStockPrice({ quote: {}, closePrice: null, sheetPrice: 20 }), { price: 20, source: 'sheet' })
   assert.deepEqual(pickStockPrice({}), { price: null, source: null })
   assert.equal(parseAmount('₹7,500'), 7500)
   assert.equal(parseAmount(''), null)
   assert.equal(parseAmount('-5'), null)
+})
+
+test('what the column shows: off without amounts, a reason when there is no lot size, values otherwise', () => {
+  const vedl = { symbol: 'VEDL', lotSize: 1150, closePrice: 237.85, sheetPrice: 180 }
+  assert.deepEqual(describeStopTarget({ group: vedl, slAmount: null, targetAmount: null }), { state: 'off' })
+  const both = describeStopTarget({ group: vedl, quote: { lastPrice: 250 }, slAmount: 7500, targetAmount: 17000 })
+  assert.equal(both.state, 'ok')
+  assert.deepEqual([both.lotSize, both.price, both.priceSource], [1150, 250, 'live'])
+  near(both.stoploss, 7500 / 1150)
+  near(both.stoplossPct, (7500 / 1150 / 250) * 100)
+  near(both.targetPct, (17000 / 1150 / 250) * 100)
+  const noQuote = describeStopTarget({ group: vedl, quote: null, slAmount: 7500, targetAmount: 17000 })
+  assert.deepEqual([noQuote.price, noQuote.priceSource], [237.85, 'close'])
+  const slOnly = describeStopTarget({ group: vedl, slAmount: 7500, targetAmount: null })
+  assert.ok(slOnly.stoploss != null && slOnly.target === null && slOnly.targetPct === null)
+  assert.deepEqual(describeStopTarget({ group: { symbol: 'HDFCBANK', lotSize: null }, slAmount: 7500 }), { state: 'noLot', reason: 'sheet' })
+  assert.deepEqual(describeStopTarget({ group: { symbol: 'NIFTYAUTO', isIndex: true, lotSize: null }, slAmount: 7500 }), { state: 'noLot', reason: 'index' })
 })

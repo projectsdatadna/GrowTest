@@ -73,6 +73,22 @@ test('import plan: lot size + sheet price always refresh, margin only when unset
   assert.deepEqual(keep.updates.find((u) => u.symbol === 'VEDL').fields, { lotSize: 1150, sheetPrice: 237.85 })
   assert.deepEqual(keep.updates.find((u) => u.symbol === 'PIIND').fields, { nrmlMargin: 66265, lotSize: 175, sheetPrice: 1591.7 })
   assert.equal(keep.updates.find((u) => u.symbol === 'ITC').changed, false)
+  assert.deepEqual(keep.scannerWithoutLotSize, { stocks: [], indices: [] })
   const over = planSymbolSheetImport(rows, active, { overwrite: true })
   assert.equal(over.updates.find((u) => u.symbol === 'VEDL').fields.nrmlMargin, 62266)
+})
+
+test('import plan: lists the scanner symbols that still have no lot size afterwards, stocks and indices apart', () => {
+  const active = [
+    { symbol: 'ZZSTOCK1', exchange: 'NSE' },
+    { symbol: 'ZZSTOCK2', exchange: 'NSE' },
+    { symbol: 'ZZSTOCK3', exchange: 'NSE', lotSize: 1725 },
+    { symbol: 'ZZSTOCK4', exchange: 'NSE', lotSizeOverride: 50 },
+    { symbol: 'IEX', exchange: 'NSE' },
+    { symbol: 'NIFTY', exchange: 'NSE', isIndex: true },
+    { symbol: 'NIFTYIT', exchange: 'NSE', isIndex: true },
+    { symbol: 'ZZINDEX', exchange: 'NSE', isIndex: true },
+  ]
+  const plan = planSymbolSheetImport([{ symbol: 'ZZSTOCK1', margin: null, price: 200, lotSize: 1150 }, { symbol: 'ZZINDEX', margin: null, price: null, lotSize: 65 }], active)
+  assert.deepEqual(plan.scannerWithoutLotSize, { stocks: ['ZZSTOCK2'], indices: ['NIFTYIT'] }, 'set by this sheet, already imported, typed on a card, or built into the app (IEX, NIFTY) all count as covered')
 })

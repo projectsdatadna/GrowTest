@@ -174,13 +174,14 @@ export function useOptionChainHover() {
   return useCardChartHover({ render: (group) => <OptionChainPanel key={group.id} group={group} />, label: 'option chain', width: POPOVER_WIDTH })
 }
 
-export function OptionChainButton({ group, hover }) {
+export function OptionChainButton({ group, hover, compact = false, text = 'Option chain' }) {
   return (
     <CardChartButton
       group={group}
       hover={hover}
       icon="table_chart"
-      text="Option chain"
+      text={text}
+      compact={compact}
       title="Hover to see option chain changes (previous, current, difference)"
       ariaLabel={`Show option chain changes for ${group.symbol} ${group.interval}`}
     />

@@ -42,6 +42,35 @@ export function useStopTargetAmounts() {
   }
 }
 
+const listNames = (names, max = 12) => `${names.slice(0, max).join(', ')}${names.length > max ? ` +${names.length - max} more` : ''}`
+
+/** One line for the notice after an import: which scanner symbols still have no lot size. */
+export function missingLotSizeText(missing) {
+  if (!missing) return ''
+  const parts = []
+  if (missing.stocks.length) parts.push(`stocks not in the sheet: ${listNames(missing.stocks, 8)}`)
+  if (missing.indices.length) parts.push(`${missing.indices.length} ${missing.indices.length === 1 ? 'index' : 'indices'} without futures`)
+  return parts.length ? `Still no lot size - ${parts.join('; ')}.` : ''
+}
+
+function MissingLotSizes({ missing }) {
+  if (!missing || (!missing.stocks.length && !missing.indices.length)) return null
+  return (
+    <div className="pt-xs flex flex-col gap-[2px]">
+      {missing.stocks.length > 0 && (
+        <div title={missing.stocks.join(', ')}>
+          <span className="text-on-surface">Still no lot size ({missing.stocks.length} stock{missing.stocks.length === 1 ? '' : 's'} - add to the sheet):</span> {listNames(missing.stocks)}
+        </div>
+      )}
+      {missing.indices.length > 0 && (
+        <div title={missing.indices.join(', ')}>
+          {missing.indices.length} {missing.indices.length === 1 ? 'index has' : 'indices have'} no lot size (no futures): {listNames(missing.indices, 6)}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ImportDialog({ onClose, onImported }) {
   const [file, setFile] = useState(null)
   const [overwrite, setOverwrite] = useState(true)
@@ -88,6 +117,7 @@ function ImportDialog({ onClose, onImported }) {
             </div>
             {preview.keptExistingMargin.length > 0 && <div>Existing margin kept for {preview.keptExistingMargin.length} symbol(s).</div>}
             {preview.unmatched.length > 0 && <div title={preview.unmatched.join(', ')}>Not in the scanner (skipped): {preview.unmatched.slice(0, 12).join(', ')}{preview.unmatched.length > 12 ? ` +${preview.unmatched.length - 12} more` : ''}</div>}
+            <MissingLotSizes missing={preview.scannerWithoutLotSize} />
           </div>
         )}
         {error && <div className="text-sm text-bearish">{error}</div>}
@@ -117,25 +147,30 @@ export default function StopTargetControls({ amounts, inputClass, onImported }) 
     },
     [onImported]
   )
+  const empty = !amounts.slInput && !amounts.targetInput
   return (
     <>
-      <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md" title="Stoploss amount in ₹ for one lot - Stoploss = ₹ ÷ lot size">
-        Stoploss ₹
-        <input type="text" inputMode="decimal" value={amounts.slInput} onChange={(e) => amounts.setSlInput(e.target.value)} placeholder="e.g. 7500" className={`${inputClass} w-24`} aria-label="Stoploss amount in rupees" />
-      </label>
-      <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Profit target in ₹ for one lot - Target = ₹ ÷ lot size">
-        Target ₹
-        <input type="text" inputMode="decimal" value={amounts.targetInput} onChange={(e) => amounts.setTargetInput(e.target.value)} placeholder="e.g. 17000" className={`${inputClass} w-24`} aria-label="Target amount in rupees" />
-      </label>
-      {(amounts.slInput || amounts.targetInput) && (
-        <button type="button" onClick={amounts.clear} className="text-xs text-primary hover:underline">
-          Clear
+      <div className="flex items-center gap-sm flex-wrap rounded-lg border border-outline-variant px-sm py-xs ml-md" role="group" aria-label="Suggested Stoploss / Target">
+        <span className="text-[11px] uppercase tracking-wide text-on-surface-variant">Suggested SL / Target</span>
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Stoploss amount in ₹ for one lot - Stoploss = ₹ ÷ lot size">
+          Stoploss ₹
+          <input type="text" inputMode="decimal" value={amounts.slInput} onChange={(e) => amounts.setSlInput(e.target.value)} placeholder="e.g. 7500" className={`${inputClass} w-24`} aria-label="Stoploss amount in rupees" />
+        </label>
+        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Profit target in ₹ for one lot - Target = ₹ ÷ lot size">
+          Target ₹
+          <input type="text" inputMode="decimal" value={amounts.targetInput} onChange={(e) => amounts.setTargetInput(e.target.value)} placeholder="e.g. 17000" className={`${inputClass} w-24`} aria-label="Target amount in rupees" />
+        </label>
+        {!empty && (
+          <button type="button" onClick={amounts.clear} className="text-xs text-primary hover:underline">
+            Clear
+          </button>
+        )}
+        <button type="button" onClick={() => setShowImport(true)} className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs" title="Upload the SYMBOL / Margin / Price / Lot Size sheet">
+          <span className="material-symbols-outlined text-[16px]">upload_file</span>
+          Lot size sheet
         </button>
-      )}
-      <button type="button" onClick={() => setShowImport(true)} className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs" title="Upload the SYMBOL / Margin / Price / Lot Size sheet">
-        <span className="material-symbols-outlined text-[16px]">upload_file</span>
-        Lot size sheet
-      </button>
+        {empty && <span className="text-[11px] text-on-surface-variant" role="note">Enter Stoploss ₹ and Target ₹ to add a suggested SL / Target column to every card.</span>}
+      </div>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={handleImported} />}
     </>
   )

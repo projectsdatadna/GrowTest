@@ -204,6 +204,17 @@ export async function setScannerSymbolMargin(id, nrmlMargin) {
   return true
 }
 
+// A lot size the user typed on a Notifications card (positive integer), or null to clear it. Kept in its own
+// field (lotSizeOverride) so the lot size sheet import never overwrites it. Returns the updated symbol, or null
+// when the symbol does not exist.
+export async function setScannerSymbolLotSizeOverride(id, lotSize) {
+  const ref = db.collection(SYMBOLS_COLLECTION).doc(id)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) return null
+  await ref.update({ lotSizeOverride: lotSize === null ? admin.firestore.FieldValue.delete() : lotSize })
+  return serializeSymbolDoc(await ref.get())
+}
+
 // Lot size / sheet price / margin from the uploaded symbol sheet (see
 // symbolSheetImport.js). Only the given fields are written; never clears.
 export async function setScannerSymbolSheetData(id, fields) {

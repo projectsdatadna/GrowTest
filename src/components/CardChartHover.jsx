@@ -116,7 +116,7 @@ export function useCardChartHover({ render, label = 'chart', width = POPOVER_WID
   return { onEnter, onLeave: scheduleClose, onToggle, popover, activeId: active?.group.id ?? null }
 }
 
-export function CardChartButton({ group, hover, icon = 'show_chart', text = 'Chart', title = 'Hover to see this crossover on a chart', ariaLabel }) {
+export function CardChartButton({ group, hover, icon = 'show_chart', text = 'Chart', title = 'Hover to see this crossover on a chart', ariaLabel, compact = false }) {
   const open = hover.activeId === group.id
   return (
     <button
@@ -132,9 +132,9 @@ export function CardChartButton({ group, hover, icon = 'show_chart', text = 'Cha
       title={title}
       aria-label={ariaLabel || `Show chart for ${group.symbol} ${group.interval}`}
       aria-expanded={open}
-      className={`self-center flex items-center gap-xs px-sm py-xs rounded-lg border text-xs ${open ? 'border-primary text-primary' : 'border-outline-variant text-on-surface-variant'} hover:text-primary`}
+      className={`self-center ${compact ? 'w-full justify-start px-xs py-[2px] text-[11px]' : 'px-sm py-xs text-xs'} flex items-center gap-xs rounded-lg border ${open ? 'border-primary text-primary' : 'border-outline-variant text-on-surface-variant'} hover:text-primary`}
     >
-      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <span className={`material-symbols-outlined ${compact ? 'text-[15px]' : 'text-[18px]'}`}>{icon}</span>
       {text}
     </button>
   )

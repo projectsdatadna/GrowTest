@@ -47,7 +47,8 @@ function FileRow({ file, inChat, attached, onAttach, onChanged }) {
   )
 }
 
-export default function FilesPanel({ conversationFileIds, attachedIds, onAttach }) {
+/** `refreshKey` changes whenever the list may have changed elsewhere (an upload finished, a message was sent). */
+export default function FilesPanel({ conversationFileIds, attachedIds, onAttach, refreshKey = 0 }) {
   const [files, setFiles] = useState(null)
   const [error, setError] = useState('')
   const [bump, setBump] = useState(0)
@@ -60,7 +61,7 @@ export default function FilesPanel({ conversationFileIds, attachedIds, onAttach 
     return () => {
       cancelled = true
     }
-  }, [bump])
+  }, [bump, refreshKey])
 
   return (
     <div className="flex-1 min-h-0 overflow-y-auto p-sm flex flex-col gap-xs">

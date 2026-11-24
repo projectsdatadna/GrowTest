@@ -6,7 +6,6 @@ import { markAllReadLocally } from '../store/liveNotificationsSlice'
 import useLiveNotifications from './useLiveNotifications'
 import { NotificationBody, notificationTitle, notificationType } from './NotificationContent'
 import { timeAgo, formatCrossoverTime } from './crossoverFormat'
-import FloatingChatbot from './assistant/FloatingChatbot'
 
 /**
  * Dark "terminal" app shell (sidebar + top header) from the Stitch mockup.
@@ -128,6 +127,7 @@ const NAV_ITEMS = [
   { key: 'crossover-scanner', label: 'Crossover Scanner', icon: 'swap_vert', functional: true },
   { key: 'overview', label: 'Overview', icon: 'grid_view', functional: true },
   { key: 'notifications', label: 'Notifications', icon: 'notifications_active', functional: true },
+  { key: 'assistant', label: 'Assistant', icon: 'smart_toy', functional: true },
 ]
 
 function AppShell({ activeTab, onTabChange, children }) {
@@ -177,7 +177,6 @@ function AppShell({ activeTab, onTabChange, children }) {
       </header>
 
       <main className="ml-[250px] p-xl flex flex-col gap-lg">{children}</main>
-      <FloatingChatbot />
     </div>
   )
 }

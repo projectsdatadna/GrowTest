@@ -43,7 +43,7 @@ import { useOptionChainHover } from './OptionChainHover'
 import { useDayChangeQuotes, quoteKey } from './useDayChangeQuotes'
 import { sameItems } from './liveRefresh'
 import RunScanButton from './RunScanButton'
-import StopTargetControls, { useStopTargetAmounts } from './StopTargetControls'
+import StopTargetControls, { useStopTargetAmounts, missingLotSizeText } from './StopTargetControls'
 
 // Crossover indicators, matching the labels the scanner stores in
 // `indicatorLabel` (functions/crossoverScanner.js CROSSOVER_SPECS).
@@ -335,6 +335,9 @@ function NotificationsTab({ onTabChange }) {
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
   const stopTarget = useStopTargetAmounts()
+  // Lot sizes typed on a card this session, by symbol: every card of that symbol shows the new value at once.
+  const [lotSizeEdits, setLotSizeEdits] = useState({})
+  const handleLotSizeSaved = useCallback((symbol, result) => setLotSizeEdits((c) => ({ ...c, [symbol]: { lotSize: result.lotSize, lotSizeSource: result.lotSizeSource } })), [])
   const chartHover = useCardChartHover()
   const optionChainHover = useOptionChainHover()
   // Sections start collapsed; only the ones the user opens are tracked.
@@ -514,8 +517,9 @@ function NotificationsTab({ onTabChange }) {
     if (ok) refreshAll()
   }
 
-  const handleSheetImported = ({ updated }) => {
-    setNotice(`Lot size sheet imported: ${updated} symbol${updated === 1 ? '' : 's'} updated.`)
+  const handleSheetImported = ({ updated, scannerWithoutLotSize }) => {
+    setNotice(`Lot size sheet imported: ${updated} symbol${updated === 1 ? '' : 's'} updated. ${missingLotSizeText(scannerWithoutLotSize)}`.trim())
+    setLotSizeEdits({}) // the server's values are current again
     refreshAll()
   }
 
@@ -781,7 +785,7 @@ function NotificationsTab({ onTabChange }) {
                           return (
                             <li key={g.id}>
                               {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} slAmount={stopTarget.slAmount} targetAmount={stopTarget.targetAmount} />
+                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} slAmount={stopTarget.slAmount} targetAmount={stopTarget.targetAmount} lotSizeEdit={lotSizeEdits[g.symbol]} onLotSizeSaved={handleLotSizeSaved} />
                             </li>
                           )
                         })}

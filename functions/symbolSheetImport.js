@@ -11,6 +11,7 @@ import {
   scannerSymbolId,
   setScannerSymbolSheetData,
 } from './crossoverScannerFirestoreClient.js'
+import { resolveLotSize } from './lotSizes.js'
 
 /**
  * Which scanner symbols change. `active` = listActiveScannerSymbols() entries.
@@ -42,7 +43,12 @@ export function planSymbolSheetImport(rows, active, { overwrite = false } = {}) 
     const changed = Object.entries(fields).some(([key, value]) => entry[key] !== value)
     updates.push({ id: scannerSymbolId(entry.exchange, entry.symbol), symbol: entry.symbol, fields, changed })
   }
-  return { updates: updates.filter((u) => Object.keys(u.fields).length > 0), unmatched, keptMargin }
+  // Active scanner symbols that still have no lot size once this import is applied - what the user should add to the sheet.
+  const plannedLot = new Map(updates.map((u) => [u.symbol, u.fields.lotSize]))
+  // (a lot size typed on a card or built into the app counts as covered, and so does one this sheet is about to set)
+  const without = active.filter((s) => (plannedLot.get(s.symbol) ?? resolveLotSize(s).lotSize) == null)
+  const scannerWithoutLotSize = { stocks: without.filter((s) => !s.isIndex).map((s) => s.symbol), indices: without.filter((s) => s.isIndex).map((s) => s.symbol) }
+  return { updates: updates.filter((u) => Object.keys(u.fields).length > 0), unmatched, keptMargin, scannerWithoutLotSize }
 }
 
 /** Plans and (unless dryRun) saves. Returns counts the UI shows before / after confirming. */
@@ -62,5 +68,6 @@ export async function importSymbolSheet(rows, { overwrite = false, dryRun = fals
     updated: dryRun ? 0 : changed.length,
     unmatched: plan.unmatched,
     keptExistingMargin: plan.keptMargin,
+    scannerWithoutLotSize: plan.scannerWithoutLotSize,
   }
 }
