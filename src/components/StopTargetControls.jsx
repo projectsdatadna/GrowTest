@@ -150,26 +150,29 @@ export default function StopTargetControls({ amounts, inputClass, onImported }) 
   const empty = !amounts.slInput && !amounts.targetInput
   return (
     <>
-      <div className="flex items-center gap-sm flex-wrap rounded-lg border border-outline-variant px-sm py-xs ml-md" role="group" aria-label="Suggested Stoploss / Target">
-        <span className="text-[11px] uppercase tracking-wide text-on-surface-variant">Suggested SL / Target</span>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Stoploss amount in ₹ for one lot - Stoploss = ₹ ÷ lot size">
-          Stoploss ₹
-          <input type="text" inputMode="decimal" value={amounts.slInput} onChange={(e) => amounts.setSlInput(e.target.value)} placeholder="e.g. 7500" className={`${inputClass} w-24`} aria-label="Stoploss amount in rupees" />
-        </label>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Profit target in ₹ for one lot - Target = ₹ ÷ lot size">
-          Target ₹
-          <input type="text" inputMode="decimal" value={amounts.targetInput} onChange={(e) => amounts.setTargetInput(e.target.value)} placeholder="e.g. 17000" className={`${inputClass} w-24`} aria-label="Target amount in rupees" />
-        </label>
-        {!empty && (
-          <button type="button" onClick={amounts.clear} className="text-xs text-primary hover:underline">
-            Clear
+      <div className="flex flex-col gap-xs min-w-0" role="group" aria-label="Suggested Stoploss / Target">
+        <div className="flex items-end gap-sm flex-wrap">
+          <label className="flex flex-col gap-[3px] text-[11px] uppercase tracking-wide text-on-surface-variant" title="Stoploss amount in ₹ for one lot - Stoploss = ₹ ÷ lot size">
+            <span className="min-h-[16px]">Stoploss ₹</span>
+            <input type="text" inputMode="decimal" value={amounts.slInput} onChange={(e) => amounts.setSlInput(e.target.value)} placeholder="e.g. 7500" className={`${inputClass} !w-28 normal-case tracking-normal`} aria-label="Stoploss amount in rupees" />
+          </label>
+          <label className="flex flex-col gap-[3px] text-[11px] uppercase tracking-wide text-on-surface-variant" title="Profit target in ₹ for one lot - Target = ₹ ÷ lot size">
+            <span className="min-h-[16px]">Target ₹</span>
+            <input type="text" inputMode="decimal" value={amounts.targetInput} onChange={(e) => amounts.setTargetInput(e.target.value)} placeholder="e.g. 17000" className={`${inputClass} !w-28 normal-case tracking-normal`} aria-label="Target amount in rupees" />
+          </label>
+          {!empty && (
+            <button type="button" onClick={amounts.clear} className="h-9 px-xs text-xs text-primary hover:underline">
+              Clear
+            </button>
+          )}
+          <button type="button" onClick={() => setShowImport(true)} className="h-9 px-md rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs whitespace-nowrap" title="Upload the SYMBOL / Margin / Price / Lot Size sheet">
+            <span className="material-symbols-outlined text-[16px]">upload_file</span>
+            Lot size sheet
           </button>
-        )}
-        <button type="button" onClick={() => setShowImport(true)} className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs" title="Upload the SYMBOL / Margin / Price / Lot Size sheet">
-          <span className="material-symbols-outlined text-[16px]">upload_file</span>
-          Lot size sheet
-        </button>
-        {empty && <span className="text-[11px] text-on-surface-variant" role="note">Enter Stoploss ₹ and Target ₹ to add a suggested SL / Target column to every card.</span>}
+        </div>
+        <div className="text-[11px] text-on-surface-variant" role="note">
+          {empty ? 'Enter Stoploss ₹ and Target ₹ to add a suggested SL / Target column to every card.' : 'Suggested SL / Target is shown on every card (lot size editable there).'}
+        </div>
       </div>
       {showImport && <ImportDialog onClose={() => setShowImport(false)} onImported={handleImported} />}
     </>

@@ -173,13 +173,13 @@ function IndicatorMultiSelect({ selected, onChange, className }) {
   const toggle = (label) => onChange(selected.includes(label) ? selected.filter((l) => l !== label) : [...selected, label])
   const text = selected.length === 0 ? 'All indicators' : selected.length === 1 ? selected[0] : `${selected.length} indicators`
   return (
-    <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen((o) => !o)} className={`${className} flex items-center gap-xs`} aria-haspopup="listbox" aria-expanded={open} aria-label="Crossover indicators">
-        {text}
-        <span className="material-symbols-outlined text-[16px]">expand_more</span>
+    <div className="relative w-full" ref={ref}>
+      <button type="button" onClick={() => setOpen((o) => !o)} className={`${className} flex items-center justify-between gap-xs text-left`} aria-haspopup="listbox" aria-expanded={open} aria-label="Crossover indicators">
+        <span className="truncate">{text}</span>
+        <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
       </button>
       {open && (
-        <div className="absolute z-50 mt-xs min-w-[220px] glass-panel bg-surface rounded-lg border border-outline-variant p-sm flex flex-col gap-xs shadow-lg">
+        <div className="absolute left-0 z-50 mt-xs min-w-full w-max max-w-[min(280px,90vw)] glass-panel bg-surface rounded-lg border border-outline-variant p-sm flex flex-col gap-xs shadow-lg">
           {INDICATOR_FILTERS.map((label) => (
             <label key={label} className="flex items-center gap-xs text-sm text-on-surface cursor-pointer">
               <input type="checkbox" checked={selected.includes(label)} onChange={() => toggle(label)} />
@@ -193,6 +193,29 @@ function IndicatorMultiSelect({ selected, onChange, className }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// A control with its label above it - every filter has one, so the panel reads as a form.
+function Field({ label, children, action = null, className = '' }) {
+  return (
+    <div className={`flex flex-col gap-[3px] min-w-0 ${className}`}>
+      <div className="flex items-center justify-between gap-xs min-h-[16px]">
+        <span className="text-[11px] uppercase tracking-wide text-on-surface-variant">{label}</span>
+        {action}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// One row of the filter panel: a small section name on the left (above the controls on narrow screens), the controls to its right.
+function FilterRow({ title, children, className = '' }) {
+  return (
+    <div className={`flex flex-col lg:flex-row lg:items-start gap-xs lg:gap-md ${className}`}>
+      <div className="lg:w-[88px] lg:shrink-0 lg:pt-[22px] text-[11px] font-semibold uppercase tracking-wide text-primary">{title}</div>
+      <div className="flex-1 min-w-0">{children}</div>
     </div>
   )
 }
@@ -579,7 +602,7 @@ function NotificationsTab({ onTabChange }) {
   const grandTotal = counts ? Object.values(counts).reduce((sum, c) => sum + c.total, 0) : 0
   const visibleSections = SECTION_ORDER.filter((key) => (counts?.[key]?.total || 0) > 0)
 
-  const selectClass = 'bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface'
+  const fieldClass = 'w-full h-9 bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md text-on-surface'
 
   return (
     <div className="flex flex-col gap-lg">
@@ -592,102 +615,127 @@ function NotificationsTab({ onTabChange }) {
             {counts ? `${unreadTotal} unread of ${grandTotal} matching` : 'Loading…'} · live · grouped by timeframe · {PAGE_SIZE} per page
           </p>
         </div>
-        <div className="flex items-center gap-md flex-wrap">
-          <RunScanButton onDone={handleRunDone} />
+        <div className="flex items-center justify-end gap-sm flex-wrap ml-auto">
+          <RunScanButton onDone={handleRunDone} className="h-9 !py-0" />
           <button
             type="button"
             onClick={handleExport}
             disabled={exporting}
             title={`Export each symbol's latest crossover per timeframe, one row per symbol (current filters${fromDate || toDate ? ', latest within the chosen date range' : ', all dates'})`}
-            className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
+            className="h-9 px-md rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
           >
             {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}
             Export to Excel
           </button>
           {onTabChange && (
-            <button type="button" onClick={() => onTabChange('crossover-scanner')} className="text-sm text-primary hover:underline">
+            <button type="button" onClick={() => onTabChange('crossover-scanner')} className="h-9 px-sm text-sm text-primary hover:underline">
               Scanner settings →
             </button>
           )}
-          <button type="button" onClick={() => setShowDelete(true)} className="px-md py-sm rounded-lg border border-outline-variant text-sm text-bearish">
+          <button type="button" onClick={() => setShowDelete(true)} className="h-9 px-md rounded-lg border border-outline-variant text-sm text-bearish">
             Delete notifications…
           </button>
           <button
             type="button"
             onClick={markAllRead}
             disabled={unreadBadge === 0 && unreadTotal === 0}
-            className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50"
+            className="h-9 px-md rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50"
           >
             Mark all read
           </button>
         </div>
       </div>
 
-      <div className="flex items-center gap-sm flex-wrap">
-        {TYPE_FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setTypeFilter(f.key)}
-            className={`px-md py-xs rounded-full text-xs border ${
-              typeFilter === f.key ? 'bg-primary-container text-on-primary-container border-transparent' : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md">
-          <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
-          Unread only
-        </label>
-        <input type="text" value={symbolInput} onChange={(e) => setSymbolInput(e.target.value)} placeholder="Symbol (exact, e.g. ABB)…" className={selectClass} aria-label="Filter by symbol" />
-        <IndicatorMultiSelect selected={indicators} onChange={setIndicators} className={selectClass} />
-        <select value={direction} onChange={(e) => setDirection(e.target.value)} className={selectClass} aria-label="Crossover direction">
-          <option value="any">Any direction</option>
-          <option value="bullish">Bullish</option>
-          <option value="bearish">Bearish</option>
-        </select>
-        <select value={adxStatus} onChange={(e) => setAdxStatus(e.target.value)} className={selectClass} aria-label="ADX status" title="ADX(14) at the crossover bar vs the bar before">
-          <option value="any">Any ADX status</option>
-          <option value="increase">ADX increased</option>
-          <option value="decrease">ADX decreased</option>
-          <option value="flat">ADX flat</option>
-        </select>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
-          From
-          <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={selectClass} aria-label="From date" />
-        </label>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
-          To
-          <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={selectClass} aria-label="To date" />
-        </label>
-        {(fromDate || toDate) && (
-          <button type="button" onClick={() => { setFromDate(''); setToDate('') }} className="text-xs text-primary hover:underline">
-            Clear dates
-          </button>
-        )}
-        <StopTargetControls amounts={stopTarget} inputClass={selectClass} onImported={handleSheetImported} />
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md" title="Order of the cards inside every timeframe (Indices and Stocks each)">
-          Sort by
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={selectClass} aria-label="Sort cards by">
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
+      <div className="rounded-xl border border-outline-variant bg-surface-container-low/40 p-md flex flex-col gap-md" role="search" aria-label="Notification filters">
+        <FilterRow title="Show">
+          <div className="flex items-center gap-sm flex-wrap">
+            {TYPE_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setTypeFilter(f.key)}
+                className={`h-8 px-md rounded-full text-xs border ${
+                  typeFilter === f.key ? 'bg-primary-container text-on-primary-container border-transparent' : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                {f.label}
+              </button>
             ))}
-          </select>
-        </label>
-        {Object.values(sectionData).some((d) => d?.loading) && <Spinner className="text-primary" />}
-        <button
-          type="button"
-          onClick={() => setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
-          className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs"
-          title={sortOrder === 'asc' ? 'Ascending - click for descending' : 'Descending - click for ascending'}
-          aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
-        >
-          <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : (sortBy === 'price' || sortBy === 'nrml') ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : (sortBy === 'price' || sortBy === 'nrml') ? 'High-Low' : 'Newest'}
-        </button>
+            <div className="ml-auto flex items-center gap-md">
+              {Object.values(sectionData).some((d) => d?.loading) && <Spinner className="text-primary" />}
+              <label className="flex items-center gap-xs text-xs text-on-surface-variant cursor-pointer">
+                <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
+                Unread only
+              </label>
+            </div>
+          </div>
+        </FilterRow>
+
+        <FilterRow title="Filter" className="border-t border-outline-variant pt-md">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-sm">
+            <Field label="Symbol">
+              <input type="text" value={symbolInput} onChange={(e) => setSymbolInput(e.target.value)} placeholder="Exact, e.g. ABB" className={fieldClass} aria-label="Filter by symbol" />
+            </Field>
+            <Field label="Indicators">
+              <IndicatorMultiSelect selected={indicators} onChange={setIndicators} className={fieldClass} />
+            </Field>
+            <Field label="Direction">
+              <select value={direction} onChange={(e) => setDirection(e.target.value)} className={fieldClass} aria-label="Crossover direction">
+                <option value="any">Any direction</option>
+                <option value="bullish">Bullish</option>
+                <option value="bearish">Bearish</option>
+              </select>
+            </Field>
+            <Field label="ADX status">
+              <select value={adxStatus} onChange={(e) => setAdxStatus(e.target.value)} className={fieldClass} aria-label="ADX status" title="ADX(14) at the crossover bar vs the bar before">
+                <option value="any">Any ADX status</option>
+                <option value="increase">ADX increased</option>
+                <option value="decrease">ADX decreased</option>
+                <option value="flat">ADX flat</option>
+              </select>
+            </Field>
+            <Field
+              label="From"
+              action={(fromDate || toDate) && (
+                <button type="button" onClick={() => { setFromDate(''); setToDate('') }} className="text-[11px] text-primary hover:underline normal-case">
+                  Clear dates
+                </button>
+              )}
+            >
+              <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={fieldClass} aria-label="From date" title="Filters by crossover time" />
+            </Field>
+            <Field label="To">
+              <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={fieldClass} aria-label="To date" title="Filters by crossover time" />
+            </Field>
+          </div>
+        </FilterRow>
+
+        <FilterRow title="SL / Target" className="border-t border-outline-variant pt-md">
+          <div className="flex flex-wrap items-start justify-between gap-x-xl gap-y-md">
+            <StopTargetControls amounts={stopTarget} inputClass={fieldClass} onImported={handleSheetImported} />
+            <Field label="Sort by" className="w-full sm:w-auto" >
+              <div className="flex items-center gap-sm" title="Order of the cards inside every timeframe (Indices and Stocks each)">
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={`${fieldClass} !w-40`} aria-label="Sort cards by">
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
+                  className="h-9 px-md rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs whitespace-nowrap"
+                  title={sortOrder === 'asc' ? 'Ascending - click for descending' : 'Descending - click for ascending'}
+                  aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                  {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : (sortBy === 'price' || sortBy === 'nrml') ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : (sortBy === 'price' || sortBy === 'nrml') ? 'High-Low' : 'Newest'}
+                </button>
+              </div>
+            </Field>
+          </div>
+        </FilterRow>
       </div>
 
       {notice && <div className="text-sm text-on-surface-variant">{notice}</div>}
