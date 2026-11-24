@@ -38,7 +38,8 @@ test('upload validation: type, size, date from header or file name, safe names',
   const good = validateUpload(ok, { now: NOW })
   assert.deepEqual([good.value.kind, good.value.mimeType, good.value.reportDate, good.value.reportDateSource, good.value.title], ['pdf', 'application/pdf', '2025-11-14', 'filename', 'FII 14-11-2025'])
   assert.equal(validateUpload({ ...ok, reportDate: '2025-11-10' }, { now: NOW }).value.reportDateSource, 'user')
-  assert.equal(validateUpload({ fileName: 'notes.csv', sizeBytes: 5 }, { now: NOW }).value.reportDate, null)
+  const undated = validateUpload({ fileName: 'notes.csv', sizeBytes: 5 }, { now: new Date('2025-11-20T20:00:00Z') }).value
+  assert.deepEqual([undated.reportDate, undated.reportDateSource], ['2025-11-21', 'upload'], 'no date anywhere: the upload day in IST')
   assert.equal(validateUpload({ fileName: 'a.xlsx', sizeBytes: 5 }).value.kind, 'sheet')
   assert.match(validateUpload({ fileName: 'x.exe', sizeBytes: 5 }).error, /Unsupported/)
   assert.match(validateUpload({ ...ok, sizeBytes: MAX_FILE_BYTES + 1 }).error, /larger than 9 MB/)
@@ -82,7 +83,7 @@ function memoryStore() {
     getFile: async (id) => files.get(id) ?? null,
     getFileBytes: async (f) => files.get(f.id).bytes,
     listFiles: async () => [...files.values()].filter((f) => !f.deleted).reverse(),
-    findFileBySha256: async (sha) => [...files.values()].find((f) => f.sha256 === sha && !f.deleted) ?? null,
+    findFileBySha256: async (sha, date = null) => [...files.values()].find((f) => f.sha256 === sha && !f.deleted && (f.reportDate ?? null) === date) ?? null,
     updateFile: async (id, fields) => Object.assign(files.get(id), fields),
     softDeleteFile: async (id) => { files.get(id).deleted = true },
   }
@@ -106,10 +107,19 @@ test('POST /files: stores, detects the date, dedupes by content, rejects bad typ
   assert.deepEqual([body.file.title, body.file.reportDate, body.file.kind, body.file.sizeBytes], ['FII 14-11-2025', '2025-11-14', 'pdf', pdf.length])
   assert.ok(!('sha256' in body.file) && !('bytes' in body.file))
   assert.ok(store.files.get(body.file.id).bytes.equals(pdf))
-  const again = await (await upload(base, 'renamed copy.pdf', pdf)).json()
+  const again = await (await upload(base, 'FII 14-11-2025 (1).pdf', pdf)).json()
   assert.equal(again.duplicate, true)
   assert.equal(again.file.id, body.file.id)
   assert.equal(store.files.size, 1)
+  assert.deepEqual([again.version, again.siblings], [{ n: 1, of: 1 }, []])
+  // The same bytes for another date are the next version of the same document, not a duplicate.
+  const v2 = await upload(base, 'FII 20-11-2025.pdf', pdf)
+  assert.equal(v2.status, 201)
+  const v2body = await v2.json()
+  assert.deepEqual([v2body.duplicate, v2body.file.reportDate, v2body.version, v2body.siblings.map((s) => s.reportDate)], [false, '2025-11-20', { n: 2, of: 2 }, ['2025-11-14']])
+  assert.equal((await (await upload(base, 'FII 20-11-2025.pdf', pdf)).json()).duplicate, true, 'same bytes and same date: reused')
+  assert.equal(store.files.size, 2)
+  store.files.delete(v2body.file.id)
   const dated = await upload(base, 'other.pdf', Buffer.from('%PDF-1.4 different'), { 'x-report-date': '2025-11-10', 'x-title': encodeURIComponent('My report') })
   assert.deepEqual([(await dated.json()).file.reportDate], ['2025-11-10'])
   assert.equal((await upload(base, 'x.exe', Buffer.from('MZ'))).status, 400)

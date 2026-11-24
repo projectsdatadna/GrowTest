@@ -16,6 +16,7 @@ import * as defaultStore from './filesFirestoreClient.js'
 import { validateUpload, sniffContent, extensionOf, MAX_FILE_BYTES } from './ingest/uploadRequest.js'
 import { isoDate } from './ingest/reportDate.js'
 import { parseXlsx, parseCsvBuffer } from './ingest/parseSheet.js'
+import { versionInfo } from './assistant/fileFamily.js'
 
 const ID = /^[A-Za-z0-9]{10,40}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
@@ -72,16 +73,20 @@ export function registerFileRoutes(app, { store = defaultStore } = {}) {
         }
       }
       const sha256 = crypto.createHash('sha256').update(buffer).digest('hex')
-      const existing = await store.findFileBySha256(sha256)
-      if (existing) return res.json({ status: 'DUPLICATE', duplicate: true, file: publicFile(existing) })
-      const file = await store.createFile({ ...value, sha256, ownerId: null }, buffer)
-      res.status(201).json({ status: 'SUCCESS', duplicate: false, file: publicFile(file) })
+      const existing = await store.findFileBySha256(sha256, value.reportDate)
+      const stored = existing ?? (await store.createFile({ ...value, sha256, ownerId: null }, buffer))
+      const library = await store.listFiles()
+      const versions = versionInfo(library)
+      const version = versions.get(stored.id) ?? { n: 1, of: 1, familyKey: null }
+      const siblings = library.filter((f) => f.id !== stored.id && versions.get(f.id)?.familyKey === version.familyKey).map(({ id, reportDate, uploadedAt }) => ({ id, reportDate: reportDate ?? null, uploadedAt }))
+      res.status(existing ? 200 : 201).json({ status: existing ? 'DUPLICATE' : 'SUCCESS', duplicate: Boolean(existing), file: publicFile(stored), version: { n: version.n, of: version.of }, siblings })
     })
   )
 
   app.get('/files', guard(async (_req, res) => {
     const files = await store.listFiles()
-    res.json({ status: 'SUCCESS', total: files.length, files: files.map(publicFile) })
+    const versions = versionInfo(files)
+    res.json({ status: 'SUCCESS', total: files.length, files: files.map((f) => ({ ...publicFile(f), version: { n: versions.get(f.id).n, of: versions.get(f.id).of }, documentKey: versions.get(f.id).familyKey })) })
   }))
 
   app.patch('/files/:id', withFile(async (req, res, file) => {

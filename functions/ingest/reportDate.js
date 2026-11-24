@@ -39,6 +39,20 @@ export function findDateIn(text, options) {
   return null
 }
 
+/** The text with every valid date removed (replaced by a space) - used to tell which files are versions of one document. */
+export function stripDates(text, options) {
+  let rest = String(text)
+  for (const [regex, pick] of PATTERNS) {
+    const global = new RegExp(regex.source, `${regex.flags.replace('g', '')}g`)
+    rest = rest.replace(global, (...args) => {
+      const groups = args.slice(0, -2)
+      const [y, m, d] = pick(groups)
+      return isoDate(y, m, d, options) ? ' ' : groups[0]
+    })
+  }
+  return rest
+}
+
 /** { date, source: 'filename' | 'text' } or null. */
 export function detectReportDate({ fileName = '', text = '' }, options) {
   const fromName = findDateIn(fileName.replace(/\.[A-Za-z0-9]+$/, ''), options)

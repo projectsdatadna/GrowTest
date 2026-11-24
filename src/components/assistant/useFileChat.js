@@ -75,7 +75,7 @@ export default function useFileChat() {
         setConversationId(result.conversationId)
         write(CONVERSATION_KEY, result.conversationId)
         const notes = [
-          ...result.newlyAttached.filter((f) => f.auto).map((f) => `Added by date: ${f.title}${f.reportDate ? ` (${f.reportDate})` : ''}`),
+          ...result.newlyAttached.filter((f) => f.auto).map((f) => `${f.role ? `Added the ${f.role} version` : 'Added by date'}: ${f.title}${f.reportDate ? ` (${f.reportDate})` : ''}`),
           ...(result.dropped.length ? [`Left out because of the size limit: ${result.dropped.map((f) => f.title).join(', ')}`] : []),
           ...(result.truncated?.length ? [`Only the first part was read (too long): ${result.truncated.map((f) => f.title).join(', ')}`] : []),
         ]

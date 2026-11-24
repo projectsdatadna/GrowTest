@@ -72,9 +72,10 @@ export async function listFiles({ includeDeleted = false, limit = 500 } = {}) {
   return snapshot.docs.map(serialize).filter((f) => includeDeleted || !f.deleted).slice(0, limit)
 }
 
-export async function findFileBySha256(sha256) {
-  const snapshot = await db.collection(FILES_COLLECTION).where('sha256', '==', sha256).limit(10).get()
-  return snapshot.docs.map(serialize).find((f) => !f.deleted) ?? null
+// The same bytes uploaded for another date are a new version, so a match needs the same date too.
+export async function findFileBySha256(sha256, reportDate = null) {
+  const snapshot = await db.collection(FILES_COLLECTION).where('sha256', '==', sha256).limit(50).get()
+  return snapshot.docs.map(serialize).find((f) => !f.deleted && (f.reportDate ?? null) === (reportDate ?? null)) ?? null
 }
 
 export async function updateFile(id, fields) {

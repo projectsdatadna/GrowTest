@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import express from 'express'
 import ExcelJS from 'exceljs'
-import { chooseFilesByDate, selectFilesForRequest, buildFileParts, buildMessages, runChat, sheetToText, ChatError, MAX_FILES_PER_REQUEST } from '../assistant/chatEngine.js'
+import { chooseFilesByDate, chooseFilesByVersion, selectFilesForRequest, buildFileParts, buildMessages, runChat, sheetToText, ChatError, MAX_FILES_PER_REQUEST } from '../assistant/chatEngine.js'
 import { validateChatRequest, registerChatRoutes } from '../chatRoutes.js'
 import { chatCompletion } from '../aiClient.js'
 
@@ -15,15 +15,14 @@ test('dates -> files: one date, two dates, a range, "latest", a date with no fil
   assert.deepEqual(ids('What did FIIs do on 14 Nov 2025?').fileIds, ['fileaaaaaaaa2'])
   assert.deepEqual(ids('Compare 14 Nov 2025 with 10 Nov 2025').fileIds, ['fileaaaaaaaa1', 'fileaaaaaaaa2'], 'chronological order')
   assert.deepEqual(ids('flows between 10 Nov 2025 and 14 Nov 2025').fileIds, ['fileaaaaaaaa1', 'fileaaaaaaaa2'])
-  assert.deepEqual(ids('Summarise the latest report').fileIds, ['fileaaaaaaaa3'])
-  assert.deepEqual(ids('what is the current ratio?').fileIds, [], '"current" alone does not attach the newest file')
+  assert.deepEqual(ids('Summarise the latest report').fileIds, [], '"latest" is handled by chooseFilesByVersion')
+  assert.deepEqual(ids('what is the current ratio?').fileIds, [])
   assert.deepEqual(ids('hello').fileIds, [])
   const missing = ids('What about 12 Nov 2025?')
   assert.deepEqual(missing.fileIds, [])
   assert.match(missing.note, /no stored file has that date\. Stored report dates: 2025-11-17, 2025-11-14, 2025-11-10\./)
   assert.match(ids('on 14 Nov 2025 and 12 Nov 2025').note, /2025-11-12/)
   assert.deepEqual(ids('on 14 Nov 2025 and 12 Nov 2025').fileIds, ['fileaaaaaaaa2'])
-  assert.match(chooseFilesByDate('latest report', [file('x', null)], { now: NOW }).note, /no stored file has a report date/)
   const many = Array.from({ length: 8 }, (_, i) => file(`filemany0000${i}`, `2025-11-0${i + 1}`))
   assert.equal(chooseFilesByDate('between 1 Nov 2025 and 9 Nov 2025', many, { now: NOW }).fileIds.length, MAX_FILES_PER_REQUEST)
 })
@@ -220,4 +219,48 @@ test('POST /chat: validation 400, unknown conversation 404, model failure 502, o
   failure = new Error('boom')
   assert.equal((await post(base, { message: 'x' })).status, 500)
   close()
+})
+
+const ver = (id, fileName, reportDate, uploadedAt) => ({ id, title: fileName.replace(/\.[^.]+$/, ''), fileName, kind: 'pdf', reportDate, uploadedAt, sizeBytes: 1000, mimeType: 'application/pdf' })
+const versions = [
+  ver('fileversion01', 'FII Report 10-11-2025.pdf', '2025-11-10', '2025-11-10T05:00:00Z'),
+  ver('fileversion02', 'FII Report 14-11-2025.pdf', '2025-11-14', '2025-11-14T05:00:00Z'),
+  ver('fileversion03', 'FII Report.pdf', '2025-11-20', '2025-11-20T05:00:00Z'),
+  ver('filedii000001', 'DII Flows 12-11-2025.pdf', '2025-11-12', '2025-11-12T05:00:00Z'),
+]
+
+test('versions -> files: current + previous of one document; latest alone; named document; dates still win; one version = honest note', () => {
+  const pick = (q, lib = versions, conversationFiles = []) => chooseFilesByVersion(q, lib, { conversationFiles, now: NOW })
+  const fii = pick('Compare the current and previous FII report')
+  assert.deepEqual(fii.fileIds, ['fileversion02', 'fileversion03'])
+  assert.deepEqual(fii.roles, { fileversion02: 'previous', fileversion03: 'current' })
+  assert.deepEqual(pick('what changed since the previous version?', versions, [versions[3]]).fileIds, ['filedii000001'], 'one version of the conversation document: nothing to compare')
+  assert.match(pick('what changed since the previous version?', versions, [versions[3]]).note, /Only one version of "DII Flows 12-11-2025" is stored/)
+  assert.deepEqual(pick('compare with the previous DII flows').fileIds, ['filedii000001'], 'the question names the document')
+  assert.deepEqual(pick('what changed since the previous version?', versions, [versions[0]]).fileIds, ['fileversion02', 'fileversion03'], 'the conversation document')
+  assert.deepEqual(pick('Summarise the latest report').fileIds, ['fileversion03'], 'newest upload overall, only that one')
+  assert.deepEqual(pick('what is the current ratio?').fileIds, [])
+  assert.deepEqual(pick('hello').fileIds, [])
+  assert.deepEqual(pick('compare 14 Nov 2025 with the previous report').fileIds, [], 'explicit dates are handled by chooseFilesByDate')
+  const twins = [...versions, ver('fileother0001', 'FII Other.pdf', '2025-11-22', '2025-11-22T05:00:00Z')]
+  assert.deepEqual(pick('compare the current and previous FII Report', twins).fileIds, ['fileversion02', 'fileversion03'], 'FII Report beats FII Other even though FII Other was uploaded last')
+  const legacy = [ver('filelegacy001', 'Rates.csv', null, '2025-11-12T05:00:00Z'), ver('filelegacy002', 'Rates (1).csv', null, '2025-11-18T05:00:00Z')]
+  assert.deepEqual(pick('compare rates with the previous version', legacy).fileIds, ['filelegacy001', 'filelegacy002'], 'undated files are ordered by upload day')
+  assert.deepEqual(chooseFilesByDate('rates on 18 Nov 2025', legacy, { now: NOW }).fileIds, ['filelegacy002'], 'and found by their upload day')
+})
+
+test('file label tells the model which version it is', async () => {
+  const { parts } = await buildFileParts([versions[1], versions[2]], { getBytes: async () => Buffer.from('%PDF-1.4 x'), versions: (await import('../assistant/fileFamily.js')).versionInfo(versions) })
+  assert.equal(parts[0].text, 'File 1: "FII Report 14-11-2025" (FII Report 14-11-2025.pdf); report date: 2025-11-14; uploaded: 2025-11-14; version 2 of 3 of this document')
+  assert.match(parts[2].text, /version 3 of 3 of this document/)
+})
+
+test('runChat: "compare the current and previous FII report" attaches both versions, labelled, without any dates in the question', async () => {
+  const { deps, state } = fakeDeps({ files: { list: async () => versions, getBytes: async () => Buffer.from('%PDF-1.4 x') } })
+  const r = await runChat({ message: 'Compare the current and previous FII report', fileIds: ['fileversion03'] }, deps)
+  assert.deepEqual(r.files.map((f) => f.id).sort(), ['fileversion02', 'fileversion03'])
+  assert.deepEqual(Object.fromEntries(r.newlyAttached.map((f) => [f.id, [f.auto, f.role]])), { fileversion03: [false, 'current'], fileversion02: [true, 'previous'] })
+  const labels = state.calls[0][1].content.filter((p) => p.type === 'text').map((p) => p.text).join('\n')
+  assert.match(labels, /version 2 of 3 of this document/)
+  assert.match(labels, /version 3 of 3 of this document/)
 })

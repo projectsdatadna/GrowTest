@@ -9,6 +9,17 @@ import { uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS 
 import Spinner from '../Spinner'
 
 const extensionOf = (name) => (/\.([A-Za-z0-9]+)$/.exec(name)?.[1] || '').toLowerCase()
+const SOURCE_TEXT = { filename: 'from the file name', upload: 'the day it was uploaded', user: 'set by you' }
+
+/** What the chip says once the upload is stored: reused copy, a new version of a document already stored, or just the date it got. */
+function uploadMessage({ duplicate, file, version }) {
+  const date = file.reportDate || 'no date'
+  if (duplicate) return `Already stored with the same date (${date}) - using the existing copy.`
+  const dated = `dated ${date} (${SOURCE_TEXT[file.reportDateSource] || 'report date'})`
+  if (version?.of > 1) return `Version ${version.n} of ${version.of} of this document, ${dated}. Change the date if it is wrong.`
+  return file.reportDateSource === 'upload' ? `${dated[0].toUpperCase()}${dated.slice(1)} - change it if this report is for another day.` : null
+}
+
 const formatSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
 
 /** Chips: { key, id?, title, reportDate, sizeBytes, status: 'uploading' | 'ready' | 'error', progress, message } */
@@ -48,7 +59,7 @@ export function FileChip({ chip, onChange, onRemove }) {
             className="bg-surface-container border border-terminal-border rounded px-xs py-[1px] text-[11px] text-on-surface"
           />
           {saving && <Spinner />}
-          {!chip.reportDate && <span>(not found in the name — set it so “10 Nov” finds this file)</span>}
+          {!chip.reportDate && <span>(no date — set it so “10 Nov” and “previous version” can find this file)</span>}
         </label>
       )}
       {chip.message && <div className={chip.status === 'error' ? 'text-bearish' : 'text-on-surface-variant'}>{chip.message}</div>}
@@ -77,7 +88,7 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
       }
       setChips((c) => [...c, { ...base, status: 'uploading' }])
       uploadFile(file, { onProgress: (progress) => patchChip(key, { progress }) })
-        .then(({ file: stored, duplicate }) => patchChip(key, { status: 'ready', id: stored.id, title: stored.title, reportDate: stored.reportDate, sizeBytes: stored.sizeBytes, message: duplicate ? 'This file was already stored - using the existing copy.' : null }))
+        .then(({ file: stored, duplicate, version }) => patchChip(key, { status: 'ready', id: stored.id, title: stored.title, reportDate: stored.reportDate, sizeBytes: stored.sizeBytes, message: uploadMessage({ duplicate, file: stored, version }) }))
         .catch((err) => patchChip(key, { status: 'error', message: errorText(err) }))
     }
   }

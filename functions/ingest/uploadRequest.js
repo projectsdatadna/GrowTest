@@ -4,6 +4,7 @@
  */
 
 import { detectReportDate, isoDate } from './reportDate.js'
+import { istToday } from '../assistant/dateFilter.js'
 
 // Cloud Functions' request body parser rejects bodies over 10 MB before the app sees them.
 export const MAX_FILE_BYTES = 9 * 1024 * 1024
@@ -40,6 +41,11 @@ export function validateUpload({ fileName, sizeBytes, reportDate, title } = {}, 
   } else {
     const found = detectReportDate({ fileName }, options)
     if (found) ({ date, source: dateSource } = { date: found.date, source: found.source })
+    else {
+      // No date given or found in the name: the day it is uploaded, so every version can be told apart (editable afterwards).
+      date = istToday(options?.now).toISOString().slice(0, 10)
+      dateSource = 'upload'
+    }
   }
   const safeName = safeFileName(fileName)
   return {
