@@ -455,3 +455,23 @@ test('sheetToText: JSON - an array of records is a table, an object of arrays is
   assert.equal(long.truncated, true)
   assert.match(long.text, /\[truncated - showing the first \d+ of \d+ lines/)
 })
+
+test('option chain: compareWith "none" is valid and means no comparison - no snapshot is looked up, saved or live', async () => {
+  const now = new Date('2026-11-27T10:00:00Z')
+  assert.equal(validateChatContext({ optionChain: { symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: 'none' } }, now).value.optionChain.compareWith, 'none')
+  assert.equal(validateChatContext({ optionChain: { symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: 'none' } }, now).value.optionChain.compareWith, 'none')
+  assert.match(validateChatContext({ optionChain: { symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: 'nope' } }, now).error, /none/)
+  const tick = istEpoch('2026-11-24', '10:15')
+  const calls = []
+  const snap = { tick, expiry: '2026-12-01', underlyingLtp: 24510, strikes: [{ strike: 24500, ce: { oi: 1300, ltp: 100 }, pe: { oi: 900, ltp: 90 } }] }
+  const loadSnapshot = async (symbol, limit, maxAge) => { calls.push([limit, maxAge]); return limit === tick ? snap : { ...snap, tick: limit } }
+  const saved = await buildOptionChainContext({ symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: 'none' }, { loadSnapshot }, now)
+  assert.deepEqual(calls, [[tick, 0]], 'only the chosen snapshot is read')
+  assert.match(saved, /No comparison with an earlier snapshot was requested, so only this single point in time/)
+  assert.doesNotMatch(saved, /CHANGE SINCE/)
+  calls.length = 0
+  const live = await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: 'none' }, { getToken: async () => 't', fetchChain: async () => chain, loadSnapshot }, now)
+  assert.deepEqual(calls, [])
+  assert.match(live, /No comparison with an earlier snapshot was requested/)
+  assert.doesNotMatch(live, /CHANGE SINCE|is stored/)
+})

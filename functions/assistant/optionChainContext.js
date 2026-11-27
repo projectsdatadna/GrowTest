@@ -27,6 +27,8 @@ export const SNAPSHOT_TIMES = Array.from({ length: 26 }, (_, i) => {
 // "Compare with" choices: how far before the chosen time the earlier snapshot is looked up.
 export const COMPARE_SECONDS = { '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 }
 export const COMPARE_LABELS = { '15m': '15 minutes', '1h': '1 hour', '4h': '4 hours', '1d': '1 day' }
+// compareWith: 'none' = the user chose no comparison: only the one snapshot goes to the model, nothing is looked up.
+export const NO_COMPARISON = 'none'
 
 /** Epoch seconds of an IST date (YYYY-MM-DD) and time (HH:MM). */
 export const istEpoch = (date, time) => Date.parse(`${date}T${time}:00+05:30`) / 1000
@@ -54,7 +56,7 @@ export function validateChatContext({ optionChain, wordLimit } = {}, now = new D
       chosen.expiryDate = expiryDate
     }
     if (optionChain.compareWith != null) {
-      if (!Object.hasOwn(COMPARE_SECONDS, optionChain.compareWith)) return { error: `Compare with one of: ${Object.keys(COMPARE_SECONDS).join(', ')}` }
+      if (optionChain.compareWith !== NO_COMPARISON && !Object.hasOwn(COMPARE_SECONDS, optionChain.compareWith)) return { error: `Compare with one of: ${[...Object.keys(COMPARE_SECONDS), NO_COMPARISON].join(', ')}` }
       chosen.compareWith = optionChain.compareWith
     }
     value.optionChain = chosen
@@ -78,7 +80,7 @@ export function changeSinceSnapshot(previous, current) {
 const istLabel = (tick) => `${new Date((tick + 19800) * 1000).toISOString().slice(0, 16).replace('T', ' ')} IST`
 
 /** The text block the model sees. `savedAt` ("2026-11-27 10:15 IST") marks a saved snapshot, otherwise the chain is live. */
-export function formatOptionChainBlock({ symbol, expiryDate, spot, strikes, fetchedAt, savedAt, previous, changes, compareLabel }) {
+export function formatOptionChainBlock({ symbol, expiryDate, spot, strikes, fetchedAt, savedAt, previous, changes, compareLabel, noComparison = false }) {
   const columns = `ATM +/- ${DEFAULT_VIEW_STRIKES_EACH_SIDE} strikes; ce = call, pe = put; oi = open interest, iv = implied volatility.`
   const lines = [
     savedAt
@@ -91,6 +93,8 @@ export function formatOptionChainBlock({ symbol, expiryDate, spot, strikes, fetc
       `CHANGE SINCE THE STORED SNAPSHOT of ${istLabel(previous.tick)} (underlying was ${previous.underlyingLtp})${compareLabel ? `, the snapshot about ${compareLabel} earlier` : ''}, near the money, only values that changed:`,
       JSON.stringify(changes)
     )
+  } else if (noComparison) {
+    lines.push('No comparison with an earlier snapshot was requested, so only this single point in time is available: say so if a question needs OI additions, unwinding or other changes.')
   } else {
     lines.push(`No earlier snapshot of this symbol and expiry${compareLabel ? ` about ${compareLabel} before` : ''} is stored, so only this single point in time is available: say so if a question needs OI additions, unwinding or other changes.`)
   }
@@ -130,7 +134,8 @@ export async function buildOptionChainContext({ symbol, expiryDate, asOf, compar
   let expiry
   let previous
   let savedAt = null
-  let lookback = compareWith ? COMPARE_SECONDS[compareWith] : null
+  const noComparison = compareWith === NO_COMPARISON
+  let lookback = compareWith && !noComparison ? COMPARE_SECONDS[compareWith] : null
   if (asOf) {
     // A saved snapshot needs no Groww token.
     const tick = tickOf(istEpoch(asOf.date, asOf.time))
@@ -141,11 +146,11 @@ export async function buildOptionChainContext({ symbol, expiryDate, asOf, compar
       throw new ChatError(502, `Could not read the saved option chain for ${symbol}: ${err.message}`)
     }
     if (!snapshot || snapshot.tick !== tick) throw new ChatError(400, `No saved option chain snapshot for ${symbol} at ${asOf.date} ${asOf.time} IST - pick another date or time, or use live data`)
-    lookback ??= COMPARE_SECONDS['15m']
+    if (!noComparison) lookback ??= COMPARE_SECONDS['15m']
     expiry = snapshot.expiry
     savedAt = `${asOf.date} ${asOf.time} IST`
     current = { strikes: limitRowsToAtm(snapshot.strikes ?? [], snapshot.underlyingLtp, DEFAULT_VIEW_STRIKES_EACH_SIDE).rows, underlyingLtp: snapshot.underlyingLtp }
-    previous = await earlier(tick - lookback, slackFor(lookback))
+    previous = lookback ? await earlier(tick - lookback, slackFor(lookback)) : null
   } else {
     const token = await getToken().catch(() => null)
     if (!token) throw new ChatError(401, 'No Groww access token is saved - paste one in the Greek Analysis tab to use Option Chain questions')
@@ -165,9 +170,9 @@ export async function buildOptionChainContext({ symbol, expiryDate, asOf, compar
       // hours or on a weekend), so it still finds something when the chain is fetched after 15:30.
       const latest = await earlier(tickOf(nowSeconds), 4 * 86400)
       previous = latest ? await earlier(latest.tick - lookback, slackFor(lookback)) : null
-    } else {
+    } else if (!noComparison) {
       previous = await earlier(tickOf(nowSeconds), 4 * 3600)
-    }
+    } else previous = null
   }
 
   const sameExpiry = previous && previous.expiry === expiry
@@ -180,6 +185,7 @@ export async function buildOptionChainContext({ symbol, expiryDate, asOf, compar
     savedAt,
     previous: sameExpiry ? previous : null,
     changes: sameExpiry ? changeSinceSnapshot(previous, current) : null,
-    compareLabel: compareWith ? COMPARE_LABELS[compareWith] : lookback ? COMPARE_LABELS['15m'] : null,
+    compareLabel: compareWith && !noComparison ? COMPARE_LABELS[compareWith] : lookback ? COMPARE_LABELS['15m'] : null,
+    noComparison,
   })
 }

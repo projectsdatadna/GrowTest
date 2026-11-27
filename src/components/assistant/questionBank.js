@@ -26,6 +26,8 @@ export const COMPARE_OPTIONS = [
   { value: '4h', label: '4 hours' },
   { value: '1d', label: '1 day' },
 ]
+// "No comparison": only the one snapshot goes to the model. Same key as the server (NO_COMPARISON).
+export const NO_COMPARISON = 'none'
 export const compareLabel = (value) => COMPARE_OPTIONS.find((o) => o.value === value)?.label ?? ''
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/
@@ -61,7 +63,7 @@ export const dateLabel = (iso) => (DATE.test(iso || '') ? `${Number(iso.slice(8)
 export function chipLabel(optionChain) {
   if (!optionChain) return ''
   const what = optionChain.asOf ? `saved ${dateLabel(optionChain.asOf.date)} ${optionChain.asOf.time} IST` : `live · expiry ${optionChain.expiryDate}`
-  const versus = optionChain.compareWith ? ` · vs ${compareLabel(optionChain.compareWith)} earlier` : ''
+  const versus = optionChain.compareWith === NO_COMPARISON ? ' · no comparison' : optionChain.compareWith ? ` · vs ${compareLabel(optionChain.compareWith)} earlier` : ''
   return `${optionChain.symbol} · ${what}${versus}`
 }
 

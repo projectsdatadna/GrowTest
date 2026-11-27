@@ -23,7 +23,7 @@ export function Field({ label, children, hint }) {
 export function PickerShell({ title, description, onClose, children }) {
   const dialogRef = useRef(null)
   useEffect(() => {
-    const onKey = (e) => e.key === 'Escape' && onClose()
+    const onKey = (e) => e.key === 'Escape' && !e.defaultPrevented && onClose() // a dropdown that handled Escape (closed its menu) keeps the popup open
     document.addEventListener('keydown', onKey)
     dialogRef.current?.focus()
     return () => document.removeEventListener('keydown', onKey)

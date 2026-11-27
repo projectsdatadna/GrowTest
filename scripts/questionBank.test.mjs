@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { insertQuestion, findReports, findQuestions, pickedContext, pickedOptionChain, optionChainProblem, reportQuestionProblem, chipLabel, compareLabel, dateLabel, filesForReport, reportTopics, MAX_MESSAGE_CHARS } from '../src/components/assistant/questionBank.js'
+import { insertQuestion, findReports, findQuestions, pickedContext, pickedOptionChain, optionChainProblem, reportQuestionProblem, chipLabel, compareLabel, NO_COMPARISON, dateLabel, filesForReport, reportTopics, MAX_MESSAGE_CHARS } from '../src/components/assistant/questionBank.js'
 
 const topics = [
   { topic: 'A', reports: [{ report: 'R1', questions: [{ id: 'q01', text: 'one' }] }, { report: 'R2', questions: [{ id: 'q02', text: 'two' }] }] },
@@ -84,4 +84,12 @@ test('reportQuestionProblem: a question needs a file that has finished uploading
   assert.match(reportQuestionProblem({ file: { status: 'uploading' } }), /Wait/)
   assert.match(reportQuestionProblem({ file: { status: 'ready' }, wordLimit: '5' }), /Word limit/)
   assert.equal(reportQuestionProblem({ file: { status: 'ready', id: 'x' }, wordLimit: '' }), '')
+})
+
+test('"No comparison" is passed through and shown on the chip', () => {
+  assert.equal(NO_COMPARISON, 'none')
+  const oc = pickedContext({ topic: 'Option Chain', symbol: 'NIFTY', source: 'saved', date: '2026-11-24', time: '10:15', compareWith: 'none' }).optionChain
+  assert.deepEqual(oc, { symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: 'none' })
+  assert.equal(chipLabel(oc), 'NIFTY · saved 24 Nov 2026 10:15 IST · no comparison')
+  assert.equal(chipLabel({ symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: 'none' }), 'NIFTY · live · expiry 2026-12-01 · no comparison')
 })

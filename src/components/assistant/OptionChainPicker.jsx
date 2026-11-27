@@ -9,7 +9,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { getQuestionBank, getUnderlyingSymbols, getOptionChainSymbols, getOptionChainSlots, errorText } from '../../services/api'
 import Spinner from '../Spinner'
 import { PickerShell, Field, fieldClass, LoadState, QuestionList } from './pickerParts'
-import { findReports, optionChainProblem, pickedContext, dateLabel, COMPARE_OPTIONS, OPTION_CHAIN_TOPIC, WORD_LIMIT_RANGE } from './questionBank'
+import SymbolSelect from './SymbolSelect'
+import { findReports, optionChainProblem, pickedContext, dateLabel, COMPARE_OPTIONS, NO_COMPARISON, OPTION_CHAIN_TOPIC, WORD_LIMIT_RANGE } from './questionBank'
 
 /** current = the context already on the chat ({ optionChain, wordLimit }), used to pre-fill the fields. */
 export default function OptionChainPicker({ current, onPick, onClose }) {
@@ -87,24 +88,14 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
     <PickerShell title="Option Chain questions" description="Choose the data, then a question. The question is copied into the message box — edit it, then send. The option chain is fetched when you send." onClose={onClose}>
       <LoadState topics={topics} loadError={loadError} onRetry={load} />
       <div className="grid gap-md sm:grid-cols-2">
-        <Field label="Topic">
-          <input value={OPTION_CHAIN_TOPIC} readOnly className={fieldClass} aria-label="Topic" />
-        </Field>
-        <Field label="Exact NSE report name">
-          <input value={OPTION_CHAIN_TOPIC} readOnly className={fieldClass} aria-label="Exact NSE report name" />
-        </Field>
-      </div>
-
-      <div className="grid gap-md sm:grid-cols-2">
-        <Field label="Data">
+        <Field label="Data" hint={source === 'live' ? 'Fetched from Groww when you send. After 15:30 or on a weekend it is the last close. There is no time interval for live data.' : 'The stored 15-minute snapshot of the date and time you pick.'}>
           <select value={source} onChange={(e) => chooseSource(e.target.value)} className={fieldClass} aria-label="Data source">
-            <option value="live">Live now (Groww)</option>
+            <option value="live">Live now (as of sending)</option>
             <option value="saved">Saved snapshot (past date and time)</option>
           </select>
         </Field>
         <Field label="Symbol">
-          <input list="oc-symbols" value={symbol} onChange={(e) => touch(setSymbol)(e.target.value.toUpperCase())} placeholder="e.g. NIFTY" className={fieldClass} aria-label="Option chain symbol" />
-          <datalist id="oc-symbols">{suggestions.map((s) => <option key={s} value={s} />)}</datalist>
+          <SymbolSelect symbols={suggestions} value={symbol} onChange={touch(setSymbol)} />
         </Field>
       </div>
 
@@ -113,10 +104,11 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
           <Field label="Expiry date">
             <input type="date" value={expiryDate} onChange={(e) => touch(setExpiryDate)(e.target.value)} className={fieldClass} aria-label="Option chain expiry date" />
           </Field>
-          <Field label="Compare with">
+          <Field label="Compare with (optional)">
             <select value={compareWith} onChange={(e) => setCompareWith(e.target.value)} className={fieldClass} aria-label="Compare with">
               <option value="">Latest saved snapshot</option>
               {COMPARE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label} earlier</option>)}
+              <option value={NO_COMPARISON}>No comparison</option>
             </select>
           </Field>
         </div>
@@ -132,9 +124,10 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
                 {(slots ?? []).map((s) => <option key={s.time} value={s.time}>{s.time}{s.expiry ? ` · exp ${s.expiry}` : ''}</option>)}
               </select>
             </Field>
-            <Field label="Compare with">
+            <Field label="Compare with (optional)">
               <select value={compareWith} onChange={(e) => setCompareWith(e.target.value)} className={fieldClass} aria-label="Compare with">
                 {COMPARE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label} earlier</option>)}
+                <option value={NO_COMPARISON}>No comparison</option>
               </select>
             </Field>
           </div>
@@ -144,6 +137,8 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
           <p className="text-[11px] text-on-surface-variant">Saved snapshots are taken every 15 minutes (09:15–15:30) for the nearest expiry only, and have no volume.</p>
         </>
       )}
+
+      <p className="text-[11px] text-on-surface-variant">Questions about OI added or unwound, or Delta / Gamma / IV changing, need a comparison with an earlier snapshot; with “No comparison” the answer covers this one moment only.</p>
 
       <div className="max-w-[240px]">
         <Field label="Word limit (optional)">
