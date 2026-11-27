@@ -1,5 +1,5 @@
 /**
- * Assistant page: chat with your stored files. Attach a PDF / Excel / CSV with the paperclip (or drop it on
+ * Assistant page: chat with your stored files. Attach a PDF / Excel / CSV / JSON file with the paperclip (or drop it on
  * the chat): it is stored in Firestore with its report date and kept. Mention a date in the question
  * ("compare with the 10 Nov report") and the stored file with that report date is added. "My files" on the
  * right lists everything stored. Answers appear when complete; a refresh restores the conversation.
@@ -21,7 +21,7 @@ export default function AssistantTab() {
       <div className="flex items-center justify-between gap-md">
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Assistant</h2>
-          <p className="text-xs text-on-surface-variant">Ask questions about your PDF, Excel and CSV files. Files are stored with their report date, so you can come back to them.</p>
+          <p className="text-xs text-on-surface-variant">Ask questions about your PDF, Excel, CSV and JSON files. Files are stored with their report date, so you can come back to them.</p>
         </div>
         <button type="button" onClick={chat.newChat} disabled={chat.busy} className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-50">
           <span className="material-symbols-outlined text-[18px]">edit_square</span>
@@ -50,7 +50,7 @@ export default function AssistantTab() {
           <ChatComposer chips={chat.chips} setChips={chat.setChips} onSend={chat.send} busy={chat.busy} addFilesRef={addFilesRef} chatContext={chat.chatContext} setChatContext={chat.setChatContext} />
           {dragging && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 border-2 border-dashed border-primary text-on-surface text-sm pointer-events-none animate-fade-in">
-              Drop PDF, Excel or CSV files to attach them
+              Drop PDF, Excel, CSV or JSON files to attach them
             </div>
           )}
         </section>

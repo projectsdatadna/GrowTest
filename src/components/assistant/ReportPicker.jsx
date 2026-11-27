@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getQuestionBank, listFiles, uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS } from '../../services/api'
+import { getQuestionBank, listFiles, uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS, UPLOAD_ACCEPT } from '../../services/api'
 import Spinner from '../Spinner'
 import { PickerShell, Field, fieldClass, LoadState, QuestionList } from './pickerParts'
 import { findReports, findQuestions, reportTopics, filesForReport, reportQuestionProblem, pickedContext, WORD_LIMIT_RANGE } from './questionBank'
@@ -68,14 +68,14 @@ export default function ReportPicker({ onPick, onClose }) {
     setProblem('')
     uploadFile(chosen, { reportDate: reportDate || undefined, reportName: report, onProgress: (progress) => setFile((f) => (f?.status === 'uploading' ? { ...f, progress } : f)) })
       .then(({ file: s, duplicate }) => {
-        setFile({ id: s.id, title: s.title, reportDate: s.reportDate, sizeBytes: s.sizeBytes, status: 'ready', message: duplicate ? 'Already stored - using the existing copy.' : null })
+        setFile({ id: s.id, title: s.title, fileName: s.fileName, reportDate: s.reportDate, sizeBytes: s.sizeBytes, status: 'ready', message: duplicate ? 'Already stored - using the existing copy.' : null })
         loadStored()
       })
       .catch((err) => setFile({ ...base, status: 'error', message: errorText(err) }))
   }
 
   const selectStored = (f) => {
-    setFile({ id: f.id, title: f.title, reportDate: f.reportDate, sizeBytes: f.sizeBytes, status: 'ready' })
+    setFile({ id: f.id, title: f.title, fileName: f.fileName, reportDate: f.reportDate, sizeBytes: f.sizeBytes, status: 'ready' })
     setProblem('')
     if (report && !f.reportName) updateFile(f.id, { reportName: report }).then(loadStored).catch(() => {}) // remember which report it is for; best effort
   }
@@ -83,8 +83,8 @@ export default function ReportPicker({ onPick, onClose }) {
   const pick = (question) => {
     const why = reportQuestionProblem({ file, wordLimit })
     if (why) return setProblem(why)
-    const { id, title, reportDate: date, sizeBytes } = file
-    onPick(question.text, pickedContext({ topic, wordLimit }), [{ id, title, reportDate: date, sizeBytes }])
+    const { id, title, fileName, reportDate: date, sizeBytes } = file
+    onPick(question.text, pickedContext({ topic, wordLimit }), [{ id, title, fileName, reportDate: date, sizeBytes }])
     onClose()
   }
 
@@ -119,7 +119,7 @@ export default function ReportPicker({ onPick, onClose }) {
                     <span className="material-symbols-outlined text-[18px]">upload_file</span>
                     Upload a file
                   </button>
-                  <input ref={inputRef} type="file" accept=".pdf,.xlsx,.csv" className="hidden" aria-label="Choose a file to upload" onChange={(e) => { upload(e.target.files[0]); e.target.value = '' }} />
+                  <input ref={inputRef} type="file" accept={UPLOAD_ACCEPT} className="hidden" aria-label="Choose a file to upload" onChange={(e) => { upload(e.target.files[0]); e.target.value = '' }} />
                   <Field label="Report date (optional)">
                     <input type="date" value={reportDate} onChange={(e) => setReportDate(e.target.value)} className={`${fieldClass} w-auto`} aria-label="Report date of the file to upload" />
                   </Field>

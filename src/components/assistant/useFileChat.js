@@ -96,7 +96,7 @@ export default function useFileChat() {
   )
 
   const attachStored = useCallback((file) => {
-    setChips((c) => (c.some((x) => x.id === file.id) ? c : [...c, { key: `stored-${file.id}`, id: file.id, title: file.title, reportDate: file.reportDate, sizeBytes: file.sizeBytes, status: 'ready', progress: 1 }]))
+    setChips((c) => (c.some((x) => x.id === file.id) ? c : [...c, { key: `stored-${file.id}`, id: file.id, title: file.title, fileName: file.fileName, reportDate: file.reportDate, sizeBytes: file.sizeBytes, status: 'ready', progress: 1 }]))
   }, [])
 
   return { messages, conversationFiles, chips, setChips, chatContext, setChatContext, busy, waitingFor, loadError, send, newChat, attachStored }

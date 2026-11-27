@@ -412,3 +412,46 @@ test('buildOptionChainContext: live with compareWith counts back from the newest
   await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01' }, deps, now)
   assert.deepEqual(calls, [[nowTick, 4 * 3600]])
 })
+
+const SJ = await import('xlsx')
+const bytesOf = (bookType) => {
+  const wb = SJ.utils.book_new()
+  SJ.utils.book_append_sheet(wb, SJ.utils.aoa_to_sheet([['Participant', 'Long', 'Short'], ['FII', 150000, 90000], ['Pro', 40000, 30000]]), 'OI')
+  SJ.utils.book_append_sheet(wb, SJ.utils.aoa_to_sheet([['Symbol', 'Price'], ['NIFTY', 25851.5]]), 'Prices')
+  return Buffer.from(SJ.write(wb, { type: 'buffer', bookType }))
+}
+
+test('sheetToText: .xlsx, .xlsm, .xls, .xlsb and .ods all become the same tables, one block per sheet', async () => {
+  for (const [ext, bookType] of [['xlsx', 'xlsx'], ['xlsm', 'xlsm'], ['xls', 'biff8'], ['xlsb', 'xlsb'], ['ods', 'ods']]) {
+    const { text, truncated } = await sheetToText({ fileName: `oi.${ext}` }, bytesOf(bookType))
+    assert.equal(truncated, false, ext)
+    assert.match(text, /### OI rows 2-3/, ext)
+    assert.match(text, /\| FII \| 150000 \| 90000 \|/, ext)
+    assert.match(text, /### Prices rows 2-2/, ext)
+    assert.match(text, /\| NIFTY \| 25851\.5 \|/, ext)
+  }
+})
+
+test('sheetToText: CSV in UTF-16 and Windows-1252 is decoded, not garbled', async () => {
+  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('Name\tAmount\nCafé\t₹100\n', 'utf16le')])
+  assert.match((await sheetToText({ fileName: 'a.csv' }, utf16)).text, /Café\t₹100/)
+  assert.match((await sheetToText({ fileName: 'b.csv' }, Buffer.from('Name,City\nJosé,Zürich\n', 'latin1'))).text, /José,Zürich/)
+  assert.match((await sheetToText({ fileName: 'c.csv' }, Buffer.from('﻿a,b\n1,2\n'))).text, /^a,b/)
+})
+
+test('sheetToText: JSON - an array of records is a table, an object of arrays is one table each, anything else is pretty-printed', async () => {
+  const records = await sheetToText({ fileName: 'r.json' }, Buffer.from(JSON.stringify([{ symbol: 'NIFTY', oi: 10 }, { symbol: 'BANKNIFTY', oi: 20, tags: ['a', 'b'] }])))
+  assert.match(records.text, /### JSON rows 2-3/)
+  assert.match(records.text, /\| symbol \| oi \| tags \|/)
+  assert.match(records.text, /\| BANKNIFTY \| 20 \| \["a","b"\] \|/)
+  const nested = await sheetToText({ fileName: 'n.json' }, Buffer.from(JSON.stringify({ asOf: '2026-11-27', calls: [{ k: 1 }], puts: [{ k: 2 }] })))
+  assert.match(nested.text, /### calls rows 2-2/)
+  assert.match(nested.text, /### puts rows 2-2/)
+  assert.match(nested.text, /### Other fields\n\{\n  "asOf": "2026-11-27"/)
+  const plain = await sheetToText({ fileName: 'p.json' }, Buffer.from('{"a":{"b":[1,2]},"c":"x"}'))
+  assert.match(plain.text, /^\{\n {2}"a": \{/)
+  assert.equal((await sheetToText({ fileName: 'e.json' }, Buffer.from('[]'))).text, '[]')
+  const long = await sheetToText({ fileName: 'l.json' }, Buffer.from(JSON.stringify({ k: Array.from({ length: 500 }, (_, i) => `value-${i}`) })), { maxChars: 600 })
+  assert.equal(long.truncated, true)
+  assert.match(long.text, /\[truncated - showing the first \d+ of \d+ lines/)
+})

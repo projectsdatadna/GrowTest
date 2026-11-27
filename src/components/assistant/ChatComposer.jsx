@@ -6,7 +6,7 @@
  */
 
 import { useRef, useState } from 'react'
-import { uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS } from '../../services/api'
+import { uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS, UPLOAD_ACCEPT, UPLOAD_KINDS_TEXT, SPREADSHEET_EXTENSIONS } from '../../services/api'
 import Spinner from '../Spinner'
 import QuestionPicker from './QuestionPicker'
 import { insertQuestion, chipLabel } from './questionBank'
@@ -21,6 +21,12 @@ function uploadMessage({ duplicate, file, version }) {
   const dated = `dated ${date} (${SOURCE_TEXT[file.reportDateSource] || 'report date'})`
   if (version?.of > 1) return `Version ${version.n} of ${version.of} of this document, ${dated}. Change the date if it is wrong.`
   return file.reportDateSource === 'upload' ? `${dated[0].toUpperCase()}${dated.slice(1)} - change it if this report is for another day.` : null
+}
+
+// A chip's icon by file type: a table for Excel / CSV, braces for JSON, a page for PDF.
+const iconFor = (name) => {
+  const ext = extensionOf(name)
+  return SPREADSHEET_EXTENSIONS.includes(ext) ? 'table_chart' : ext === 'json' ? 'data_object' : 'description'
 }
 
 const formatSize = (b) => (b > 1048576 ? `${(b / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(b / 1024))} KB`)
@@ -43,7 +49,7 @@ export function FileChip({ chip, onChange, onRemove }) {
   return (
     <li className="rounded-lg border border-outline-variant bg-surface-container-low px-sm py-xs text-xs flex flex-col gap-[2px]">
       <div className="flex items-center gap-xs">
-        <span className="material-symbols-outlined text-[16px] text-on-surface-variant" aria-hidden="true">{/\.(xlsx|csv)$/i.test(chip.title) ? 'table_chart' : 'description'}</span>
+        <span className="material-symbols-outlined text-[16px] text-on-surface-variant" aria-hidden="true">{iconFor(chip.fileName || chip.title)}</span>
         <span className="flex-1 min-w-0 truncate text-on-surface" title={chip.title}>{chip.title}</span>
         <span className="text-[11px] text-on-surface-variant shrink-0">{formatSize(chip.sizeBytes)}</span>
         <button type="button" onClick={onRemove} aria-label={`Remove ${chip.title}`} className="text-on-surface-variant hover:text-on-surface">✕</button>
@@ -81,7 +87,7 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
   const addFiles = (fileList) => {
     for (const file of fileList) {
       const key = `up${nextKey.current++}`
-      const base = { key, title: file.name.replace(/\.[^.]+$/, ''), reportDate: null, sizeBytes: file.size, progress: 0 }
+      const base = { key, title: file.name.replace(/\.[^.]+$/, ''), fileName: file.name, reportDate: null, sizeBytes: file.size, progress: 0 }
       if (!UPLOAD_EXTENSIONS.includes(extensionOf(file.name))) {
         setChips((c) => [...c, { ...base, status: 'error', message: `Unsupported type - use ${UPLOAD_EXTENSIONS.map((e) => `.${e}`).join(', ')}` }])
         continue
@@ -92,7 +98,7 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
       }
       setChips((c) => [...c, { ...base, status: 'uploading' }])
       uploadFile(file, { onProgress: (progress) => patchChip(key, { progress }) })
-        .then(({ file: stored, duplicate, version }) => patchChip(key, { status: 'ready', id: stored.id, title: stored.title, reportDate: stored.reportDate, sizeBytes: stored.sizeBytes, message: uploadMessage({ duplicate, file: stored, version }) }))
+        .then(({ file: stored, duplicate, version }) => patchChip(key, { status: 'ready', id: stored.id, title: stored.title, fileName: stored.fileName, reportDate: stored.reportDate, sizeBytes: stored.sizeBytes, message: uploadMessage({ duplicate, file: stored, version }) }))
         .catch((err) => patchChip(key, { status: 'error', message: errorText(err) }))
     }
   }
@@ -109,7 +115,7 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
   const pickQuestion = (question, context, files = []) => {
     setText((current) => insertQuestion(current, question))
     for (const f of files) {
-      setChips((c) => (c.some((x) => x.id === f.id) ? c : [...c, { key: `stored-${f.id}`, id: f.id, title: f.title, reportDate: f.reportDate, sizeBytes: f.sizeBytes, status: 'ready', progress: 1 }]))
+      setChips((c) => (c.some((x) => x.id === f.id) ? c : [...c, { key: `stored-${f.id}`, id: f.id, title: f.title, fileName: f.fileName, reportDate: f.reportDate, sizeBytes: f.sizeBytes, status: 'ready', progress: 1 }]))
     }
     setChatContext((c) => ({ optionChain: context.optionChain, wordLimit: context.wordLimit ?? c.wordLimit }))
     requestAnimationFrame(() => {
@@ -154,10 +160,10 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
       )}
       <div className="flex items-end gap-xs">
         <QuestionPicker current={chatContext} onPick={pickQuestion} disabled={busy} />
-        <button type="button" onClick={() => inputRef.current?.click()} title="Attach a PDF, Excel or CSV file" aria-label="Attach a file" className="p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-highest">
+        <button type="button" onClick={() => inputRef.current?.click()} title={`Attach a ${UPLOAD_KINDS_TEXT} file`} aria-label="Attach a file" className="p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-highest">
           <span className="material-symbols-outlined">attach_file</span>
         </button>
-        <input ref={inputRef} type="file" multiple accept=".pdf,.xlsx,.csv" className="hidden" aria-label="Choose files" onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
+        <input ref={inputRef} type="file" multiple accept={UPLOAD_ACCEPT} className="hidden" aria-label="Choose files" onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
         <textarea
           ref={textareaRef}
           value={text}

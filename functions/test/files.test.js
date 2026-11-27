@@ -214,3 +214,47 @@ test('files: the NSE report name is stored from X-Report-Name, learned by a dupl
   assert.deepEqual((await (await fetch(`${base}/files`)).json()).files.map((f) => f.reportName).sort(), [null, 'F&O – FII Derivatives Statistics'].sort())
   close()
 })
+
+const SheetJS = await import('xlsx')
+const workbookBytes = (bookType, tag = '') => {
+  const ws = SheetJS.utils.aoa_to_sheet([['Participant', 'Long', 'Short'], ['FII', 150000, 90000], ['DII', 80000, 120000 + [...tag].reduce((n, c) => n * 31 + c.charCodeAt(0), 7) % 9973]]) // tag: makes the bytes differ so a second upload is not a duplicate
+  const wb = SheetJS.utils.book_new()
+  SheetJS.utils.book_append_sheet(wb, ws, 'OI')
+  return Buffer.from(SheetJS.write(wb, { type: 'buffer', bookType }))
+}
+
+test('POST /files: every Excel family (xlsx, xlsm, xltx, xls, xlt, xlsb, ods), CSV in any encoding and JSON are accepted', async () => {
+  const { base, store, close } = await start()
+  for (const [ext, bookType] of [['xlsx', 'xlsx'], ['xlsm', 'xlsm'], ['xltx', 'xlsx'], ['xls', 'biff8'], ['xlt', 'biff8'], ['xlsb', 'xlsb'], ['ods', 'ods']]) {
+    const res = await upload(base, `book-${ext}.${ext}`, workbookBytes(bookType, ext))
+    assert.equal(res.status, 201, `${ext}: ${res.status}`)
+    const { file } = await res.json()
+    assert.equal(file.kind, 'sheet')
+  }
+  const csvText = 'Name,Amount\nCafé,₹100\n'
+  assert.equal((await upload(base, 'utf16.csv', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(csvText, 'utf16le')]))).status, 201, 'UTF-16 CSV (has NUL bytes)')
+  assert.equal((await upload(base, 'cp1252.csv', Buffer.from('Name,City\nJosé,Zürich\n', 'latin1'))).status, 201)
+  assert.equal((await upload(base, 'semicolon.csv', Buffer.from('a;b\n1;2\n'))).status, 201)
+  const json = await upload(base, 'rows.json', Buffer.from(JSON.stringify([{ a: 1 }, { a: 2 }])))
+  assert.equal(json.status, 201)
+  assert.deepEqual([(await json.json()).file.kind], ['json'])
+  assert.equal([...store.files.values()].find((f) => f.fileName === 'book-xlsm.xlsm').mimeType, 'application/vnd.ms-excel.sheet.macroEnabled.12')
+  close()
+})
+
+test('POST /files: a wrong extension, a fake workbook, broken JSON and empty data are refused with a reason', async () => {
+  const { base, close } = await start()
+  assert.equal((await upload(base, 'fake.xls', Buffer.from('<table><tr><td>1</td></tr></table>'))).status, 422)
+  assert.equal((await upload(base, 'fake.xlsx', workbookBytes('biff8'))).status, 422, 'a binary .xls renamed .xlsx is not a zip')
+  assert.equal((await upload(base, 'fake.xls', workbookBytes('xlsx'))).status, 422, 'an .xlsx renamed .xls is not an OLE file')
+  const broken = await upload(base, 'broken.json', Buffer.from('{"a": '))
+  assert.equal(broken.status, 422)
+  assert.match((await broken.json()).error, /not valid JSON/)
+  assert.equal((await upload(base, 'bin.json', Buffer.from([0x7b, 0, 0, 0x7d]))).status, 422)
+  assert.equal((await upload(base, 'blank.csv', Buffer.from('  \n'))).status, 422)
+  assert.equal((await upload(base, 'x.docx', Buffer.from('PK\x03\x04'))).status, 400)
+  const empty = SheetJS.utils.book_new()
+  SheetJS.utils.book_append_sheet(empty, SheetJS.utils.aoa_to_sheet([]), 'Empty')
+  assert.equal((await upload(base, 'empty.xls', Buffer.from(SheetJS.write(empty, { type: 'buffer', bookType: 'biff8' })))).status, 422)
+  close()
+})

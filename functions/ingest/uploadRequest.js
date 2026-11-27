@@ -5,13 +5,25 @@
 
 import { detectReportDate, isoDate } from './reportDate.js'
 import { istToday } from '../assistant/dateFilter.js'
+import { hasUtf16Bom } from './text.js'
 
 // Cloud Functions' request body parser rejects bodies over 10 MB before the app sees them.
 export const MAX_FILE_BYTES = 9 * 1024 * 1024
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml'
+// Every type we accept. `zip` / `ole` = what the file must start with (so garbage never reaches the model); `text` = CSV / JSON.
 export const FILE_TYPES = {
   pdf: { mimeType: 'application/pdf', kind: 'pdf' },
-  xlsx: { mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', kind: 'sheet' },
-  csv: { mimeType: 'text/csv', kind: 'sheet' },
+  // Excel: the XML formats are zips, the old .xls / .xlt are OLE2 containers, .xlsb is a zip of binary parts.
+  xlsx: { mimeType: `${XLSX_MIME}.sheet`, kind: 'sheet', container: 'zip' },
+  xlsm: { mimeType: 'application/vnd.ms-excel.sheet.macroEnabled.12', kind: 'sheet', container: 'zip' },
+  xltx: { mimeType: `${XLSX_MIME}.template`, kind: 'sheet', container: 'zip' },
+  xltm: { mimeType: 'application/vnd.ms-excel.template.macroEnabled.12', kind: 'sheet', container: 'zip' },
+  xlsb: { mimeType: 'application/vnd.ms-excel.sheet.binary.macroEnabled.12', kind: 'sheet', container: 'zip' },
+  xls: { mimeType: 'application/vnd.ms-excel', kind: 'sheet', container: 'ole' },
+  xlt: { mimeType: 'application/vnd.ms-excel', kind: 'sheet', container: 'ole' },
+  ods: { mimeType: 'application/vnd.oasis.opendocument.spreadsheet', kind: 'sheet', container: 'zip' },
+  csv: { mimeType: 'text/csv', kind: 'sheet', container: 'text' },
+  json: { mimeType: 'application/json', kind: 'json', container: 'text' },
 }
 
 export const extensionOf = (fileName) => (/\.([A-Za-z0-9]+)$/.exec(fileName)?.[1] || '').toLowerCase()
@@ -31,7 +43,7 @@ export function validateUpload({ fileName, sizeBytes, reportDate, title, reportN
   if (typeof fileName !== 'string' || !fileName.trim()) return { error: 'The file name is missing' }
   const extension = extensionOf(fileName)
   const type = FILE_TYPES[extension]
-  if (!type) return { error: `Unsupported file type .${extension || '?'} - upload ${Object.keys(FILE_TYPES).map((e) => `.${e}`).join(', ')}` }
+  if (!type) return { error: `Unsupported file type .${extension || '?'} - upload PDF, Excel (.xlsx .xlsm .xls .xlsb ...), .csv or .json` }
   if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) return { error: 'The file is empty' }
   if (sizeBytes > MAX_FILE_BYTES) return { error: `The file is larger than ${MAX_FILE_BYTES / 1024 / 1024} MB` }
 
@@ -69,8 +81,11 @@ export function validateUpload({ fileName, sizeBytes, reportDate, title, reportN
 /** null when the bytes look like the claimed type, else a message. */
 export function sniffContent(buffer, extension) {
   const head = buffer.subarray(0, 1024)
+  const type = FILE_TYPES[extension]
   if (extension === 'pdf') return head.includes('%PDF-') ? null : 'This is not a valid PDF file'
-  if (extension === 'xlsx') return head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04 ? null : 'This is not a valid .xlsx workbook'
-  if (extension === 'csv') return buffer.subarray(0, 8192).includes(0) ? 'This does not look like a CSV text file' : null
+  if (type?.container === 'zip') return head[0] === 0x50 && head[1] === 0x4b && head[2] === 0x03 && head[3] === 0x04 ? null : `This is not a valid .${extension} workbook`
+  // The old binary .xls: an OLE2 container. (Some tools save an HTML or XML table with an .xls name: not supported.)
+  if (type?.container === 'ole') return [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1].every((b, i) => head[i] === b) ? null : `This is not a valid .${extension} workbook`
+  if (type?.container === 'text') return hasUtf16Bom(buffer) || !buffer.subarray(0, 8192).includes(0) ? null : `This does not look like a ${extension.toUpperCase()} text file`
   return 'Unsupported file type'
 }

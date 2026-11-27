@@ -9,7 +9,8 @@
 
 import { extractDateFilter } from './dateFilter.js'
 import { systemPrompt } from './prompts.js'
-import { parseXlsx } from '../ingest/parseSheet.js'
+import { parseWorkbook, parseJsonBuffer } from '../ingest/parseSheet.js'
+import { decodeText } from '../ingest/text.js'
 import { groupFamilies, versionInfo, currentAndPrevious, effectiveDate, istDay } from './fileFamily.js'
 
 export const MAX_FILES_PER_REQUEST = 5
@@ -126,20 +127,7 @@ const cutAtLine = (text, max) => {
   return head.slice(0, Math.max(head.lastIndexOf('\n'), 0) || max)
 }
 
-/**
- * An Excel / CSV file as text for the model -> { text, truncated }. CSV is sent as it is (compact);
- * Excel as markdown tables, one block per sheet / 40-row range. Long files are cut at the cap, on a line
- * or block boundary, with a note saying how much is shown.
- */
-export async function sheetToText(file, buffer, { maxChars = MAX_SHEET_CHARS } = {}) {
-  if (/\.csv$/i.test(file.fileName)) {
-    const raw = buffer.toString('utf8').replace(/^\uFEFF/, '')
-    if (raw.length <= maxChars) return { text: raw, truncated: false }
-    const text = cutAtLine(raw, maxChars)
-    return { text: `${text}\n[truncated - showing the first ${text.split('\n').length} of ${raw.split('\n').length} lines; the rest of the file is not included]`, truncated: true }
-  }
-  const { pages } = await parseXlsx(buffer)
-  const blocks = pages.map((p) => `### ${p.label}\n${p.text}`)
+const truncateBlocks = (blocks, maxChars) => {
   let text = ''
   let shown = 0
   for (const block of blocks) {
@@ -150,6 +138,31 @@ export async function sheetToText(file, buffer, { maxChars = MAX_SHEET_CHARS } =
   if (text.length > maxChars) text = cutAtLine(text, maxChars)
   const truncated = shown < blocks.length || text.length < blocks[0].length
   return { text: truncated ? `${text}\n[truncated - showing ${shown} of ${blocks.length} sections; the rest of the file is not included]` : text, truncated }
+}
+
+const cutLines = (raw, maxChars) => {
+  if (raw.length <= maxChars) return { text: raw, truncated: false }
+  const text = cutAtLine(raw, maxChars)
+  return { text: `${text}\n[truncated - showing the first ${text.split('\n').length} of ${raw.split('\n').length} lines; the rest of the file is not included]`, truncated: true }
+}
+
+/**
+ * A spreadsheet or data file as text for the model -> { text, truncated }. CSV is sent as it is (compact); Excel of any
+ * kind (.xlsx .xlsm .xls .xlsb .ods ...) as markdown tables, one block per sheet / 40-row range; JSON as tables when it
+ * is an array of records, otherwise pretty-printed. Long files are cut at the cap, on a line or block boundary, with a
+ * note saying how much is shown.
+ */
+export async function sheetToText(file, buffer, { maxChars = MAX_SHEET_CHARS } = {}) {
+  if (/\.csv$/i.test(file.fileName)) return cutLines(decodeText(buffer), maxChars)
+  if (/\.json$/i.test(file.fileName)) {
+    const { pages, text } = parseJsonBuffer(buffer)
+    if (!pages.length) return cutLines(text, maxChars)
+    const blocks = pages.map((p) => `### ${p.label}\n${p.text}`)
+    if (text) blocks.push(`### Other fields\n${text}`)
+    return truncateBlocks(blocks, maxChars)
+  }
+  const { pages } = await parseWorkbook(buffer, file.fileName)
+  return truncateBlocks(pages.map((p) => `### ${p.label}\n${p.text}`), maxChars)
 }
 
 /** Message content parts for the files: a label line each, then the PDF itself or the sheet as text. -> { parts, truncated: files that were cut } */

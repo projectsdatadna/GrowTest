@@ -718,7 +718,11 @@ export default apiClient
 export const errorText = (error) => error?.response?.data?.error || error?.message || 'Something went wrong'
 
 export const MAX_UPLOAD_BYTES = 9 * 1024 * 1024
-export const UPLOAD_EXTENSIONS = ['pdf', 'xlsx', 'csv']
+// Same list as FILE_TYPES in functions/ingest/uploadRequest.js: PDF, every Excel format, CSV and JSON.
+export const SPREADSHEET_EXTENSIONS = ['xlsx', 'xlsm', 'xltx', 'xltm', 'xls', 'xlt', 'xlsb', 'ods', 'csv']
+export const UPLOAD_EXTENSIONS = ['pdf', ...SPREADSHEET_EXTENSIONS, 'json']
+export const UPLOAD_ACCEPT = UPLOAD_EXTENSIONS.map((e) => `.${e}`).join(',') // the file picker's accept=
+export const UPLOAD_KINDS_TEXT = 'PDF, Excel, CSV or JSON'
 
 /** Uploads one file as the raw request body (stored in Firestore). Resolves { duplicate, file }. reportName = the NSE report it is for. */
 export const uploadFile = (file, { reportDate, reportName, onProgress } = {}) =>
