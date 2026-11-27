@@ -1,12 +1,15 @@
 /**
  * The message box of the chat widget: a text area, a paperclip and drag-and-drop for files, and the
  * chips of the files waiting to be sent. Each file is uploaded (to Firestore, via the server) as soon
- * as it is picked, so by the time the question is sent the chip only carries a file id.
+ * as it is picked, so by the time the question is sent the chip only carries a file id. The "+" opens the
+ * standard-question picker; the question it picks is only copied into the box, never sent.
  */
 
 import { useRef, useState } from 'react'
 import { uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS } from '../../services/api'
 import Spinner from '../Spinner'
+import QuestionPicker from './QuestionPicker'
+import { insertQuestion } from './questionBank'
 
 const extensionOf = (name) => (/\.([A-Za-z0-9]+)$/.exec(name)?.[1] || '').toLowerCase()
 const SOURCE_TEXT = { filename: 'from the file name', upload: 'the day it was uploaded', user: 'set by you' }
@@ -67,9 +70,10 @@ export function FileChip({ chip, onChange, onRemove }) {
   )
 }
 
-export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRef }) {
+export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRef, chatContext, setChatContext }) {
   const [text, setText] = useState('')
   const inputRef = useRef(null)
+  const textareaRef = useRef(null)
   const nextKey = useRef(1)
 
   const patchChip = (key, fields) => setChips((current) => current.map((c) => (c.key === key ? { ...c, ...fields } : c)))
@@ -99,6 +103,18 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
   const ready = chips.filter((c) => c.status === 'ready')
   const canSend = !busy && !uploading && text.trim().length > 0
 
+  // A question picked with "+": into the box (after anything already typed), never sent. Picking a question from
+  // another topic drops an earlier option chain choice, so a report question does not fetch a chain.
+  const pickQuestion = (question, context) => {
+    setText((current) => insertQuestion(current, question))
+    setChatContext((c) => ({ optionChain: context.optionChain, wordLimit: context.wordLimit ?? c.wordLimit }))
+    requestAnimationFrame(() => {
+      const box = textareaRef.current
+      box?.focus()
+      box?.setSelectionRange?.(box.value.length, box.value.length)
+    })
+  }
+
   const submit = () => {
     if (!canSend) return
     const question = text
@@ -115,12 +131,31 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
           ))}
         </ul>
       )}
+      {(chatContext?.optionChain || chatContext?.wordLimit) && (
+        <ul className="flex flex-wrap gap-xs" aria-label="Applies to your next questions">
+          {chatContext.optionChain && (
+            <li className="rounded-full border border-outline-variant bg-surface-container-low pl-sm pr-xs py-[2px] text-[11px] text-on-surface flex items-center gap-xs">
+              <span className="material-symbols-outlined text-[14px] text-on-surface-variant" aria-hidden="true">candlestick_chart</span>
+              Option chain: {chatContext.optionChain.symbol} · {chatContext.optionChain.expiryDate}
+              <button type="button" onClick={() => setChatContext((c) => ({ ...c, optionChain: null }))} aria-label="Remove the option chain" className="text-on-surface-variant hover:text-on-surface px-xs">✕</button>
+            </li>
+          )}
+          {chatContext.wordLimit && (
+            <li className="rounded-full border border-outline-variant bg-surface-container-low pl-sm pr-xs py-[2px] text-[11px] text-on-surface flex items-center gap-xs">
+              Max {chatContext.wordLimit} words
+              <button type="button" onClick={() => setChatContext((c) => ({ ...c, wordLimit: null }))} aria-label="Remove the word limit" className="text-on-surface-variant hover:text-on-surface px-xs">✕</button>
+            </li>
+          )}
+        </ul>
+      )}
       <div className="flex items-end gap-xs">
+        <QuestionPicker current={chatContext} onPick={pickQuestion} disabled={busy} />
         <button type="button" onClick={() => inputRef.current?.click()} title="Attach a PDF, Excel or CSV file" aria-label="Attach a file" className="p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-highest">
           <span className="material-symbols-outlined">attach_file</span>
         </button>
         <input ref={inputRef} type="file" multiple accept=".pdf,.xlsx,.csv" className="hidden" aria-label="Choose files" onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
         <textarea
+          ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

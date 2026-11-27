@@ -17,6 +17,7 @@ export default function ChatThread({ messages, busy, waitingFor, loadError, conv
         <div className="text-sm text-on-surface-variant flex flex-col gap-xs">
           <p>Attach a PDF, Excel or CSV file with the paperclip and ask about it. Files are stored, so you can come back to them later.</p>
           <p>Mention a date (“compare with the 10 Nov report”) and the stored file with that report date is added for you.</p>
+          <p>Click <span className="material-symbols-outlined text-[14px] align-middle" aria-hidden="true">add</span> to pick a topic, an NSE report and one of the standard questions. It is copied into the box so you can edit it before sending.</p>
         </div>
       )}
       {messages.map((m, i) =>

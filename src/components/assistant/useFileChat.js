@@ -31,6 +31,7 @@ export default function useFileChat() {
   const [messages, setMessages] = useState([])
   const [conversationFiles, setConversationFiles] = useState([]) // files the conversation uses
   const [chips, setChips] = useState([]) // files waiting to be sent with the next message
+  const [chatContext, setChatContext] = useState({ optionChain: null, wordLimit: null }) // from the + picker; goes with every question until removed
   const [busy, setBusy] = useState(false)
   const [waitingFor, setWaitingFor] = useState('')
   const [loadError, setLoadError] = useState('')
@@ -61,6 +62,7 @@ export default function useFileChat() {
     setMessages([])
     setConversationFiles([])
     setChips([])
+    setChatContext({ optionChain: null, wordLimit: null })
     setLoadError('')
   }, [busy])
 
@@ -68,10 +70,10 @@ export default function useFileChat() {
     async (question, restoreText) => {
       const ready = chips.filter((c) => c.status === 'ready')
       setMessages((m) => [...m, { role: 'user', content: question, files: ready.map((c) => c.title) }])
-      setWaitingFor(ready.length || conversationFiles.length ? 'Reading the files…' : 'Thinking…')
+      setWaitingFor(chatContext.optionChain ? 'Fetching the option chain…' : ready.length || conversationFiles.length ? 'Reading the files…' : 'Thinking…')
       setBusy(true)
       try {
-        const result = await sendChat({ message: question, conversationId, fileIds: ready.map((c) => c.id) })
+        const result = await sendChat({ message: question, conversationId, fileIds: ready.map((c) => c.id), ...chatContext })
         setConversationId(result.conversationId)
         write(CONVERSATION_KEY, result.conversationId)
         const notes = [
@@ -90,12 +92,12 @@ export default function useFileChat() {
         setBusy(false)
       }
     },
-    [chips, conversationId, conversationFiles.length]
+    [chips, conversationId, conversationFiles.length, chatContext]
   )
 
   const attachStored = useCallback((file) => {
     setChips((c) => (c.some((x) => x.id === file.id) ? c : [...c, { key: `stored-${file.id}`, id: file.id, title: file.title, reportDate: file.reportDate, sizeBytes: file.sizeBytes, status: 'ready', progress: 1 }]))
   }, [])
 
-  return { messages, conversationFiles, chips, setChips, busy, waitingFor, loadError, send, newChat, attachStored }
+  return { messages, conversationFiles, chips, setChips, chatContext, setChatContext, busy, waitingFor, loadError, send, newChat, attachStored }
 }

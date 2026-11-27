@@ -53,6 +53,7 @@ import { syncInstrumentMaster, searchInstruments } from './functions/instrumentM
 import { registerCrossoverScannerRoutes } from './functions/crossoverScannerRoutes.js'
 import { registerFileRoutes } from './functions/fileRoutes.js'
 import { registerChatRoutes } from './functions/chatRoutes.js'
+import { registerQuestionBankRoutes } from './functions/questionBankRoutes.js'
 
 dotenv.config()
 
@@ -1449,6 +1450,7 @@ registerCrossoverScannerRoutes(app, { getGrowwAccessToken })
 // File library + chat with the stored files (shared with the production function, see functions/assistantApi.js).
 registerFileRoutes(app)
 registerChatRoutes(app)
+registerQuestionBankRoutes(app)
 
 /**
  * Error handlers

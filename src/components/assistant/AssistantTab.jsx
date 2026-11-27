@@ -47,7 +47,7 @@ export default function AssistantTab() {
           className="glass-panel rounded-xl relative flex flex-col min-h-0 overflow-hidden"
         >
           <ChatThread messages={chat.messages} busy={chat.busy} waitingFor={chat.waitingFor} loadError={chat.loadError} conversationFiles={chat.conversationFiles} />
-          <ChatComposer chips={chat.chips} setChips={chat.setChips} onSend={chat.send} busy={chat.busy} addFilesRef={addFilesRef} />
+          <ChatComposer chips={chat.chips} setChips={chat.setChips} onSend={chat.send} busy={chat.busy} addFilesRef={addFilesRef} chatContext={chat.chatContext} setChatContext={chat.setChatContext} />
           {dragging && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 border-2 border-dashed border-primary text-on-surface text-sm pointer-events-none animate-fade-in">
               Drop PDF, Excel or CSV files to attach them

@@ -737,7 +737,12 @@ export const deleteFile = (id) => assistantClient.delete(`/files/${id}`).then((r
 export const fileDownloadUrl = (id) => `${ASSISTANT_BASE_URL}/files/${id}/download`
 
 /** One question (+ the conversation and file ids) -> the full answer. Can take a while with big PDFs. */
-export const sendChat = ({ message, conversationId, fileIds }) =>
-  assistantClient.post('/chat', { message, conversationId: conversationId || undefined, fileIds: fileIds?.length ? fileIds : undefined }, { timeout: 300000 }).then((r) => r.data)
+export const sendChat = ({ message, conversationId, fileIds, optionChain, wordLimit }) =>
+  assistantClient
+    .post('/chat', { message, conversationId: conversationId || undefined, fileIds: fileIds?.length ? fileIds : undefined, optionChain: optionChain || undefined, wordLimit: wordLimit || undefined }, { timeout: 300000 })
+    .then((r) => r.data)
+
+/** The standard questions: [{ topic, reports: [{ report, questions: [{ id, no, text, movement, signal? }] }] }]. */
+export const getQuestionBank = () => assistantClient.get('/question-bank').then((r) => r.data.topics)
 
 export const getConversation = (id) => assistantClient.get(`/chat/conversations/${id}`).then((r) => r.data)

@@ -1,0 +1,320 @@
+[
+ {
+  "no": 1,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – FII Derivatives Statistics",
+  "question": "Are FIIs increasing index futures longs or shorts? Are they covering shorts or unwinding longs?",
+  "movement": "Bullish / Bearish"
+ },
+ {
+  "no": 2,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – Participant-wise Open Interest",
+  "question": "Are FIIs, DIIs and Pro traders building positions in the same direction?",
+  "movement": "Directional conviction"
+ },
+ {
+  "no": 3,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – Participant-wise Trading Volumes",
+  "question": "Is institutional trading activity suddenly increasing?",
+  "movement": "Potential acceleration"
+ },
+ {
+  "no": 4,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – Combine Open Interest across exchanges",
+  "question": "Is index futures OI increasing or decreasing alongside price?",
+  "movement": "Long build-up / Short build-up"
+ },
+ {
+  "no": 5,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – Combine Delta Equivalent OI across exchanges",
+  "question": "Is index options directional exposure changing significantly?",
+  "movement": "Directional acceleration / Reversal"
+ },
+ {
+  "no": 6,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – Combined Report",
+  "question": "Are aggregate derivatives positions and market activity changing significantly?",
+  "movement": "Overall market bias"
+ },
+ {
+  "no": 7,
+  "topic": "Index movement – NIFTY and BANK NIFTY",
+  "report": "F&O – Daily Volatility",
+  "question": "Is volatility expanding or contracting?",
+  "movement": "Sudden movement risk"
+ },
+ {
+  "no": 8,
+  "topic": "Sudden movement detection",
+  "report": "F&O – Combine Open Interest across exchanges",
+  "question": "Which indices have the largest sudden OI addition?",
+  "movement": "Potential sharp movement"
+ },
+ {
+  "no": 9,
+  "topic": "Sudden movement detection",
+  "report": "F&O – Combine Delta Equivalent OI across exchanges",
+  "question": "Which strikes show the largest directional exposure changes?",
+  "movement": "Potential acceleration"
+ },
+ {
+  "no": 10,
+  "topic": "Sudden movement detection",
+  "report": "F&O – Participant-wise Open Interest",
+  "question": "Which participant category has suddenly changed its positions?",
+  "movement": "Institutional trigger"
+ },
+ {
+  "no": 11,
+  "topic": "Sudden movement detection",
+  "report": "F&O – FII Derivatives Statistics",
+  "question": "Have FIIs suddenly changed their futures or options exposure?",
+  "movement": "Institutional-driven movement"
+ },
+ {
+  "no": 12,
+  "topic": "Sudden movement detection",
+  "report": "F&O – Participant-wise Trading Volumes",
+  "question": "Is there abnormal trading activity compared with previous sessions?",
+  "movement": "Abnormal participation"
+ },
+ {
+  "no": 13,
+  "topic": "Sudden movement detection",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Which contracts show abnormal volume and OI changes?",
+  "movement": "Unusual activity"
+ },
+ {
+  "no": 14,
+  "topic": "Sudden movement detection",
+  "report": "F&O – Daily Volatility",
+  "question": "Which securities or contracts are experiencing volatility expansion?",
+  "movement": "Sharp movement risk"
+ },
+ {
+  "no": 15,
+  "topic": "Market reversal detection",
+  "report": "F&O – FII Derivatives Statistics",
+  "question": "Are FIIs reducing longs while the index is rising?",
+  "movement": "Potential bearish reversal"
+ },
+ {
+  "no": 16,
+  "topic": "Market reversal detection",
+  "report": "F&O – FII Derivatives Statistics",
+  "question": "Are FIIs covering shorts while the index is falling?",
+  "movement": "Potential bullish reversal"
+ },
+ {
+  "no": 17,
+  "topic": "Market reversal detection",
+  "report": "F&O – Participant-wise Open Interest",
+  "question": "Are FIIs and Pro traders taking opposite positions?",
+  "movement": "Positioning divergence"
+ },
+ {
+  "no": 18,
+  "topic": "Market reversal detection",
+  "report": "F&O – Combine Open Interest across exchanges",
+  "question": "Is price direction contradicting the OI build-up?",
+  "movement": "Reversal warning"
+ },
+ {
+  "no": 19,
+  "topic": "Market reversal detection",
+  "report": "F&O – Combine Delta Equivalent OI across exchanges",
+  "question": "Is options directional exposure contradicting futures positioning?",
+  "movement": "Directional divergence"
+ },
+ {
+  "no": 20,
+  "topic": "Market reversal detection",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Is futures price movement accompanied by long unwinding or short covering?",
+  "movement": "Movement exhaustion"
+ },
+ {
+  "no": 21,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Which stocks show fresh long build-up?",
+  "movement": "Bullish stocks"
+ },
+ {
+  "no": 22,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Which stocks show fresh short build-up?",
+  "movement": "Bearish stocks"
+ },
+ {
+  "no": 23,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Which stocks show short covering?",
+  "movement": "Potential upside"
+ },
+ {
+  "no": 24,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Which stocks show long unwinding?",
+  "movement": "Potential downside"
+ },
+ {
+  "no": 25,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – Combine Open Interest across exchanges",
+  "question": "Which stocks have unusually large OI additions?",
+  "movement": "Sudden movement candidates"
+ },
+ {
+  "no": 26,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – Combine Delta Equivalent OI across exchanges",
+  "question": "Which stocks have significant directional exposure changes?",
+  "movement": "Stock-specific directional opportunities"
+ },
+ {
+  "no": 27,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – Daily Volatility",
+  "question": "Which stocks are experiencing volatility expansion?",
+  "movement": "Sharp movement candidates"
+ },
+ {
+  "no": 28,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – Clients Position 3% of Stock MWPL",
+  "question": "Which stocks have concentrated positions?",
+  "movement": "Position concentration risk"
+ },
+ {
+  "no": 29,
+  "topic": "Individual F&O stock movement",
+  "report": "F&O – Security in Ban Period",
+  "question": "Which stocks are approaching or entering the ban period?",
+  "movement": "Position adjustment risk"
+ },
+ {
+  "no": 30,
+  "topic": "Expiry and rollover movement",
+  "report": "F&O – UDiFF Common Bhavcopy Final",
+  "question": "Is current-expiry OI declining while next-expiry OI increases?",
+  "movement": "Rollover"
+ },
+ {
+  "no": 31,
+  "topic": "Expiry and rollover movement",
+  "report": "F&O – Combine Open Interest across exchanges",
+  "question": "Are positions shifting between expiries?",
+  "movement": "Continuation of positioning"
+ },
+ {
+  "no": 32,
+  "topic": "Expiry and rollover movement",
+  "report": "F&O – FII Derivatives Statistics",
+  "question": "Are FIIs rolling futures positions or closing them?",
+  "movement": "Position continuation / Exit"
+ },
+ {
+  "no": 33,
+  "topic": "Expiry and rollover movement",
+  "report": "F&O – Participant-wise Open Interest",
+  "question": "Which participant categories are rolling positions?",
+  "movement": "Institutional rollover bias"
+ },
+ {
+  "no": 34,
+  "topic": "Expiry and rollover movement",
+  "report": "F&O – Daily Settlement Prices",
+  "question": "Are settlement prices showing significant changes?",
+  "movement": "Settlement-related movement"
+ },
+ {
+  "no": 35,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is significant Call OI being added or unwound at important strikes?",
+  "movement": "Resistance strengthening or weakening",
+  "signal": "Call writing or unwinding"
+ },
+ {
+  "no": 36,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is significant Put OI being added or unwound at important strikes?",
+  "movement": "Support strengthening or weakening",
+  "signal": "Put writing or unwinding"
+ },
+ {
+  "no": 37,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Are Call writers covering their positions while Put writers are building positions?",
+  "movement": "Potential sharp upside",
+  "signal": "Bullish positioning shift"
+ },
+ {
+  "no": 38,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Are Put writers exiting while Call writers are adding positions?",
+  "movement": "Potential sharp downside",
+  "signal": "Bearish positioning shift"
+ },
+ {
+  "no": 39,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is there simultaneous increase in Call and Put OI at the same or nearby strikes?",
+  "movement": "Potential volatility expansion or range formation",
+  "signal": "Straddle/strangle positioning"
+ },
+ {
+  "no": 40,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is the underlying price moving towards a strike with significant OI concentration?",
+  "movement": "Potential breakout, rejection or acceleration",
+  "signal": "Price approaching major OI zone"
+ },
+ {
+  "no": 41,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is Delta changing significantly across ATM and nearby strikes?",
+  "movement": "Potential directional acceleration",
+  "signal": "Increasing directional sensitivity"
+ },
+ {
+  "no": 42,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is Gamma increasing near ATM strikes?",
+  "movement": "Potential sharp movement",
+  "signal": "Increasing sensitivity of Delta to price changes"
+ },
+ {
+  "no": 43,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Is IV increasing or decreasing across ATM and OTM options?",
+  "movement": "Potential volatility expansion or cooling",
+  "signal": "Expansion or contraction of expected volatility"
+ },
+ {
+  "no": 44,
+  "topic": "Option Chain",
+  "report": "Option Chain",
+  "question": "Are Option LTP, OI, Delta, Gamma and IV giving conflicting signals?",
+  "movement": "Potential reversal or false breakout",
+  "signal": "Positioning and directional divergence"
+ }
+]

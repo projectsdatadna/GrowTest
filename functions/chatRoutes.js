@@ -1,6 +1,6 @@
 /**
  * Chat API.
- *   POST /chat                      { conversationId?, message, fileIds? } -> { conversationId, answer, files, ... }
+ *   POST /chat                      { conversationId?, message, fileIds?, optionChain?: {symbol, expiryDate}, wordLimit? } -> { conversationId, answer, files, ... }
  *   GET  /chat/conversations/:id    the saved messages and files of a conversation (to restore a chat)
  */
 
@@ -10,6 +10,7 @@ import { chatCompletion, getChatConfigFromEnv } from './aiClient.js'
 import { logAiUsage } from './aiUsageFirestoreClient.js'
 import { runChat, ChatError, MAX_FILES_PER_REQUEST } from './assistant/chatEngine.js'
 import { publicFile } from './fileRoutes.js'
+import { buildOptionChainContext, validateChatContext } from './assistant/optionChainContext.js'
 
 export const MAX_MESSAGE_CHARS = 4000
 const ID = /^[A-Za-z0-9]{10,40}$/
@@ -20,14 +21,17 @@ export function validateChatRequest(body) {
   if (message.length > MAX_MESSAGE_CHARS) return { error: `The message is longer than ${MAX_MESSAGE_CHARS} characters` }
   if (conversationId != null && !ID.test(String(conversationId))) return { error: 'Invalid conversation id' }
   if (fileIds != null && (!Array.isArray(fileIds) || fileIds.length > MAX_FILES_PER_REQUEST || !fileIds.every((id) => ID.test(String(id))))) return { error: `Attach up to ${MAX_FILES_PER_REQUEST} files` }
-  return { value: { message: message.trim(), conversationId: conversationId ?? null, fileIds: [...new Set(fileIds ?? [])] } }
+  const context = validateChatContext(body)
+  if (context.error) return { error: context.error }
+  return { value: { message: message.trim(), conversationId: conversationId ?? null, fileIds: [...new Set(fileIds ?? [])], ...context.value } }
 }
 
-export function registerChatRoutes(app, { conversations = defaultConversations, files = defaultFiles, chat, logUsage } = {}) {
+export function registerChatRoutes(app, { conversations = defaultConversations, files = defaultFiles, chat, logUsage, optionChain } = {}) {
   const config = () => getChatConfigFromEnv()
   const deps = {
     conversations: { create: (c) => conversations.createConversation(c), get: (id) => conversations.getConversation(id), setFiles: (id, ids) => conversations.setConversationFiles(id, ids), listMessages: (id) => conversations.listMessages(id), appendMessages: (id, m) => conversations.appendMessages(id, m) },
     files: { list: () => files.listFiles(), getBytes: (f) => files.getFileBytes(f) },
+    optionChain: optionChain ?? ((context, now) => buildOptionChainContext(context, {}, now)),
     chat: chat ?? ((messages, options) => chatCompletion(messages, config(), options)),
     logUsage: logUsage ?? ((entry) => logAiUsage({ ...entry, model: config().deployment })),
   }

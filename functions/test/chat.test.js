@@ -5,6 +5,8 @@ import ExcelJS from 'exceljs'
 import { chooseFilesByDate, chooseFilesByVersion, selectFilesForRequest, buildFileParts, buildMessages, runChat, sheetToText, ChatError, MAX_FILES_PER_REQUEST } from '../assistant/chatEngine.js'
 import { validateChatRequest, registerChatRoutes } from '../chatRoutes.js'
 import { chatCompletion } from '../aiClient.js'
+import { buildOptionChainContext, formatOptionChainBlock, changeSinceSnapshot } from '../assistant/optionChainContext.js'
+import { systemPrompt } from '../assistant/prompts.js'
 
 const NOW = new Date('2026-11-23T04:00:00Z')
 const file = (id, reportDate, extra = {}) => ({ id, title: `FII ${reportDate}`, fileName: `fii-${reportDate}.pdf`, kind: 'pdf', reportDate, sizeBytes: 1000, mimeType: 'application/pdf', ...extra })
@@ -263,4 +265,75 @@ test('runChat: "compare the current and previous FII report" attaches both versi
   const labels = state.calls[0][1].content.filter((p) => p.type === 'text').map((p) => p.text).join('\n')
   assert.match(labels, /version 2 of 3 of this document/)
   assert.match(labels, /version 3 of 3 of this document/)
+})
+
+test('chat request validation: option chain symbol + expiry and word limit are optional and checked', () => {
+  const ok = validateChatRequest({ message: 'q', optionChain: { symbol: ' nifty ', expiryDate: '2026-12-02' }, wordLimit: 100 })
+  assert.deepEqual(ok.value.optionChain, { symbol: 'NIFTY', expiryDate: '2026-12-02' })
+  assert.equal(ok.value.wordLimit, 100)
+  assert.equal('optionChain' in validateChatRequest({ message: 'q' }).value, false)
+  assert.match(validateChatRequest({ message: 'q', optionChain: { symbol: 'NI FTY', expiryDate: '2026-12-02' } }).error, /symbol/)
+  assert.match(validateChatRequest({ message: 'q', optionChain: { symbol: 'NIFTY', expiryDate: '02-12-2026' } }).error, /expiry/)
+  assert.match(validateChatRequest({ message: 'q', optionChain: { symbol: 'NIFTY', expiryDate: '2026-13-45' } }).error, /expiry/)
+  for (const bad of [5, 5000, 99.5, '100']) assert.match(validateChatRequest({ message: 'q', wordLimit: bad }).error, /Word limit/)
+})
+
+test('prompt + buildMessages: the option chain block and the word limit reach the model', () => {
+  assert.doesNotMatch(systemPrompt({}), /word|option chain/i)
+  const prompt = systemPrompt({ wordLimit: 120, hasOptionChain: true })
+  assert.match(prompt, /within 120 words/)
+  assert.match(prompt, /option chain data block/)
+  const messages = buildMessages({ now: new Date(), parts: [], history: [], message: 'Q?', optionChain: 'OPTION CHAIN DATA (Groww) ...', wordLimit: 120 })
+  assert.match(messages[0].content, /within 120 words/)
+  assert.equal(messages[1].content, 'OPTION CHAIN DATA (Groww) ...')
+  assert.match(messages.at(-1).content, /^Q\?/)
+})
+
+const chain = { underlying_ltp: 24510, filtered_strikes: { 24500: { CE: { ltp: 120, open_interest: 1100, greeks: { iv: 12, delta: 0.52, gamma: 0.001 } }, PE: { ltp: 95, open_interest: 900, greeks: { iv: 13, delta: -0.48, gamma: 0.001 } } } } }
+
+test('buildOptionChainContext: fetches with the stored token, adds the change since the stored snapshot', async () => {
+  let call
+  const snapshot = { tick: 1795759200, expiry: '2026-12-02', underlyingLtp: 24480, strikes: [{ strike: 24500, ce: { oi: 1000, ltp: 110 }, pe: { oi: 900, ltp: 100 } }] }
+  const text = await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-02' }, { getToken: async () => 'tok', fetchChain: async (a) => { call = a; return chain }, loadSnapshot: async () => snapshot }, new Date('2026-11-27T10:00:00Z'))
+  assert.deepEqual([call.exchange, call.underlying_symbol, call.expiry_date, call.groww_token], ['NSE', 'NIFTY', '2026-12-02', 'tok'])
+  assert.match(text, /NIFTY, expiry 2026-12-02, fetched 2026-11-27T10:00:00.000Z/)
+  assert.match(text, /"strike":24500/)
+  assert.match(text, /CHANGE SINCE THE STORED SNAPSHOT/)
+  assert.match(text, /"metric":"OI","prev":1000,"curr":1100,"diff":100/)
+  assert.doesNotMatch(text, /"side":"PE","metric":"OI","prev":900,"curr":900/) // unchanged values are left out
+})
+
+test('buildOptionChainContext: no snapshot, a snapshot of another expiry, or a failing lookup -> single point in time', async () => {
+  const base = { getToken: async () => 'tok', fetchChain: async () => chain }
+  for (const loadSnapshot of [async () => null, async () => ({ tick: 1, expiry: '2026-12-09', underlyingLtp: 1, strikes: [] }), async () => { throw new Error('index missing') }]) {
+    const text = await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-02' }, { ...base, loadSnapshot })
+    assert.match(text, /only this single point in time/)
+    assert.doesNotMatch(text, /CHANGE SINCE/)
+  }
+})
+
+test('buildOptionChainContext: clear errors for a missing or expired token, no chain, and Groww failures', async () => {
+  const ctx = { symbol: 'NIFTY', expiryDate: '2026-12-02' }
+  const failing = (status_code, message = 'x') => async () => { throw Object.assign(new Error('f'), { details: { status_code, message } }) }
+  await assert.rejects(buildOptionChainContext(ctx, { getToken: async () => null }), (e) => e instanceof ChatError && e.status === 401 && /Greek Analysis/.test(e.message))
+  await assert.rejects(buildOptionChainContext(ctx, { getToken: async () => { throw new Error('boom') } }), (e) => e.status === 401)
+  await assert.rejects(buildOptionChainContext(ctx, { getToken: async () => 't', fetchChain: failing(401) }), (e) => e.status === 401 && /expired/.test(e.message))
+  await assert.rejects(buildOptionChainContext(ctx, { getToken: async () => 't', fetchChain: failing(404) }), (e) => e.status === 400 && /no option chain/.test(e.message))
+  await assert.rejects(buildOptionChainContext(ctx, { getToken: async () => 't', fetchChain: failing(500, 'upstream') }), (e) => e.status === 502 && /upstream/.test(e.message))
+})
+
+test('runChat: the option chain block is fetched only when asked for, and only after the cheap checks pass', async () => {
+  let fetched = 0
+  const { deps } = fakeDeps()
+  const withOc = { ...deps, optionChain: async (ctx) => { fetched++; return `BLOCK for ${ctx.symbol}` } }
+  await runChat({ message: 'plain question' }, withOc)
+  assert.equal(fetched, 0)
+  await assert.rejects(runChat({ conversationId: 'convmissing001', message: 'x', optionChain: { symbol: 'NIFTY', expiryDate: '2026-12-02' } }, withOc), (e) => e.status === 404)
+  assert.equal(fetched, 0)
+  let sent
+  const spy = { ...withOc, chat: async (messages, options) => { sent = messages; return deps.chat(messages, options) } }
+  await runChat({ message: 'Is Call OI building?', optionChain: { symbol: 'NIFTY', expiryDate: '2026-12-02' }, wordLimit: 80 }, spy)
+  assert.equal(fetched, 1)
+  assert.ok(sent.some((m) => m.content === 'BLOCK for NIFTY'))
+  assert.match(sent[0].content, /within 80 words/)
 })

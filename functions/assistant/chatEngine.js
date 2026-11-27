@@ -173,9 +173,10 @@ export async function buildFileParts(files, { getBytes, versions = new Map() }) 
 }
 
 /** system -> files -> earlier messages -> the new question (with any note appended). The files come first so the prompt prefix stays stable between turns. */
-export function buildMessages({ now, parts, history = [], message, note }) {
-  const messages = [{ role: 'system', content: systemPrompt({ now }) }]
+export function buildMessages({ now, parts, history = [], message, note, optionChain = null, wordLimit = null }) {
+  const messages = [{ role: 'system', content: systemPrompt({ now, wordLimit, hasOptionChain: Boolean(optionChain) }) }]
   if (parts.length) messages.push({ role: 'user', content: [{ type: 'text', text: 'These are the files attached to this conversation:' }, ...parts] })
+  if (optionChain) messages.push({ role: 'user', content: optionChain })
   for (const m of history.slice(-HISTORY_MESSAGES)) if ((m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content) messages.push({ role: m.role, content: m.content.slice(0, 6000) })
   const notes = [note, parts.length ? null : 'No file is attached to this conversation yet. If the question needs a file, ask the user to attach one with the paperclip.'].filter(Boolean)
   messages.push({ role: 'user', content: notes.length ? `${message}\n\n[Note for the assistant, not written by the user: ${notes.join(' ')}]` : message })
@@ -186,9 +187,9 @@ const brief = ({ id, title, reportDate, uploadedAt, kind, sizeBytes }) => ({ id,
 
 /**
  * deps: conversations { create, get, setFiles, listMessages, appendMessages },
- *       files { list, getBytes }, chat(messages, options) -> { message: { content }, usage }, logUsage?, now?
+ *       files { list, getBytes }, optionChain(context, now) -> text block (only called when the request has one), chat(messages, options) -> { message: { content }, usage }, logUsage?, now?
  */
-export async function runChat({ conversationId, message, fileIds = [] }, deps) {
+export async function runChat({ conversationId, message, fileIds = [], optionChain = null, wordLimit = null }, deps) {
   const now = deps.now ?? new Date()
   let conversation = null
   if (conversationId) {
@@ -211,7 +212,9 @@ export async function runChat({ conversationId, message, fileIds = [] }, deps) {
   const history = conversation ? await deps.conversations.listMessages(conversation.id) : []
   const { parts, truncated } = await buildFileParts(included, { getBytes: deps.files.getBytes, versions: versionInfo(library) })
   const truncatedNote = truncated.length ? `These files are too long and only the first part was included: ${truncated.map((f) => `"${f.title}"`).join(', ')}. Say so if the answer might depend on the rest.` : null
-  const messages = buildMessages({ now, parts, history, message, note: [auto.note, droppedNote, truncatedNote].filter(Boolean).join(' ') || null })
+  // Fetched after the cheap checks above, so a bad conversation or file id never costs a Groww call.
+  const optionChainBlock = optionChain ? await deps.optionChain(optionChain, now) : null
+  const messages = buildMessages({ now, parts, history, message, note: [auto.note, droppedNote, truncatedNote].filter(Boolean).join(' ') || null, optionChain: optionChainBlock, wordLimit })
 
   const reply = await deps.chat(messages, { maxTokens: 1500, temperature: 0.2 })
   const answer = String(reply?.message?.content ?? '').trim()
