@@ -25,9 +25,9 @@ const classNames = {
 // react-select's own z-index (1) beats a Tailwind class, and the popup is at z-[60]: set it inline.
 const styles = { menuPortal: (base) => ({ ...base, zIndex: 9999 }) }
 
-/** symbols: string[] ('' / [] = not loaded -> text box); value: the chosen symbol or ''; onChange(symbol). */
+/** symbols: string[] | null (null = still loading, [] = could not be loaded -> text box); value: the chosen symbol or ''; onChange(symbol). */
 export default function SymbolSelect({ symbols, value, onChange, inputId, ariaLabel = 'Option chain symbol' }) {
-  if (!symbols?.length) {
+  if (symbols && symbols.length === 0) {
     return <input id={inputId} value={value} onChange={(e) => onChange(e.target.value.toUpperCase())} placeholder="e.g. NIFTY" className={fieldClass} aria-label={ariaLabel} />
   }
   return (
@@ -36,7 +36,8 @@ export default function SymbolSelect({ symbols, value, onChange, inputId, ariaLa
       aria-label={ariaLabel}
       unstyled
       isClearable
-      options={symbols.map((s) => ({ value: s, label: s }))}
+      isLoading={symbols === null}
+      options={(symbols ?? []).map((s) => ({ value: s, label: s }))}
       value={value ? { value, label: value } : null}
       onChange={(picked) => onChange(picked?.value ?? '')}
       placeholder="Select or type a symbol"

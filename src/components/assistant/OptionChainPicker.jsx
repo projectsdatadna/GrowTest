@@ -18,8 +18,8 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
   const [topics, setTopics] = useState(null)
   const [loadError, setLoadError] = useState('')
   const [source, setSource] = useState(oc?.asOf ? 'saved' : 'live')
-  const [liveSymbols, setLiveSymbols] = useState([])
-  const [saved, setSaved] = useState(null) // { symbols, earliestDate, latestDate }
+  const [liveSymbols, setLiveSymbols] = useState(null) // null = loading, [] = could not be loaded
+  const [saved, setSaved] = useState(null) // { symbols, earliestDate, latestDate }; null = loading
   const [symbol, setSymbol] = useState(oc?.symbol ?? '')
   const [expiryDate, setExpiryDate] = useState(oc?.expiryDate ?? '')
   const [date, setDate] = useState(oc?.asOf?.date ?? '')
@@ -35,10 +35,10 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
     getQuestionBank().then(setTopics).catch((err) => setLoadError(errorText(err)))
   }, [])
   useEffect(load, [load])
-  // The symbol lists are only suggestions: a failure just leaves a plain text box.
+  // A list that cannot be loaded leaves a plain text box, so a symbol can still be typed.
   useEffect(() => {
-    getUnderlyingSymbols().then((r) => setLiveSymbols(r.symbols ?? [])).catch(() => {})
-    getOptionChainSymbols().then(setSaved).catch(() => {})
+    getUnderlyingSymbols().then((r) => setLiveSymbols(r.symbols ?? [])).catch(() => setLiveSymbols([]))
+    getOptionChainSymbols().then(setSaved).catch(() => setSaved({ symbols: [] }))
   }, [])
 
   // The snapshot times that exist for this symbol on this day.
@@ -82,7 +82,7 @@ export default function OptionChainPicker({ current, onPick, onClose }) {
     onClose()
   }
 
-  const suggestions = source === 'saved' ? saved?.symbols ?? [] : liveSymbols
+  const suggestions = source === 'saved' ? saved?.symbols ?? null : liveSymbols
   const noSnapshots = source === 'saved' && slots && slots.length === 0 && !slotError
   return (
     <PickerShell title="Option Chain questions" description="Choose the data, then a question. The question is copied into the message box — edit it, then send. The option chain is fetched when you send." onClose={onClose}>
