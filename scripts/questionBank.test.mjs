@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { insertQuestion, findReports, findQuestions, pickedContext, pickedOptionChain, optionChainProblem, reportQuestionProblem, chipLabel, compareLabel, NO_COMPARISON, dateLabel, filesForReport, reportTopics, MAX_MESSAGE_CHARS } from '../src/components/assistant/questionBank.js'
+import { insertQuestion, findReports, findQuestions, pickedContext, pickedOptionChain, optionChainProblem, reportQuestionProblem, filesLeft, basisNote, MAX_FILES_PER_QUESTION, chipLabel, compareLabel, NO_COMPARISON, dateLabel, filesForReport, reportTopics, MAX_MESSAGE_CHARS } from '../src/components/assistant/questionBank.js'
 
 const topics = [
   { topic: 'A', reports: [{ report: 'R1', questions: [{ id: 'q01', text: 'one' }] }, { report: 'R2', questions: [{ id: 'q02', text: 'two' }] }] },
@@ -79,11 +79,26 @@ test('filesForReport: files uploaded for the chosen report first, the rest after
   assert.deepEqual(reportTopics(null), [])
 })
 
-test('reportQuestionProblem: a question needs a file that has finished uploading', () => {
-  assert.match(reportQuestionProblem({ file: null }), /file/)
-  assert.match(reportQuestionProblem({ file: { status: 'uploading' } }), /Wait/)
-  assert.match(reportQuestionProblem({ file: { status: 'ready' }, wordLimit: '5' }), /Word limit/)
-  assert.equal(reportQuestionProblem({ file: { status: 'ready', id: 'x' }, wordLimit: '' }), '')
+test('reportQuestionProblem: a question needs at least one finished file and no upload in progress', () => {
+  assert.match(reportQuestionProblem({ files: [] }), /file/)
+  assert.match(reportQuestionProblem({ files: undefined }), /file/)
+  assert.match(reportQuestionProblem({ files: [{ status: 'error' }] }), /file/, 'a failed upload is not a file')
+  assert.match(reportQuestionProblem({ files: [{ status: 'ready' }, { status: 'uploading' }] }), /Wait/)
+  assert.match(reportQuestionProblem({ files: [{ status: 'ready' }], wordLimit: '5' }), /Word limit/)
+  assert.equal(reportQuestionProblem({ files: [{ status: 'ready' }, { status: 'error' }, { status: 'ready' }], wordLimit: '' }), '', 'several files, one failed: the ready ones go')
+})
+
+test('filesLeft: the next question takes 5 files minus the ones already waiting', () => {
+  assert.deepEqual([filesLeft(0), filesLeft(2), filesLeft(5), filesLeft(9), filesLeft(undefined)], [5, 3, 0, 0, 5])
+  assert.equal(MAX_FILES_PER_QUESTION, 5)
+})
+
+test('basisNote: what an answer was based on', () => {
+  assert.equal(basisNote(null, 2), '')
+  assert.equal(basisNote({ symbol: 'NIFTY', asOf: { date: '2026-11-27', time: '10:15' }, carriedOver: false }, 0), 'Based on the option chain: NIFTY · saved 27 Nov 2026 10:15 IST · no files used')
+  assert.equal(basisNote({ symbol: 'NIFTY', expiryDate: '2026-12-01', carriedOver: true }, 0), 'Based on the option chain: NIFTY · live · expiry 2026-12-01 · same data as the previous answer · no files used')
+  assert.match(basisNote({ symbol: 'NIFTY', expiryDate: '2026-12-01' }, 2), /2 files attached to this question/)
+  assert.match(basisNote({ carriedOver: true }, 0), /the option chain data of the previous answer/)
 })
 
 test('"No comparison" is passed through and shown on the chip', () => {

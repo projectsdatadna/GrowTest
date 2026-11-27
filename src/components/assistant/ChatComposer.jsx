@@ -159,7 +159,7 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
         </ul>
       )}
       <div className="flex items-end gap-xs">
-        <QuestionPicker current={chatContext} onPick={pickQuestion} disabled={busy} />
+        <QuestionPicker current={chatContext} onPick={pickQuestion} disabled={busy} attachedCount={chips.filter((c) => c.status !== 'error').length} />
         <button type="button" onClick={() => inputRef.current?.click()} title={`Attach a ${UPLOAD_KINDS_TEXT} file`} aria-label="Attach a file" className="p-sm rounded-lg text-on-surface-variant hover:bg-surface-container-highest">
           <span className="material-symbols-outlined">attach_file</span>
         </button>

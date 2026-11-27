@@ -10,8 +10,8 @@ import { useEffect, useRef, useState } from 'react'
 import OptionChainPicker from './OptionChainPicker'
 import ReportPicker from './ReportPicker'
 
-/** current = the context already on the chat ({ optionChain, wordLimit }); onPick(text, context, files). */
-export default function QuestionPicker({ current, onPick, disabled }) {
+/** current = the context already on the chat ({ optionChain, wordLimit }); attachedCount = files already waiting for the next question; onPick(text, context, files). */
+export default function QuestionPicker({ current, onPick, disabled, attachedCount = 0 }) {
   const [menu, setMenu] = useState(false)
   const [popup, setPopup] = useState(null) // 'optionChain' | 'report'
   const wrapRef = useRef(null)
@@ -52,7 +52,7 @@ export default function QuestionPicker({ current, onPick, disabled }) {
         </div>
       )}
       {popup === 'optionChain' && <OptionChainPicker current={current} onPick={onPick} onClose={close} />}
-      {popup === 'report' && <ReportPicker onPick={onPick} onClose={close} />}
+      {popup === 'report' && <ReportPicker onPick={onPick} onClose={close} attachedCount={attachedCount} />}
     </div>
   )
 }

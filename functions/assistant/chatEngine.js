@@ -50,8 +50,12 @@ export function chooseFilesByDate(message, library, { now = new Date() } = {}) {
   return { fileIds: matched.map((f) => f.id), note }
 }
 
+// "previous / latest" can name a document ("compare with the previous DII flows", "the latest report"), but "the previous
+// message" or "explain the latest answer" point back into the chat: those phrases are removed before looking for version wording.
 const PREVIOUS_RE = /\b(previous|prior|preceding)\b|\b(earlier|older)\s+(version|upload|report|file|copy|one|date|day)\b|\blast\s+(version|upload|time|report|file|copy)\b|\bbefore\s+(this|that|the\s+(latest|current|new))\b|\bsince\s+(the\s+)?(last|previous|earlier)\b/i
 const CURRENT_RE = /\b(latest|newest|most recent)\b|\bcurrent\s+(version|upload|report|file|copy|one)\b|\bnew(ly)?\s+uploaded\b|\bjust\s+uploaded\b/i
+// Phrases that point back into the chat itself.
+const CONVERSATION_REF_RE = /\b(?:previous|prior|preceding|last|above|earlier|latest|recent)\s+(?:message|answer|response|reply|question|chat|conversation|output|explanation)s?\b/gi
 // Words that say nothing about WHICH document is meant.
 const GENERIC_WORDS = new Set(['report', 'reports', 'file', 'files', 'data', 'daily', 'copy', 'the', 'and', 'for', 'new', 'old', 'final'])
 
@@ -62,8 +66,9 @@ const GENERIC_WORDS = new Set(['report', 'reports', 'file', 'files', 'data', 'da
  * Questions that name dates are left to chooseFilesByDate.
  */
 export function chooseFilesByVersion(message, library, { conversationFiles = [], now = new Date() } = {}) {
-  const wantsPrevious = PREVIOUS_RE.test(message)
-  if (!wantsPrevious && !CURRENT_RE.test(message)) return { fileIds: [], note: null, roles: {} }
+  const text = String(message).replace(CONVERSATION_REF_RE, ' ')
+  const wantsPrevious = PREVIOUS_RE.test(text)
+  if (!wantsPrevious && !CURRENT_RE.test(text)) return { fileIds: [], note: null, roles: {} }
   const filter = extractDateFilter(message, { now })
   if (filter.dates.length || filter.range) return { fileIds: [], note: null, roles: {} }
   if (!library.length) return { fileIds: [], note: null, roles: {} }
@@ -187,11 +192,13 @@ export async function buildFileParts(files, { getBytes, versions = new Map() }) 
 
 /** system -> files -> earlier messages -> the new question (with any note appended). The files come first so the prompt prefix stays stable between turns. */
 export function buildMessages({ now, parts, history = [], message, note, optionChain = null, wordLimit = null }) {
-  const messages = [{ role: 'system', content: systemPrompt({ now, wordLimit, hasOptionChain: Boolean(optionChain) }) }]
+  const messages = [{ role: 'system', content: systemPrompt({ now, wordLimit, hasOptionChain: Boolean(optionChain), hasFiles: parts.length > 0 }) }]
   if (parts.length) messages.push({ role: 'user', content: [{ type: 'text', text: 'These are the files attached to this conversation:' }, ...parts] })
   if (optionChain) messages.push({ role: 'user', content: optionChain })
   for (const m of history.slice(-HISTORY_MESSAGES)) if ((m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content) messages.push({ role: m.role, content: m.content.slice(0, 6000) })
-  const notes = [note, parts.length ? null : 'No file is attached to this conversation yet. If the question needs a file, ask the user to attach one with the paperclip.'].filter(Boolean)
+  // Only a first question with nothing to work from is sent to the paperclip; a follow-up is answered from the conversation.
+  const sourceNote = parts.length || optionChain ? null : history.length ? 'No file or option chain data comes with this question; answer from the conversation so far.' : 'No file is attached to this conversation yet. If the question needs a file, ask the user to attach one with the paperclip.'
+  const notes = [note, sourceNote].filter(Boolean)
   messages.push({ role: 'user', content: notes.length ? `${message}\n\n[Note for the assistant, not written by the user: ${notes.join(' ')}]` : message })
   return messages
 }
@@ -213,21 +220,36 @@ export async function runChat({ conversationId, message, fileIds = [], optionCha
   const byId = new Map(library.map((f) => [f.id, f]))
   if (fileIds.some((id) => !byId.has(id))) throw new ChatError(400, 'One of the attached files no longer exists')
 
+  // The newest messages, oldest first. The newest user message also says what the last answer was based on.
+  const history = conversation ? await deps.conversations.listMessages(conversation.id, { limit: HISTORY_MESSAGES, newest: true }) : []
+  const lastUser = [...history].reverse().find((m) => m.role === 'user')
+
   const previous = (conversation?.fileIds ?? []).filter((id) => byId.has(id))
   const byDate = chooseFilesByDate(message, library, { now })
   const byVersion = chooseFilesByVersion(message, library, { conversationFiles: [...previous, ...fileIds].map((id) => byId.get(id)), now })
   const auto = { fileIds: [...new Set([...byDate.fileIds, ...byVersion.fileIds])], note: [byDate.note, byVersion.note].filter(Boolean).join(' ') || null }
-  const thisTurn = [...new Set([...fileIds, ...auto.fileIds])]
-  const attached = [...new Set([...previous, ...thisTurn])]
-  const { included, dropped } = selectFilesForRequest(attached.map((id) => byId.get(id)))
+
+  // Where this answer comes from:
+  //  - an Option Chain question: the option chain data only (plus files attached to this very request); stored files, dates
+  //    and "previous / latest" wording are not looked at;
+  //  - a follow-up to an option chain answer (nothing new attached, no stored file asked for): the SAME data as that answer,
+  //    saved with it, not a new fetch;
+  //  - anything else: the files of the conversation, as before.
+  const inherited = !optionChain && !fileIds.length && !auto.fileIds.length && !auto.note && typeof lastUser?.optionChainBlock === 'string' && lastUser.optionChainBlock ? lastUser : null
+  const optionChainMode = Boolean(optionChain || inherited)
+  const thisTurn = optionChain ? [...fileIds] : inherited ? [] : [...new Set([...fileIds, ...auto.fileIds])]
+  const attached = [...new Set([...previous, ...thisTurn])] // what the conversation keeps
+  const requestIds = optionChain ? [...fileIds] : inherited ? (lastUser.fileIds ?? []).filter((id) => byId.has(id)) : attached // what this question sees
+  const { included, dropped } = selectFilesForRequest(requestIds.map((id) => byId.get(id)))
   const droppedNote = dropped.length ? `These attached files were left out because of size limits: ${dropped.map((f) => `"${f.title}"`).join(', ')}. Tell the user.` : null
 
-  const history = conversation ? await deps.conversations.listMessages(conversation.id) : []
   const { parts, truncated } = await buildFileParts(included, { getBytes: deps.files.getBytes, versions: versionInfo(library) })
   const truncatedNote = truncated.length ? `These files are too long and only the first part was included: ${truncated.map((f) => `"${f.title}"`).join(', ')}. Say so if the answer might depend on the rest.` : null
   // Fetched after the cheap checks above, so a bad conversation or file id never costs a Groww call.
-  const optionChainBlock = optionChain ? await deps.optionChain(optionChain, now) : null
-  const messages = buildMessages({ now, parts, history, message, note: [auto.note, droppedNote, truncatedNote].filter(Boolean).join(' ') || null, optionChain: optionChainBlock, wordLimit })
+  const optionChainBlock = optionChain ? await deps.optionChain(optionChain, now) : inherited ? inherited.optionChainBlock : null
+  const optionChainUsed = optionChain ?? (inherited ? inherited.optionChain ?? null : null)
+  const notes = [optionChainMode ? null : auto.note, droppedNote, truncatedNote].filter(Boolean).join(' ') || null
+  const messages = buildMessages({ now, parts, history, message, note: notes, optionChain: optionChainBlock, wordLimit })
 
   const reply = await deps.chat(messages, { maxTokens: 1500, temperature: 0.2 })
   const answer = String(reply?.message?.content ?? '').trim()
@@ -236,7 +258,8 @@ export async function runChat({ conversationId, message, fileIds = [], optionCha
   if (!conversation) conversation = await deps.conversations.create({ title: message.slice(0, 60) })
   if (attached.length !== (conversation.fileIds ?? []).length || attached.some((id) => !(conversation.fileIds ?? []).includes(id))) await deps.conversations.setFiles(conversation.id, attached)
   await deps.conversations.appendMessages(conversation.id, [
-    { role: 'user', content: message, fileIds: thisTurn },
+    // The option chain data the answer used is saved with the question, so a follow-up can use the same data.
+    { role: 'user', content: message, fileIds: inherited ? requestIds : thisTurn, ...(optionChainBlock ? { optionChain: optionChainUsed, optionChainBlock } : {}) },
     { role: 'assistant', content: answer, usage: reply.usage ?? null },
   ])
   await deps.logUsage?.({ feature: 'file_chat', usage: reply.usage, metadata: { conversationId: conversation.id, files: included.length } })
@@ -249,6 +272,7 @@ export async function runChat({ conversationId, message, fileIds = [], optionCha
     newlyAttached: newly.map((id) => ({ ...brief(byId.get(id)), auto: !fileIds.includes(id), role: byVersion.roles[id] ?? null })),
     dropped: dropped.map(brief),
     truncated: truncated.map(brief),
+    optionChain: optionChainBlock ? { ...optionChainUsed, carriedOver: Boolean(inherited) } : null,
     usage: reply.usage ?? null,
   }
 }

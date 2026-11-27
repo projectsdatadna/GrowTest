@@ -475,3 +475,122 @@ test('option chain: compareWith "none" is valid and means no comparison - no sna
   assert.match(live, /No comparison with an earlier snapshot was requested/)
   assert.doesNotMatch(live, /CHANGE SINCE|is stored/)
 })
+
+// ---- where an answer comes from: option chain only / the same data in a follow-up / files ----
+
+const OC = { symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' } }
+const ocDeps = (over = {}) => {
+  const fetched = []
+  const { deps, state } = fakeDeps({ optionChain: async (ctx) => { fetched.push(ctx); return `OPTION CHAIN DATA block for ${ctx.symbol} #${fetched.length}` }, ...over })
+  return { deps, state, fetched }
+}
+const lastCall = (state) => state.calls.at(-1)
+const filePartsOf = (messages) => messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p) => p.type === 'file') : []))
+
+test('conversation references ("previous message", "latest answer") do not pull stored files in; document wording still does', () => {
+  const pick = (q) => chooseFilesByVersion(q, versions, { now: NOW })
+  for (const q of ['Please explain the previous message in more detail', 'explain the latest answer', 'what did you mean in your last reply?', 'expand on the above explanation', 'Explain more about the previous response']) {
+    assert.deepEqual(pick(q), { fileIds: [], note: null, roles: {} }, q)
+  }
+  assert.deepEqual(pick('Compare the current and previous FII report').fileIds, ['fileversion02', 'fileversion03'])
+  assert.deepEqual(pick('Compare the previous FII report with your previous answer').fileIds, ['fileversion02', 'fileversion03'])
+  assert.deepEqual(pick('Summarise the latest report').fileIds, ['fileversion03'])
+})
+
+test('runChat: an Option Chain question uses only the option chain - not the conversation files, a typed date, or "previous"', async () => {
+  const { deps, state, fetched } = ocDeps()
+  await runChat({ message: 'first, about a file', fileIds: ['fileaaaaaaaa2'] }, deps) // the conversation now has a file
+  const r = await runChat({ conversationId: 'convaaaaaaaa1', message: 'On 10 Nov 2025, was the previous Call OI added?', optionChain: OC }, deps)
+  const sent = lastCall(state)
+  assert.equal(fetched.length, 1)
+  assert.deepEqual(filePartsOf(sent), [], 'no file is sent')
+  assert.ok(sent.some((m) => m.role === 'user' && /^OPTION CHAIN DATA block for NIFTY #1/.test(m.content)))
+  assert.doesNotMatch(sent.at(-1).content, /No file is attached|no stored file|Only one version/)
+  assert.doesNotMatch(sent[0].content, /attached files/)
+  assert.match(sent[0].content, /option chain data block/)
+  assert.deepEqual(r.files, [])
+  assert.deepEqual(r.newlyAttached, [])
+  assert.deepEqual(r.optionChain, { ...OC, carriedOver: false })
+  assert.deepEqual(state.conversations.get('convaaaaaaaa1').fileIds, ['fileaaaaaaaa2'], "the conversation's files are untouched")
+})
+
+test('runChat: the option chain data is saved with the question, and a follow-up uses the SAME data without a new fetch', async () => {
+  const { deps, state, fetched } = ocDeps()
+  await runChat({ message: 'Is Call OI being added?', optionChain: OC }, deps)
+  const saved = state.messages.get('convaaaaaaaa1')[0]
+  assert.deepEqual(saved.optionChain, OC)
+  assert.match(saved.optionChainBlock, /block for NIFTY #1/)
+  assert.equal('optionChain' in state.messages.get('convaaaaaaaa1')[1], false, 'only the question record carries it')
+  const follow = await runChat({ conversationId: 'convaaaaaaaa1', message: 'Please explain the previous message in more detail' }, deps)
+  assert.equal(fetched.length, 1, 'no second fetch')
+  const sent = lastCall(state)
+  assert.ok(sent.some((m) => m.role === 'user' && /block for NIFTY #1/.test(m.content)), 'the same block is sent again')
+  assert.ok(sent.some((m) => m.role === 'assistant'), 'and the earlier answer')
+  assert.deepEqual(filePartsOf(sent), [])
+  assert.doesNotMatch(sent.at(-1).content, /No file|attach|Only one version/)
+  assert.deepEqual(follow.optionChain, { ...OC, carriedOver: true })
+  // The follow-up keeps the data for the next follow-up too.
+  await runChat({ conversationId: 'convaaaaaaaa1', message: 'and why?' }, deps)
+  assert.equal(fetched.length, 1)
+  assert.ok(lastCall(state).some((m) => m.role === 'user' && /block for NIFTY #1/.test(m.content)))
+})
+
+test('runChat: a new Option Chain question replaces the data; a file question after one is a files turn', async () => {
+  const { deps, state, fetched } = ocDeps()
+  await runChat({ message: 'q1', optionChain: OC }, deps)
+  await runChat({ conversationId: 'convaaaaaaaa1', message: 'q2', optionChain: { ...OC, symbol: 'BANKNIFTY' } }, deps)
+  assert.equal(fetched.length, 2)
+  assert.ok(lastCall(state).some((m) => /block for BANKNIFTY #2/.test(String(m.content))))
+  assert.ok(!lastCall(state).some((m) => /block for NIFTY #1/.test(String(m.content))), 'only the new block')
+  // A report question with a file, then a follow-up: files, and no option chain block any more.
+  await runChat({ conversationId: 'convaaaaaaaa1', message: 'What was the net position?', fileIds: ['fileaaaaaaaa2'] }, deps)
+  let sent = lastCall(state)
+  assert.equal(filePartsOf(sent).length, 1)
+  assert.ok(!sent.some((m) => /OPTION CHAIN DATA/.test(String(m.content))))
+  await runChat({ conversationId: 'convaaaaaaaa1', message: 'explain that again' }, deps)
+  sent = lastCall(state)
+  assert.equal(filePartsOf(sent).length, 1)
+  assert.ok(!sent.some((m) => /OPTION CHAIN DATA/.test(String(m.content))))
+  assert.equal(fetched.length, 2)
+})
+
+test('runChat: a follow-up that names a stored report date, or attaches a file, is a files turn even after an option chain answer', async () => {
+  const { deps, state, fetched } = ocDeps()
+  await runChat({ message: 'q1', optionChain: OC }, deps)
+  const byDate = await runChat({ conversationId: 'convaaaaaaaa1', message: 'And compare with 10 Nov 2025' }, deps)
+  assert.deepEqual(byDate.files.map((f) => f.id), ['fileaaaaaaaa1'])
+  assert.ok(!lastCall(state).some((m) => /OPTION CHAIN DATA/.test(String(m.content))))
+  const { deps: d2, state: s2 } = ocDeps()
+  await runChat({ message: 'q1', optionChain: OC }, d2)
+  await runChat({ conversationId: 'convaaaaaaaa1', message: 'what about this file?', fileIds: ['fileaaaaaaaa2'] }, d2)
+  assert.equal(filePartsOf(lastCall(s2)).length, 1)
+  assert.ok(!lastCall(s2).some((m) => /OPTION CHAIN DATA/.test(String(m.content))))
+  assert.equal(fetched.length, 1)
+})
+
+test('runChat: files attached to the Option Chain request itself are used with the option chain; the model is told about both', async () => {
+  const { deps, state } = ocDeps()
+  const r = await runChat({ message: 'Does the option chain agree with this report?', optionChain: OC, fileIds: ['fileaaaaaaaa2'] }, deps)
+  const sent = lastCall(state)
+  assert.equal(filePartsOf(sent).length, 1)
+  assert.ok(sent.some((m) => /OPTION CHAIN DATA/.test(String(m.content))))
+  assert.match(sent[0].content, /attached files/)
+  assert.match(sent[0].content, /option chain data block/)
+  assert.deepEqual(r.files.map((f) => f.id), ['fileaaaaaaaa2'])
+  assert.deepEqual(state.conversations.get('convaaaaaaaa1').fileIds, ['fileaaaaaaaa2'])
+})
+
+test('buildMessages / prompt: the "attach a file" nudge is only for a first question with nothing to work from', () => {
+  const first = buildMessages({ now: NOW, parts: [], history: [], message: 'hi' })
+  assert.match(first.at(-1).content, /No file is attached to this conversation yet/)
+  const follow = buildMessages({ now: NOW, parts: [], history: [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }], message: 'explain' })
+  assert.doesNotMatch(follow.at(-1).content, /attach/)
+  assert.match(follow.at(-1).content, /answer from the conversation/)
+  assert.match(follow[0].content, /No file or option chain data comes with this question/)
+  const files = systemPrompt({ hasFiles: true })
+  assert.match(files, /The user has attached files/)
+  assert.doesNotMatch(files, /option chain/i)
+  const ocOnly = systemPrompt({ hasFiles: false, hasOptionChain: true })
+  assert.doesNotMatch(ocOnly, /attached files|report date|version n of N/)
+  assert.match(ocOnly, /Answer ONLY from the option chain data block and the conversation/)
+})

@@ -39,7 +39,10 @@ export async function appendMessages(id, messages) {
   await batch.commit()
 }
 
-export async function listMessages(id, { limit = 200 } = {}) {
-  const snapshot = await db.collection(CONVERSATIONS).doc(id).collection('messages').orderBy('createdAt', 'asc').limit(limit).get()
-  return snapshot.docs.map((d) => ({ id: d.id, ...d.data(), createdAt: iso(d.data().createdAt) }))
+/** Messages oldest first. `newest`: the LAST `limit` messages instead of the first (what the model needs once a chat is long). */
+export async function listMessages(id, { limit = 200, newest = false } = {}) {
+  const query = db.collection(CONVERSATIONS).doc(id).collection('messages').orderBy('createdAt', newest ? 'desc' : 'asc').limit(limit)
+  const docs = (await query.get()).docs
+  if (newest) docs.reverse()
+  return docs.map((d) => ({ id: d.id, ...d.data(), createdAt: iso(d.data().createdAt) }))
 }

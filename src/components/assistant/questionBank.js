@@ -93,9 +93,25 @@ export function optionChainProblem({ source, symbol, expiryDate, date, time, wor
   return wordLimitProblem(wordLimit)
 }
 
-/** Why a report question cannot be picked yet: it needs a topic's report and an attached file. */
-export function reportQuestionProblem({ file, wordLimit }) {
-  if (!file) return 'Upload a file or pick a stored one first'
-  if (file.status === 'uploading') return 'Wait for the upload to finish'
+export const MAX_FILES_PER_QUESTION = 5 // the server's cap per question (MAX_FILES_PER_REQUEST)
+
+/** How many more files can be attached to the next question. */
+export const filesLeft = (attached, max = MAX_FILES_PER_QUESTION) => Math.max(0, max - (attached || 0))
+
+/** Why a report question cannot be picked yet: it needs at least one finished file (`files`: the popup's selected files). */
+export function reportQuestionProblem({ files, wordLimit }) {
+  const list = files ?? []
+  if (list.some((f) => f.status === 'uploading')) return 'Wait for the uploads to finish'
+  if (!list.some((f) => f.status === 'ready')) return 'Upload a file or pick a stored one first'
   return wordLimitProblem(wordLimit)
+}
+
+/**
+ * The line under an answer saying what it was based on: the option chain (and whether it is the same data as the
+ * previous answer) or, for a files turn, nothing extra. `used` = the `optionChain` of the /chat response.
+ */
+export function basisNote(used, filesUsed = 0) {
+  if (!used) return ''
+  const what = used.symbol ? chipLabel(used) : 'the option chain data of the previous answer'
+  return `Based on the option chain: ${what}${used.carriedOver ? ' · same data as the previous answer' : ''}${filesUsed ? ` · ${filesUsed} file${filesUsed > 1 ? 's' : ''} attached to this question` : ' · no files used'}`
 }

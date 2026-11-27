@@ -7,6 +7,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { sendChat, getConversation, errorText } from '../../services/api'
+import { basisNote } from './questionBank'
 
 const CONVERSATION_KEY = 'growtest.chatConversationId'
 
@@ -77,13 +78,16 @@ export default function useFileChat() {
         setConversationId(result.conversationId)
         write(CONVERSATION_KEY, result.conversationId)
         const notes = [
+          basisNote(result.optionChain, result.files.length),
           ...result.newlyAttached.filter((f) => f.auto).map((f) => `${f.role ? `Added the ${f.role} version` : 'Added by date'}: ${f.title}${f.reportDate ? ` (${f.reportDate})` : ''}`),
           ...(result.dropped.length ? [`Left out because of the size limit: ${result.dropped.map((f) => f.title).join(', ')}`] : []),
           ...(result.truncated?.length ? [`Only the first part was read (too long): ${result.truncated.map((f) => f.title).join(', ')}`] : []),
-        ]
+        ].filter(Boolean)
         setMessages((m) => [...m, { role: 'assistant', content: result.answer, notes }])
         setConversationFiles(result.files)
         setChips((c) => c.filter((x) => x.status !== 'ready'))
+        // The option chain applies to the question it was picked for; the server keeps its data for the follow-ups.
+        setChatContext((c) => ({ ...c, optionChain: null }))
       } catch (err) {
         // Nothing was saved: take the question back out of the list and into the box so it can be re-sent.
         setMessages((m) => [...m.slice(0, -1), { role: 'assistant', error: errorText(err) }])
