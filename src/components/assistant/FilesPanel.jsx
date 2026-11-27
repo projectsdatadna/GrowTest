@@ -31,6 +31,7 @@ function FileRow({ file, inChat, attached, onAttach, onChanged }) {
         {file.version?.of > 1 && <span className="text-[10px] px-xs rounded border border-outline-variant text-on-surface-variant shrink-0" title={`Version ${file.version.n} of ${file.version.of} of this document (oldest first)`}>v{file.version.n}</span>}
         <span className="text-[11px] text-on-surface-variant shrink-0">{formatSize(file.sizeBytes)}</span>
       </div>
+      {file.reportName && <div className="text-[11px] text-on-surface-variant truncate" title={file.reportName}>NSE report: {file.reportName}</div>}
       <div className="flex items-center gap-xs flex-wrap text-[11px] text-on-surface-variant">
         <label className="flex items-center gap-xs">
           Report date

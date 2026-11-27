@@ -720,11 +720,11 @@ export const errorText = (error) => error?.response?.data?.error || error?.messa
 export const MAX_UPLOAD_BYTES = 9 * 1024 * 1024
 export const UPLOAD_EXTENSIONS = ['pdf', 'xlsx', 'csv']
 
-/** Uploads one file as the raw request body (stored in Firestore). Resolves { duplicate, file }. */
-export const uploadFile = (file, { reportDate, onProgress } = {}) =>
+/** Uploads one file as the raw request body (stored in Firestore). Resolves { duplicate, file }. reportName = the NSE report it is for. */
+export const uploadFile = (file, { reportDate, reportName, onProgress } = {}) =>
   assistantClient
     .post('/files', file, {
-      headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), ...(reportDate ? { 'X-Report-Date': reportDate } : {}) },
+      headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), ...(reportDate ? { 'X-Report-Date': reportDate } : {}), ...(reportName ? { 'X-Report-Name': encodeURIComponent(reportName) } : {}) },
       onUploadProgress: (e) => e.total && onProgress?.(e.loaded / e.total),
       timeout: 180000,
       maxBodyLength: Infinity,
@@ -741,6 +741,11 @@ export const sendChat = ({ message, conversationId, fileIds, optionChain, wordLi
   assistantClient
     .post('/chat', { message, conversationId: conversationId || undefined, fileIds: fileIds?.length ? fileIds : undefined, optionChain: optionChain || undefined, wordLimit: wordLimit || undefined }, { timeout: 300000 })
     .then((r) => r.data)
+
+/** Saved 15-minute option chain snapshots: the symbols that have them and the first / last day -> { symbols, earliestDate, latestDate }. */
+export const getOptionChainSymbols = () => assistantClient.get('/option-chain-history/symbols').then((r) => r.data)
+/** The snapshot times one symbol has on one IST day -> [{ time: '10:15', expiry, underlyingLtp }]. */
+export const getOptionChainSlots = (symbol, date) => assistantClient.get('/option-chain-history/slots', { params: { symbol, date } }).then((r) => r.data.slots)
 
 /** The standard questions: [{ topic, reports: [{ report, questions: [{ id, no, text, movement, signal? }] }] }]. */
 export const getQuestionBank = () => assistantClient.get('/question-bank').then((r) => r.data.topics)

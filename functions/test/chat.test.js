@@ -5,7 +5,7 @@ import ExcelJS from 'exceljs'
 import { chooseFilesByDate, chooseFilesByVersion, selectFilesForRequest, buildFileParts, buildMessages, runChat, sheetToText, ChatError, MAX_FILES_PER_REQUEST } from '../assistant/chatEngine.js'
 import { validateChatRequest, registerChatRoutes } from '../chatRoutes.js'
 import { chatCompletion } from '../aiClient.js'
-import { buildOptionChainContext, formatOptionChainBlock, changeSinceSnapshot } from '../assistant/optionChainContext.js'
+import { buildOptionChainContext, formatOptionChainBlock, changeSinceSnapshot, validateChatContext, istEpoch, SNAPSHOT_TIMES } from '../assistant/optionChainContext.js'
 import { systemPrompt } from '../assistant/prompts.js'
 
 const NOW = new Date('2026-11-23T04:00:00Z')
@@ -336,4 +336,69 @@ test('runChat: the option chain block is fetched only when asked for, and only a
   assert.equal(fetched, 1)
   assert.ok(sent.some((m) => m.content === 'BLOCK for NIFTY'))
   assert.match(sent[0].content, /within 80 words/)
+})
+
+test('option chain context validation: a saved snapshot (date + time) and a compare-with interval', () => {
+  const now = new Date('2026-11-27T10:00:00Z')
+  const ok = validateChatContext({ optionChain: { symbol: 'nifty', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: '1h' } }, now)
+  assert.deepEqual(ok.value.optionChain, { symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: '1h' })
+  assert.equal(SNAPSHOT_TIMES.length, 26)
+  assert.deepEqual([SNAPSHOT_TIMES[0], SNAPSHOT_TIMES[1], SNAPSHOT_TIMES.at(-1)], ['09:15', '09:30', '15:30'])
+  // No expiry is needed for a saved snapshot, and a live request still needs one.
+  assert.equal('expiryDate' in ok.value.optionChain, false)
+  assert.match(validateChatContext({ optionChain: { symbol: 'NIFTY' } }, now).error, /expiry/)
+  assert.deepEqual(validateChatContext({ optionChain: { symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: '15m' } }, now).value.optionChain, { symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: '15m' })
+  const bad = (asOf, pattern) => assert.match(validateChatContext({ optionChain: { symbol: 'NIFTY', asOf } }, now).error, pattern)
+  bad({ date: '2026-11-31', time: '10:15' }, /date/)
+  bad({ date: '2026-11-24', time: '10:20' }, /time/)
+  bad({ date: '2026-11-24', time: '9:15' }, /time/)
+  bad({ date: '2026-11-28', time: '10:15' }, /weekdays/) // a Saturday
+  bad({ date: '2026-11-30', time: '10:15' }, /future/)
+  assert.match(validateChatContext({ optionChain: { symbol: 'NIFTY', asOf: { date: '2026-11-27', time: '15:30' } } }, new Date('2026-11-27T09:50:00Z')).error, /future/) // today, 15:20 IST: 15:30 has not happened yet
+  assert.ok(validateChatContext({ optionChain: { symbol: 'NIFTY', asOf: { date: '2026-11-27', time: '15:30' } } }, now).value, 'at 15:30 IST it has')
+  assert.match(validateChatContext({ optionChain: { symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: '2d' } }, now).error, /Compare with/)
+})
+
+test('buildOptionChainContext: a saved snapshot needs no token, is read at its exact tick and compared with the chosen earlier one', async () => {
+  const tick = istEpoch('2026-11-24', '10:15')
+  const mk = (t, oi, ltp) => ({ tick: t, expiry: '2026-12-01', underlyingLtp: ltp, strikes: [{ strike: 24500, ce: { oi, ltp: 100 }, pe: { oi: 900, ltp: 90 } }] })
+  const calls = []
+  const store = { [tick]: mk(tick, 1300, 24510), [tick - 3600]: mk(tick - 3600, 1000, 24400) }
+  const deps = { getToken: async () => { throw new Error('the token must not be read') }, fetchChain: async () => { throw new Error('Groww must not be called') }, loadSnapshot: async (symbol, limit, maxAge) => { calls.push([symbol, limit, maxAge]); return store[limit] ?? null } }
+  const text = await buildOptionChainContext({ symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: '1h' }, deps, new Date('2026-11-27T10:00:00Z'))
+  assert.deepEqual(calls, [['NIFTY', tick, 0], ['NIFTY', tick - 3600, 1800]])
+  assert.match(text, /saved 15-minute snapshot of 2026-11-24 10:15 IST, not live/)
+  assert.match(text, /expiry 2026-12-01/)
+  assert.match(text, /Volume is not stored/)
+  assert.match(text, /about 1 hour earlier/)
+  assert.match(text, /SNAPSHOT of 2026-11-24 09:15 IST/, 'times are given in IST, not UTC')
+  assert.match(text, /"metric":"OI","prev":1000,"curr":1300,"diff":300/)
+  // Without compareWith a saved snapshot is compared with the one 15 minutes before; a missing one gives a single point in time.
+  const lone = await buildOptionChainContext({ symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' } }, { ...deps, loadSnapshot: async (s, limit) => (limit === tick ? store[tick] : null) })
+  assert.match(lone, /about 15 minutes before is stored, so only this single point in time/)
+  // A 1-day comparison allows for a weekend or a holiday.
+  calls.length = 0
+  await buildOptionChainContext({ symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' }, compareWith: '1d' }, deps)
+  assert.deepEqual(calls[1], ['NIFTY', tick - 86400, 4 * 86400])
+})
+
+test('buildOptionChainContext: no saved snapshot at that time -> a clear 400; a failing read -> 502; another expiry is not diffed', async () => {
+  const ctx = { symbol: 'NIFTY', asOf: { date: '2026-11-24', time: '10:15' } }
+  await assert.rejects(buildOptionChainContext(ctx, { loadSnapshot: async () => null }), (e) => e instanceof ChatError && e.status === 400 && /No saved option chain snapshot for NIFTY at 2026-11-24 10:15 IST/.test(e.message))
+  await assert.rejects(buildOptionChainContext(ctx, { loadSnapshot: async () => ({ tick: 1, expiry: '2026-12-01', underlyingLtp: 1, strikes: [] }) }), (e) => e.status === 400) // not the exact tick
+  await assert.rejects(buildOptionChainContext(ctx, { loadSnapshot: async () => { throw new Error('index missing') } }), (e) => e.status === 502)
+  const tick = istEpoch('2026-11-24', '10:15')
+  const text = await buildOptionChainContext(ctx, { loadSnapshot: async (s, limit) => (limit === tick ? { tick, expiry: '2026-12-01', underlyingLtp: 1, strikes: [] } : { tick: limit, expiry: '2026-11-24', underlyingLtp: 1, strikes: [] }) })
+  assert.doesNotMatch(text, /CHANGE SINCE/)
+})
+
+test('buildOptionChainContext: live with compareWith looks up the snapshot that far before the current tick', async () => {
+  const now = new Date('2026-11-27T05:00:00Z') // 10:30 IST
+  const nowTick = Math.floor(now.getTime() / 1000) - (Math.floor(now.getTime() / 1000) % 900)
+  const calls = []
+  await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: '1h' }, { getToken: async () => 't', fetchChain: async () => chain, loadSnapshot: async (...a) => { calls.push(a); return null } }, now)
+  assert.deepEqual(calls, [['NIFTY', nowTick - 3600, 1800]])
+  calls.length = 0
+  await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01' }, { getToken: async () => 't', fetchChain: async () => chain, loadSnapshot: async (...a) => { calls.push(a); return null } }, now)
+  assert.deepEqual(calls, [['NIFTY', nowTick, 4 * 3600]], 'no compareWith: the latest stored snapshot, as before')
 })

@@ -2,10 +2,11 @@
  * File library API: upload, list, rename / re-date, download, delete.
  *
  *   POST   /files          the raw file as the request body; headers X-File-Name (URI-encoded),
- *                          optional X-Report-Date (YYYY-MM-DD) and X-Title. A file with the same
+ *                          optional X-Report-Date (YYYY-MM-DD), X-Title and X-Report-Name
+ *                          (the NSE report the file is for, URI-encoded). A file with the same
  *                          contents as an existing one is not stored twice.
  *   GET    /files          newest first
- *   PATCH  /files/:id      { title?, reportDate? }
+ *   PATCH  /files/:id      { title?, reportDate?, reportName? }
  *   GET    /files/:id/download
  *   DELETE /files/:id      soft delete
  */
@@ -13,7 +14,7 @@
 import crypto from 'node:crypto'
 import express from 'express'
 import * as defaultStore from './filesFirestoreClient.js'
-import { validateUpload, sniffContent, extensionOf, MAX_FILE_BYTES } from './ingest/uploadRequest.js'
+import { validateUpload, sniffContent, extensionOf, cleanReportName, MAX_FILE_BYTES } from './ingest/uploadRequest.js'
 import { isoDate } from './ingest/reportDate.js'
 import { parseXlsx } from './ingest/parseSheet.js'
 import { versionInfo } from './assistant/fileFamily.js'
@@ -22,7 +23,7 @@ const ID = /^[A-Za-z0-9]{10,40}$/
 const DATE = /^\d{4}-\d{2}-\d{2}$/
 
 /** What the browser sees of a file. */
-export const publicFile = ({ id, title, fileName, mimeType, kind, reportDate, reportDateSource, sizeBytes, uploadedAt }) => ({ id, title, fileName, mimeType, kind, reportDate: reportDate ?? null, reportDateSource: reportDateSource ?? null, sizeBytes, uploadedAt })
+export const publicFile = ({ id, title, fileName, mimeType, kind, reportDate, reportDateSource, reportName, sizeBytes, uploadedAt }) => ({ id, title, fileName, mimeType, kind, reportDate: reportDate ?? null, reportDateSource: reportDateSource ?? null, reportName: reportName ?? null, sizeBytes, uploadedAt })
 
 const decodeHeader = (value) => {
   try {
@@ -59,7 +60,7 @@ export function registerFileRoutes(app, { store = defaultStore } = {}) {
     guard(async (req, res) => {
       if (!Buffer.isBuffer(req.body) || req.body.length === 0) return res.status(400).json({ error: 'Send the file as the raw request body' })
       const buffer = req.body
-      const { error, value } = validateUpload({ fileName: decodeHeader(req.headers['x-file-name']), sizeBytes: buffer.length, reportDate: req.headers['x-report-date'], title: decodeHeader(req.headers['x-title']) || undefined })
+      const { error, value } = validateUpload({ fileName: decodeHeader(req.headers['x-file-name']), sizeBytes: buffer.length, reportDate: req.headers['x-report-date'], title: decodeHeader(req.headers['x-title']) || undefined, reportName: decodeHeader(req.headers['x-report-name']) })
       if (error) return res.status(400).json({ error })
       const extension = extensionOf(value.fileName)
       const sniffed = sniffContent(buffer, extension)
@@ -79,7 +80,9 @@ export function registerFileRoutes(app, { store = defaultStore } = {}) {
       }
       const sha256 = crypto.createHash('sha256').update(buffer).digest('hex')
       const existing = await store.findFileBySha256(sha256, value.reportDate)
-      const stored = existing ?? (await store.createFile({ ...value, sha256, ownerId: null }, buffer))
+      // The same file uploaded again (with a report name it did not have yet) keeps its copy and just learns the name.
+      const named = existing && value.reportName && !existing.reportName ? await store.updateFile(existing.id, { reportName: value.reportName }) : existing
+      const stored = named ?? (await store.createFile({ ...value, sha256, ownerId: null }, buffer))
       const library = await store.listFiles()
       const versions = versionInfo(library)
       const version = versions.get(stored.id) ?? { n: 1, of: 1, familyKey: null }
@@ -95,11 +98,15 @@ export function registerFileRoutes(app, { store = defaultStore } = {}) {
   }))
 
   app.patch('/files/:id', withFile(async (req, res, file) => {
-    const { title, reportDate } = req.body || {}
+    const { title, reportDate, reportName } = req.body || {}
     const fields = {}
     if (title !== undefined) {
       if (typeof title !== 'string' || !title.trim()) return res.status(400).json({ error: 'The title must not be empty' })
       fields.title = title.trim().slice(0, 200)
+    }
+    if (reportName !== undefined) {
+      if (reportName !== null && typeof reportName !== 'string') return res.status(400).json({ error: 'The report name must be text' })
+      fields.reportName = cleanReportName(reportName) || null
     }
     if (reportDate !== undefined) {
       if (reportDate === null || reportDate === '') Object.assign(fields, { reportDate: null, reportDateSource: null })

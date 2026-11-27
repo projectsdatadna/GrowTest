@@ -1,6 +1,6 @@
 /**
  * Production entry for the file chat: `growtestAssistantApi` = file upload / library (/files), the
- * chat (/chat) and the standard question bank (/question-bank). It is its own function, separate from
+ * chat (/chat), the standard question bank (/question-bank) and the saved option chains (/option-chain-history). It is its own function, separate from
  * growtestApi, because a chat turn can send several PDFs to the model and take longer than
  * growtestApi's 120 s / 256 MiB, and a mistake here must not take the dashboard API down.
  *
@@ -19,7 +19,7 @@ import { defineSecret } from 'firebase-functions/params'
 const SECRETS = ['AZURE_OPENAI_API_KEY', 'AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_DEPLOYMENT', 'AZURE_OPENAI_API_VERSION'].map((name) => defineSecret(name))
 
 export async function buildAssistantApp() {
-  const [{ registerFileRoutes }, { registerChatRoutes }, { registerQuestionBankRoutes }] = await Promise.all([import('./fileRoutes.js'), import('./chatRoutes.js'), import('./questionBankRoutes.js')])
+  const [{ registerFileRoutes }, { registerChatRoutes }, { registerQuestionBankRoutes }, { registerOptionChainHistoryRoutes }] = await Promise.all([import('./fileRoutes.js'), import('./chatRoutes.js'), import('./questionBankRoutes.js'), import('./optionChainHistoryRoutes.js')])
   const app = express()
   app.use(cors())
   app.use(express.json({ limit: '1mb' }))
@@ -27,6 +27,7 @@ export async function buildAssistantApp() {
   registerFileRoutes(app)
   registerChatRoutes(app)
   registerQuestionBankRoutes(app)
+  registerOptionChainHistoryRoutes(app)
   app.use((_req, res) => res.status(404).json({ error: 'Endpoint not found' }))
   return app
 }

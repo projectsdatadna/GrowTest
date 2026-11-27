@@ -22,8 +22,12 @@ export function safeFileName(fileName) {
   return base.slice(0, 120) || 'file'
 }
 
-/** { fileName, sizeBytes, reportDate?, title? } -> { error } | { value }. */
-export function validateUpload({ fileName, sizeBytes, reportDate, title } = {}, options) {
+export const MAX_REPORT_NAME = 120
+/** A report name trimmed to its limit, or '' when there is none. */
+export const cleanReportName = (value) => (typeof value === 'string' ? value.trim().slice(0, MAX_REPORT_NAME) : '')
+
+/** { fileName, sizeBytes, reportDate?, title?, reportName? } -> { error } | { value }. reportName = the NSE report the file is for (set from the Assistant's report popup). */
+export function validateUpload({ fileName, sizeBytes, reportDate, title, reportName } = {}, options) {
   if (typeof fileName !== 'string' || !fileName.trim()) return { error: 'The file name is missing' }
   const extension = extensionOf(fileName)
   const type = FILE_TYPES[extension]
@@ -57,6 +61,7 @@ export function validateUpload({ fileName, sizeBytes, reportDate, title } = {}, 
       title: (typeof title === 'string' && title.trim() ? title.trim() : safeName.replace(/\.[A-Za-z0-9]+$/, '')).slice(0, 200),
       reportDate: date,
       reportDateSource: dateSource,
+      ...(cleanReportName(reportName) ? { reportName: cleanReportName(reportName) } : {}),
     },
   }
 }

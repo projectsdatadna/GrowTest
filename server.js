@@ -54,6 +54,7 @@ import { registerCrossoverScannerRoutes } from './functions/crossoverScannerRout
 import { registerFileRoutes } from './functions/fileRoutes.js'
 import { registerChatRoutes } from './functions/chatRoutes.js'
 import { registerQuestionBankRoutes } from './functions/questionBankRoutes.js'
+import { registerOptionChainHistoryRoutes } from './functions/optionChainHistoryRoutes.js'
 
 dotenv.config()
 
@@ -1451,6 +1452,7 @@ registerCrossoverScannerRoutes(app, { getGrowwAccessToken })
 registerFileRoutes(app)
 registerChatRoutes(app)
 registerQuestionBankRoutes(app)
+registerOptionChainHistoryRoutes(app)
 
 /**
  * Error handlers

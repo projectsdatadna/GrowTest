@@ -9,7 +9,7 @@ import { useRef, useState } from 'react'
 import { uploadFile, updateFile, errorText, MAX_UPLOAD_BYTES, UPLOAD_EXTENSIONS } from '../../services/api'
 import Spinner from '../Spinner'
 import QuestionPicker from './QuestionPicker'
-import { insertQuestion } from './questionBank'
+import { insertQuestion, chipLabel } from './questionBank'
 
 const extensionOf = (name) => (/\.([A-Za-z0-9]+)$/.exec(name)?.[1] || '').toLowerCase()
 const SOURCE_TEXT = { filename: 'from the file name', upload: 'the day it was uploaded', user: 'set by you' }
@@ -103,10 +103,14 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
   const ready = chips.filter((c) => c.status === 'ready')
   const canSend = !busy && !uploading && text.trim().length > 0
 
-  // A question picked with "+": into the box (after anything already typed), never sent. Picking a question from
-  // another topic drops an earlier option chain choice, so a report question does not fetch a chain.
-  const pickQuestion = (question, context) => {
+  // A question picked with "+": into the box (after anything already typed), never sent. A report question brings its
+  // file along as a ready chip. Picking a question from another popup drops an earlier option chain choice, so a
+  // report question does not fetch a chain.
+  const pickQuestion = (question, context, files = []) => {
     setText((current) => insertQuestion(current, question))
+    for (const f of files) {
+      setChips((c) => (c.some((x) => x.id === f.id) ? c : [...c, { key: `stored-${f.id}`, id: f.id, title: f.title, reportDate: f.reportDate, sizeBytes: f.sizeBytes, status: 'ready', progress: 1 }]))
+    }
     setChatContext((c) => ({ optionChain: context.optionChain, wordLimit: context.wordLimit ?? c.wordLimit }))
     requestAnimationFrame(() => {
       const box = textareaRef.current
@@ -136,7 +140,7 @@ export default function ChatComposer({ chips, setChips, onSend, busy, addFilesRe
           {chatContext.optionChain && (
             <li className="rounded-full border border-outline-variant bg-surface-container-low pl-sm pr-xs py-[2px] text-[11px] text-on-surface flex items-center gap-xs">
               <span className="material-symbols-outlined text-[14px] text-on-surface-variant" aria-hidden="true">candlestick_chart</span>
-              Option chain: {chatContext.optionChain.symbol} · {chatContext.optionChain.expiryDate}
+              Option chain: {chipLabel(chatContext.optionChain)}
               <button type="button" onClick={() => setChatContext((c) => ({ ...c, optionChain: null }))} aria-label="Remove the option chain" className="text-on-surface-variant hover:text-on-surface px-xs">✕</button>
             </li>
           )}

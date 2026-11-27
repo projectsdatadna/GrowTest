@@ -70,7 +70,7 @@ export default function useFileChat() {
     async (question, restoreText) => {
       const ready = chips.filter((c) => c.status === 'ready')
       setMessages((m) => [...m, { role: 'user', content: question, files: ready.map((c) => c.title) }])
-      setWaitingFor(chatContext.optionChain ? 'Fetching the option chain…' : ready.length || conversationFiles.length ? 'Reading the files…' : 'Thinking…')
+      setWaitingFor(chatContext.optionChain ? (chatContext.optionChain.asOf ? 'Reading the saved option chain…' : 'Fetching the option chain…') : ready.length || conversationFiles.length ? 'Reading the files…' : 'Thinking…')
       setBusy(true)
       try {
         const result = await sendChat({ message: question, conversationId, fileIds: ready.map((c) => c.id), ...chatContext })
