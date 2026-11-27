@@ -113,14 +113,36 @@ function monotoneBarEnd(interval, start) {
   return start < dayStart + MARKET_OPEN_OFFSET ? dayStart + MARKET_OPEN_OFFSET : dayStart + MARKET_CLOSE_OFFSET
 }
 
+// Timeframes whose crossovers are DISPLAYED at the bar's START label (09:15 for
+// the 09:15-09:30 bar) instead of its close. The scanner can only evaluate a bar
+// once it closes (09:15 is processed at 09:30), but the time users see should be
+// the interval the crossover belongs to. 1h / 4h use Groww's odd alignment
+// (09:00, 08:00 starts), so they keep showing the close. Mirrored in
+// src/components/crossoverFormat.js.
+export const START_LABELLED_INTERVALS = ['15minute']
+
 /**
- * Converts a range on the time a crossover is DISPLAYED (its bar end, epoch
- * seconds) into the equivalent range on the stored bar START (`candleTimestamp`),
- * which is the field Firestore can filter on. Bar end never decreases as the
- * start increases, so each bound is found by binary search.
+ * The time a crossover is DISPLAYED, filtered and exported at (epoch seconds):
+ * the bar start for START_LABELLED_INTERVALS, the bar close otherwise.
+ */
+export function displayedTime(interval, start) {
+  if (START_LABELLED_INTERVALS.includes(interval)) return start
+  return candleEnd(interval, start) ?? start
+}
+
+/**
+ * Converts a range on the time a crossover is DISPLAYED (see displayedTime,
+ * epoch seconds) into the equivalent range on the stored bar START
+ * (`candleTimestamp`), which is the field Firestore can filter on. For
+ * START_LABELLED_INTERVALS the displayed time already is the start, so the range
+ * passes straight through. Otherwise bar end never decreases as the start
+ * increases, so each bound is found by binary search.
  * `fromEnd` / `toEnd` are optional; returns {gte, lte} (each possibly undefined).
  */
-export function candleStartRangeForEndRange(interval, fromEnd, toEnd) {
+export function candleStartRangeForDisplayRange(interval, fromEnd, toEnd) {
+  if (START_LABELLED_INTERVALS.includes(interval)) {
+    return { gte: fromEnd == null ? undefined : fromEnd, lte: toEnd == null ? undefined : toEnd }
+  }
   const SPAN = 14 * DAY // far beyond any bar's start->end distance (max ~5 days)
   const bound = (target, wantFirstAtLeast) => {
     // wantFirstAtLeast: smallest start with end >= target; else largest start with end <= target

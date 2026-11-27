@@ -14,11 +14,13 @@
  * 26 15:15") - taken from the scanner's per-timeframe summary (the latest crossover of
  * every indicator, whether or not it alerted); NO only if it never crossed. B = bias of
  * those latest crossovers, C = latest close, D = close at the newest crossover,
- * E = date and time of the symbol's newest crossover (bar end, IST).
+ * E = date and time of the symbol's newest crossover (IST). Times follow displayedTime():
+ * the bar START for 15-minute crossovers (09:15 for the 09:15-09:30 bar), the bar close for
+ * 1h / 4h / Daily / Weekly.
  */
 
 import ExcelJS from 'exceljs'
-import { TIMEFRAME_ORDER, candleEnd } from './crossoverTimeframes.js'
+import { TIMEFRAME_ORDER, candleEnd, displayedTime } from './crossoverTimeframes.js'
 import { listActiveScannerSymbols, listLatestGroupsForPairs } from './crossoverScannerFirestoreClient.js'
 
 const TIMEFRAME_HEADERS = { '15minute': '15 Mins ', '1hour': '1 Hour', '4hour': '4 Hour', '1day': 'Daily', '1week': 'Weekly' }
@@ -100,9 +102,12 @@ export function buildExportRows(symbols, fallback = new Map(), filters = {}) {
           const col = COLUMN_BY_LABEL.get(signal.label)
           if (col === undefined || (wantedColumns && !wantedColumns.has(col))) continue
           if (filters.direction && signal.direction !== filters.direction) continue
+          // `shown` is the displayed time (what the from/to range and the cell text
+          // use); `end` is the true bar close, used to rank "newest" across timeframes.
+          const shown = displayedTime(interval, signal.ts)
           const end = barEndOf(interval, signal.ts)
-          if ((fromSec != null && end < fromSec) || (toSec != null && end > toSec)) continue
-          if (!cells[col] || signal.ts > cells[col].signal.ts) cells[col] = { signal, end }
+          if ((fromSec != null && shown < fromSec) || (toSec != null && shown > toSec)) continue
+          if (!cells[col] || signal.ts > cells[col].signal.ts) cells[col] = { signal, end, shown }
         }
       }
       cells.forEach((cell, col) => cell && picked.push({ interval, col, ...cell }))
@@ -114,7 +119,7 @@ export function buildExportRows(symbols, fallback = new Map(), filters = {}) {
     const bullish = picked.filter((p) => p.signal.direction === 'bullish').length
     const bearish = picked.length - bullish
     const bias = picked.length === 0 ? '' : bullish > bearish ? 'Bullish' : bearish > bullish ? 'Bearish' : 'Mixed'
-    const values = [entry.symbol, bias, finiteOrBlank(lastClose ?? newest?.signal.close), finiteOrBlank(newest?.signal.close), newest ? formatIst(newest.end) : '', finiteOrBlank(entry.nrmlMargin)]
+    const values = [entry.symbol, bias, finiteOrBlank(lastClose ?? newest?.signal.close), finiteOrBlank(newest?.signal.close), newest ? formatIst(newest.shown) : '', finiteOrBlank(entry.nrmlMargin)]
     const colors = {}
     for (const { adx, cells } of blocks) {
       values.push(adx)
@@ -122,7 +127,7 @@ export function buildExportRows(symbols, fallback = new Map(), filters = {}) {
         const colIndex = values.length // 0-based, before push
         if (cell) {
           const bull = cell.signal.direction === 'bullish'
-          values.push(`${bull ? 'YES - Bullish' : 'YES - Bearish'} · ${formatIst(cell.end)}`)
+          values.push(`${bull ? 'YES - Bullish' : 'YES - Bearish'} · ${formatIst(cell.shown)}`)
           colors[colIndex] = bull ? GREEN : RED
         } else values.push('NO')
       }
@@ -195,7 +200,7 @@ export function renderWorkbook(rows, range = {}) {
   })
   const legend = 4 + rows.length + 1
   const rangeText = range.from || range.to ? `Only crossovers between ${range.from ? istDay(new Date(range.from)) : '...'} and ${range.to ? istDay(new Date(range.to)) : '...'}. ` : ''
-  sheet.getCell(legend, 1).value = `One row per symbol. Each indicator shows its own latest crossover with the date and time it happened (IST): YES - Bullish (green) / YES - Bearish (red); NO = it has not crossed in the loaded history. ${rangeText}Crossover Time = the symbol's newest crossover; NRML Margin = the value saved on the Scanner page; ADX Trend = ADX on the timeframe's latest bar.`
+  sheet.getCell(legend, 1).value = `One row per symbol. Each indicator shows its own latest crossover with the date and time it happened (IST; 15-min shows the bar start, other timeframes the bar close): YES - Bullish (green) / YES - Bearish (red); NO = it has not crossed in the loaded history. ${rangeText}Crossover Time = the symbol's newest crossover; NRML Margin = the value saved on the Scanner page; ADX Trend = ADX on the timeframe's latest bar.`
   sheet.getCell(legend, 1).font = { ...BASE_FONT, italic: true }
   return workbook
 }

@@ -90,3 +90,32 @@ test('NRML margin: its own column after Crossover Time, blank when not set', () 
   assert.equal(without.values[5], '')
   assert.equal(bad.values[5], '')
 })
+
+test('15-minute crossovers show the bar START; 1h keeps the bar close', () => {
+  const s = sym('S', {
+    '15minute': state([sig('RSI 14/14', 'bullish', '2026-11-10T09:15:00'), sig('MACD 12/26/9', 'bearish', '2026-11-10T15:15:00')]),
+    '1hour': state([sig('RSI 14/14', 'bullish', '2026-11-10T10:00:00')]),
+  })
+  const [r] = buildExportRows([s])
+  assert.equal(r.values[7], 'YES - Bullish · 10 Nov 26 09:15') // 15m RSI: start, not 09:30
+  assert.equal(r.values[9], 'YES - Bearish · 10 Nov 26 15:15') // 15m MACD: start, not 15:30
+  assert.equal(r.values[13], 'YES - Bullish · 10 Nov 26 11:00') // 1h RSI unchanged (bar close)
+})
+
+test('Crossover Time ranks by the true bar close but prints the displayed time', () => {
+  // 15m 15:15 bar closes 15:30 and the 1h 14:00 bar closes 15:00 -> the 15m bar is newest
+  const s = sym('R', {
+    '15minute': state([sig('RSI 14/14', 'bullish', '2026-11-10T15:15:00')]),
+    '1hour': state([sig('RSI 14/14', 'bullish', '2026-11-10T14:00:00')]),
+  })
+  const [r] = buildExportRows([s])
+  assert.equal(r.values[4], '10 Nov 26 15:15')
+})
+
+test('date range on 15-minute crossovers is applied to the bar START', () => {
+  const s = sym('F', { '15minute': state([sig('RSI 14/14', 'bullish', '2026-11-10T09:15:00')]) })
+  // from 09:30 excludes the 09:15 bar (it used to be included via its 09:30 close)
+  assert.equal(buildExportRows([s], new Map(), { from: '2026-11-10T09:30:00+05:30' }).length, 0)
+  assert.equal(buildExportRows([s], new Map(), { from: '2026-11-10T09:15:00+05:30' }).length, 1)
+  assert.equal(buildExportRows([s], new Map(), { to: '2026-11-10T09:15:00+05:30' }).length, 1)
+})

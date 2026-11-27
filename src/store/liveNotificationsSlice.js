@@ -1,6 +1,7 @@
 import { createSlice } from '@reduxjs/toolkit'
 import { markNotificationsReadLocally } from './historicalWatchlistSlice'
 import { mergeFeedItems } from '../components/liveRefresh'
+import { crossoverTimestamp } from '../components/crossoverFormat'
 
 // The single live notification feed shared by the bell and the
 // Notifications page (see useLiveNotifications). Server-owned and never
@@ -46,8 +47,8 @@ const liveNotificationsSlice = createSlice({
         const isSystem = n.type === 'scanner_warning'
         const section = isSystem ? 'system' : n.interval
         if (!wanted.has(section)) return true
-        // Mirrors the server: crossovers by bar time, System warnings by createdAt.
-        const inRange = isSystem ? n.createdAt >= from && n.createdAt <= to : n.candleTimestamp >= fromSec && n.candleTimestamp <= toSec
+        // Mirrors the server: crossovers by their displayed time (crossoverTimestamp), System warnings by createdAt.
+        const inRange = isSystem ? n.createdAt >= from && n.createdAt <= to : crossoverTimestamp(n) >= fromSec && crossoverTimestamp(n) <= toSec
         return !inRange
       })
     },

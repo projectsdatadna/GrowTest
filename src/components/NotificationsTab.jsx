@@ -767,7 +767,7 @@ function NotificationsTab({ onTabChange }) {
               {key !== SYSTEM_KEY && (
                 <div className="flex items-center gap-sm ml-auto">
                   <BiasBar bullish={bullish} bearish={bearish} />
-                  {lastCrossover != null && <span className="text-[10px] text-on-surface-variant">Last crossover {timeAgo(new Date(lastCrossover * 1000).toISOString())}</span>}
+                  {lastCrossover != null && <span className="text-[10px] text-on-surface-variant">Last crossover {timeAgo(new Date(crossoverTimestamp({ candleTimestamp: lastCrossover, interval: key }) * 1000).toISOString())}</span>}
                   <CountCard label="Bullish" value={bullish} unread={unreadBullish} tone="bullish" />
                   <CountCard label="Bearish" value={bearish} unread={unreadBearish} tone="bearish" />
                 </div>

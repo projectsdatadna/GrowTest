@@ -12,7 +12,7 @@
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
 import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, isDefaultGroupOrder, sortGroups } from './crossoverGroupSort.js'
-import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION, candleStartRangeForEndRange } from './crossoverTimeframes.js'
+import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION, candleStartRangeForDisplayRange } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
 const DATABASE_ID = 'groww-dashboard'
@@ -415,7 +415,7 @@ function groupQuery(section, isIndex, { type, unreadOnly, indicator, direction, 
   if (direction === 'bullish') query = query.where('hasBullish', '==', true)
   if (direction === 'bearish') query = query.where('hasBearish', '==', true)
   if (indicator?.length) query = query.where('indicatorLabels', 'array-contains-any', expandIndicatorLabels(indicator))
-  const { gte, lte } = candleStartRangeForEndRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
+  const { gte, lte } = candleStartRangeForDisplayRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
   if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
   if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
   return query.orderBy('candleTimestamp', 'desc').orderBy('sortOrder', 'asc')
@@ -584,9 +584,9 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
     if (from) query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(new Date(from)))
     if (to) query = query.where('createdAt', '<=', admin.firestore.Timestamp.fromDate(new Date(to)))
   } else {
-    // The user's range is on the DISPLAYED time (bar end); candleTimestamp is the
-    // bar start, so translate the range (see candleStartRangeForEndRange).
-    const { gte, lte } = candleStartRangeForEndRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
+    // The user's range is on the DISPLAYED time (see displayedTime); candleTimestamp is the
+    // bar start, so translate the range (see candleStartRangeForDisplayRange).
+    const { gte, lte } = candleStartRangeForDisplayRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
     if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
     if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
   }
@@ -721,7 +721,7 @@ function groupDeleteQueries(sections, from, to) {
   return sections
     .filter((section) => section !== SYSTEM_SECTION)
     .map((section) => {
-      const { gte, lte } = candleStartRangeForEndRange(section, Math.floor(Date.parse(from) / 1000), Math.floor(Date.parse(to) / 1000))
+      const { gte, lte } = candleStartRangeForDisplayRange(section, Math.floor(Date.parse(from) / 1000), Math.floor(Date.parse(to) / 1000))
       let query = db.collection(GROUPS_COLLECTION).where('interval', '==', section)
       if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
       if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)

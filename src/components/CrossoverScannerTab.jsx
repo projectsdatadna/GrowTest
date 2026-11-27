@@ -26,6 +26,7 @@ import {
   searchInstruments,
 } from '../services/api'
 import {
+  displayedBarTime,
   formatCandleTime,
   getNotificationPermission,
   requestNotificationPermission,
@@ -45,7 +46,7 @@ function errorMessage(error) {
 }
 
 // One symbol's state on one timeframe: last bar processed, error, or pending.
-function TimeframeStateCell({ state }) {
+function TimeframeStateCell({ state, interval }) {
   if (state?.lastError) {
     return (
       <span className="text-bearish" title={state.lastError.message}>
@@ -53,7 +54,7 @@ function TimeframeStateCell({ state }) {
       </span>
     )
   }
-  if (state?.lastBarEnd) return <span className="text-on-surface-variant">{formatCandleTime(state.lastBarEnd)}</span>
+  if (state?.lastBarEnd) return <span className="text-on-surface-variant">{formatCandleTime(displayedBarTime(interval, state.lastBarEnd))}</span>
   return <span className="text-on-surface-variant opacity-60">Pending</span>
 }
 
@@ -620,7 +621,7 @@ function CrossoverScannerTab({ onTabChange }) {
                     </td>
                     {visibleTimeframes.map((interval) => (
                       <td key={interval} className="py-xs pr-md text-xs whitespace-nowrap">
-                        <TimeframeStateCell state={s.scanState?.[interval]} />
+                        <TimeframeStateCell state={s.scanState?.[interval]} interval={interval} />
                       </td>
                     ))}
                     <td className="py-xs text-right">

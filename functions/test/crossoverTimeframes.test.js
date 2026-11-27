@@ -26,3 +26,21 @@ test('nothing is due at 09:15 - the first 15-min bar closes at 09:30', () => {
   assert.equal(latestExpectedBarEnd('15minute', ist('2026-11-11T09:15:00')), ist('2026-11-10T15:30:00'))
   assert.equal(latestExpectedBarEnd('15minute', ist('2026-11-11T09:30:00')), ist('2026-11-11T09:30:00'))
 })
+
+test('displayedTime: 15-minute shows the bar start, other timeframes the bar close', async () => {
+  const { displayedTime, candleEnd } = await import('../crossoverTimeframes.js')
+  const t = (d) => Date.parse(`${d}+05:30`) / 1000
+  assert.equal(displayedTime('15minute', t('2026-11-10T09:15:00')), t('2026-11-10T09:15:00'))
+  assert.equal(displayedTime('15minute', t('2026-11-10T15:15:00')), t('2026-11-10T15:15:00'))
+  assert.equal(displayedTime('1hour', t('2026-11-10T10:00:00')), t('2026-11-10T11:00:00'))
+  assert.equal(displayedTime('1day', t('2026-11-10T00:00:00')), candleEnd('1day', t('2026-11-10T00:00:00')))
+})
+
+test('candleStartRangeForDisplayRange: 15-minute passes straight through, 1hour is translated', async () => {
+  const { candleStartRangeForDisplayRange } = await import('../crossoverTimeframes.js')
+  const t = (d) => Date.parse(`${d}+05:30`) / 1000
+  assert.deepEqual(candleStartRangeForDisplayRange('15minute', t('2026-11-10T09:30:00'), undefined), { gte: t('2026-11-10T09:30:00'), lte: undefined })
+  assert.deepEqual(candleStartRangeForDisplayRange('15minute', null, t('2026-11-10T15:15:00')), { gte: undefined, lte: t('2026-11-10T15:15:00') })
+  // 1h: a range starting at 11:00 (close of the 10:00 bar) begins at that bar's start
+  assert.equal(candleStartRangeForDisplayRange('1hour', t('2026-11-10T11:00:00'), null).gte, t('2026-11-10T10:00:00'))
+})
