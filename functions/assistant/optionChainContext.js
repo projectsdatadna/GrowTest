@@ -160,7 +160,14 @@ export async function buildOptionChainContext({ symbol, expiryDate, asOf, compar
     }
     expiry = expiryDate
     current = { strikes: compactChain(chain.filtered_strikes, chain.underlying_ltp, DEFAULT_VIEW_STRIKES_EACH_SIDE), underlyingLtp: chain.underlying_ltp }
-    previous = lookback ? await earlier(tickOf(nowSeconds) - lookback, slackFor(lookback)) : await earlier(tickOf(nowSeconds), 4 * 3600)
+    if (lookback) {
+      // "N earlier" counts back from the newest stored snapshot (the current tick while the market is open, the close after
+      // hours or on a weekend), so it still finds something when the chain is fetched after 15:30.
+      const latest = await earlier(tickOf(nowSeconds), 4 * 86400)
+      previous = latest ? await earlier(latest.tick - lookback, slackFor(lookback)) : null
+    } else {
+      previous = await earlier(tickOf(nowSeconds), 4 * 3600)
+    }
   }
 
   const sameExpiry = previous && previous.expiry === expiry

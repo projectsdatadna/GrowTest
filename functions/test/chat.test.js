@@ -392,13 +392,23 @@ test('buildOptionChainContext: no saved snapshot at that time -> a clear 400; a 
   assert.doesNotMatch(text, /CHANGE SINCE/)
 })
 
-test('buildOptionChainContext: live with compareWith looks up the snapshot that far before the current tick', async () => {
-  const now = new Date('2026-11-27T05:00:00Z') // 10:30 IST
+test('buildOptionChainContext: live with compareWith counts back from the newest stored snapshot, so it works after hours', async () => {
+  const closeTick = istEpoch('2026-11-27', '15:30')
+  const now = new Date('2026-11-27T12:21:00Z') // 17:51 IST, market closed
   const nowTick = Math.floor(now.getTime() / 1000) - (Math.floor(now.getTime() / 1000) % 900)
   const calls = []
-  await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: '1h' }, { getToken: async () => 't', fetchChain: async () => chain, loadSnapshot: async (...a) => { calls.push(a); return null } }, now)
-  assert.deepEqual(calls, [['NIFTY', nowTick - 3600, 1800]])
+  const snap = (tick) => ({ tick, expiry: '2026-12-01', underlyingLtp: 24480, strikes: [{ strike: 24500, ce: { oi: 1000, ltp: 110 }, pe: { oi: 900, ltp: 100 } }] })
+  const loadSnapshot = async (symbol, limit, maxAge) => { calls.push([limit, maxAge]); return limit >= closeTick && limit < closeTick + 900 ? snap(closeTick) : limit === closeTick - 3600 ? snap(limit) : limit === nowTick ? snap(closeTick) : null }
+  const deps = { getToken: async () => 't', fetchChain: async () => chain, loadSnapshot }
+  const text = await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: '1h' }, deps, now)
+  assert.deepEqual(calls, [[nowTick, 4 * 86400], [closeTick - 3600, 1800]])
+  assert.match(text, /SNAPSHOT of 2026-11-27 14:30 IST/)
+  assert.match(text, /about 1 hour earlier/)
+  // Nothing stored at all: a single point in time, not an error.
+  const none = await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01', compareWith: '1h' }, { ...deps, loadSnapshot: async () => null }, now)
+  assert.match(none, /about 1 hour before is stored, so only this single point in time/)
+  // No compareWith: the latest stored snapshot, as before.
   calls.length = 0
-  await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01' }, { getToken: async () => 't', fetchChain: async () => chain, loadSnapshot: async (...a) => { calls.push(a); return null } }, now)
-  assert.deepEqual(calls, [['NIFTY', nowTick, 4 * 3600]], 'no compareWith: the latest stored snapshot, as before')
+  await buildOptionChainContext({ symbol: 'NIFTY', expiryDate: '2026-12-01' }, deps, now)
+  assert.deepEqual(calls, [[nowTick, 4 * 3600]])
 })
