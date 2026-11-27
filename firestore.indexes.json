@@ -2977,7 +2977,27 @@
           "order": "ASCENDING"
         }
       ]
+    },
+    {
+      "collectionGroup": "optionChainIntervalSnapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {
+          "fieldPath": "symbol",
+          "order": "ASCENDING"
+        },
+        {
+          "fieldPath": "tick",
+          "order": "DESCENDING"
+        }
+      ]
     }
   ],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "optionChainIntervalSnapshots",
+      "fieldPath": "strikes",
+      "indexes": []
+    }
+  ]
 }

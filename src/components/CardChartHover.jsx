@@ -19,8 +19,8 @@ const POPOVER_MAX_HEIGHT_RATIO = 0.8
 const MARGIN = 8
 
 // Popover position: to the right of the button, or the left when there is no room; clamped to the viewport.
-function placement(rect) {
-  const width = Math.min(POPOVER_WIDTH, window.innerWidth - 2 * MARGIN)
+function placement(rect, popoverWidth = POPOVER_WIDTH) {
+  const width = Math.min(popoverWidth, window.innerWidth - 2 * MARGIN)
   const roomRight = window.innerWidth - rect.right - MARGIN
   let left = roomRight >= width ? rect.right + MARGIN : rect.left - width - MARGIN
   left = Math.max(MARGIN, Math.min(left, window.innerWidth - width - MARGIN))
@@ -30,7 +30,11 @@ function placement(rect) {
   return { left, top, width, maxHeight }
 }
 
-export function useCardChartHover() {
+/**
+ * Defaults to the crossover chart; pass `render(group)` (plus `label`, `width`)
+ * to reuse the same hover behaviour for other card popovers, e.g. option chain.
+ */
+export function useCardChartHover({ render, label = 'chart', width = POPOVER_WIDTH } = {}) {
   const [active, setActive] = useState(null) // {group, rect}
   const popoverRef = useRef(null)
   const openTimer = useRef(null)
@@ -91,15 +95,19 @@ export function useCardChartHover() {
         <div
           ref={popoverRef}
           role="dialog"
-          aria-label={`${active.group.symbol} chart`}
+          aria-label={`${active.group.symbol} ${label}`}
           onMouseEnter={keepOpen}
           onMouseLeave={scheduleClose}
-          style={{ position: 'fixed', zIndex: 60, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin', ...placement(active.rect) }}
+          style={{ position: 'fixed', zIndex: 60, overflowY: 'auto', overscrollBehavior: 'contain', scrollbarWidth: 'thin', ...placement(active.rect, width) }}
           className="rounded-xl border border-outline-variant bg-surface-container shadow-2xl p-sm"
         >
-          <Suspense fallback={<div className="text-xs text-on-surface-variant py-md">Loading chart…</div>}>
-            <CrossoverCardChart key={active.group.id} group={active.group} />
-          </Suspense>
+          {render ? (
+            render(active.group)
+          ) : (
+            <Suspense fallback={<div className="text-xs text-on-surface-variant py-md">Loading chart…</div>}>
+              <CrossoverCardChart key={active.group.id} group={active.group} />
+            </Suspense>
+          )}
         </div>,
         document.body
       )
@@ -108,7 +116,7 @@ export function useCardChartHover() {
   return { onEnter, onLeave: scheduleClose, onToggle, popover, activeId: active?.group.id ?? null }
 }
 
-export function CardChartButton({ group, hover }) {
+export function CardChartButton({ group, hover, icon = 'show_chart', text = 'Chart', title = 'Hover to see this crossover on a chart', ariaLabel, compact = false }) {
   const open = hover.activeId === group.id
   return (
     <button
@@ -121,13 +129,13 @@ export function CardChartButton({ group, hover }) {
         e.stopPropagation() // do not mark the card read
         hover.onToggle(group, e.currentTarget)
       }}
-      title="Hover to see this crossover on a chart"
-      aria-label={`Show chart for ${group.symbol} ${group.interval}`}
+      title={title}
+      aria-label={ariaLabel || `Show chart for ${group.symbol} ${group.interval}`}
       aria-expanded={open}
-      className={`self-center flex items-center gap-xs px-sm py-xs rounded-lg border text-xs ${open ? 'border-primary text-primary' : 'border-outline-variant text-on-surface-variant'} hover:text-primary`}
+      className={`self-center ${compact ? 'w-full justify-start px-xs py-[2px] text-[11px]' : 'px-sm py-xs text-xs'} flex items-center gap-xs rounded-lg border ${open ? 'border-primary text-primary' : 'border-outline-variant text-on-surface-variant'} hover:text-primary`}
     >
-      <span className="material-symbols-outlined text-[18px]">show_chart</span>
-      Chart
+      <span className={`material-symbols-outlined ${compact ? 'text-[15px]' : 'text-[18px]'}`}>{icon}</span>
+      {text}
     </button>
   )
 }

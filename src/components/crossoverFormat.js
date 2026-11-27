@@ -42,10 +42,14 @@ export function formatCandleTime(timestampSeconds) {
   })
 }
 
-// When a crossover actually happened: the moment the bar that produced it
-// CLOSED, not the bar's start label (Groww labels a 4-hour bar "08:00" and a
-// 1-hour bar "11:00", which are start times) and not when the scanner stored
-// the alert. Mirrors candleEnd() in functions/crossoverTimeframes.js.
+// The time a crossover is SHOWN at. The scanner can only evaluate a bar once it
+// closes (the 09:15 bar is processed at 09:30), but 15-minute crossovers are
+// labelled with the bar's START (09:15) - the interval they belong to. The other
+// timeframes show the moment the bar CLOSED (Groww labels a 4-hour bar "08:00" and
+// a 1-hour bar "11:00", which are odd-aligned start times), never the time the
+// scanner stored the alert. Mirrors displayedTime() / candleEnd() in
+// functions/crossoverTimeframes.js.
+export const START_LABELLED_INTERVALS = ['15minute']
 const IST_OFFSET_SECONDS = 5.5 * 3600
 const DAY_SECONDS = 86400
 const MARKET_CLOSE_OFFSET = 15 * 3600 + 30 * 60 // 15:30 IST, seconds after IST midnight
@@ -54,6 +58,7 @@ const INTRADAY_SECONDS = { '15minute': 900, '1hour': 3600, '4hour': 14400 }
 export function crossoverTimestamp(n) {
   const start = n?.candleTimestamp
   if (!start) return 0
+  if (START_LABELLED_INTERVALS.includes(n.interval)) return start
   const daysSinceEpoch = Math.floor((start + IST_OFFSET_SECONDS) / DAY_SECONDS)
   const dayStart = daysSinceEpoch * DAY_SECONDS - IST_OFFSET_SECONDS
   const close = dayStart + MARKET_CLOSE_OFFSET
@@ -64,6 +69,13 @@ export function crossoverTimestamp(n) {
     return dayStart - ((weekday + 6) % 7) * DAY_SECONDS + 4 * DAY_SECONDS + MARKET_CLOSE_OFFSET
   }
   return start
+}
+
+// A bar's close time -> the time to show for it (start for START_LABELLED_INTERVALS).
+// For fields that only carry the bar end, e.g. the scanner's lastBarEnd.
+export function displayedBarTime(interval, barEnd) {
+  if (!barEnd) return 0
+  return START_LABELLED_INTERVALS.includes(interval) ? barEnd - INTRADAY_SECONDS[interval] : barEnd
 }
 
 // "05 Nov, 12:00 IST"

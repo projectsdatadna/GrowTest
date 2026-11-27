@@ -12,7 +12,7 @@
 import admin from 'firebase-admin'
 import { getFirestore } from 'firebase-admin/firestore'
 import { DEFAULT_GROUP_ORDER, DEFAULT_GROUP_SORT, isDefaultGroupOrder, sortGroups } from './crossoverGroupSort.js'
-import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION, candleStartRangeForEndRange } from './crossoverTimeframes.js'
+import { DEFAULT_ENABLED_INTERVALS, DEFAULT_POPUP_INTERVALS, DEFAULT_MIN_AGREEMENT, SETTINGS_VERSION, candleStartRangeForDisplayRange } from './crossoverTimeframes.js'
 
 const PROJECT_ID = 'dev-cogniglob'
 const DATABASE_ID = 'groww-dashboard'
@@ -202,6 +202,25 @@ export async function setScannerSymbolMargin(id, nrmlMargin) {
   if (!snapshot.exists) return false
   await ref.update({ nrmlMargin })
   return true
+}
+
+// A lot size the user typed on a Notifications card (positive integer), or null to clear it. Kept in its own
+// field (lotSizeOverride) so the lot size sheet import never overwrites it. Returns the updated symbol, or null
+// when the symbol does not exist.
+export async function setScannerSymbolLotSizeOverride(id, lotSize) {
+  const ref = db.collection(SYMBOLS_COLLECTION).doc(id)
+  const snapshot = await ref.get()
+  if (!snapshot.exists) return null
+  await ref.update({ lotSizeOverride: lotSize === null ? admin.firestore.FieldValue.delete() : lotSize })
+  return serializeSymbolDoc(await ref.get())
+}
+
+// Lot size / sheet price / margin from the uploaded symbol sheet (see
+// symbolSheetImport.js). Only the given fields are written; never clears.
+export async function setScannerSymbolSheetData(id, fields) {
+  const allowed = {}
+  for (const key of ['nrmlMargin', 'lotSize', 'sheetPrice', 'sheetUpdatedAt']) if (fields[key] !== undefined) allowed[key] = fields[key]
+  await db.collection(SYMBOLS_COLLECTION).doc(id).update(allowed)
 }
 
 // Soft delete, same as the Historical Watchlist - keeps the doc but excludes
@@ -396,7 +415,7 @@ function groupQuery(section, isIndex, { type, unreadOnly, indicator, direction, 
   if (direction === 'bullish') query = query.where('hasBullish', '==', true)
   if (direction === 'bearish') query = query.where('hasBearish', '==', true)
   if (indicator?.length) query = query.where('indicatorLabels', 'array-contains-any', expandIndicatorLabels(indicator))
-  const { gte, lte } = candleStartRangeForEndRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
+  const { gte, lte } = candleStartRangeForDisplayRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
   if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
   if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
   return query.orderBy('candleTimestamp', 'desc').orderBy('sortOrder', 'asc')
@@ -417,9 +436,11 @@ export const SORT_CAP = 2000
  * exact and nothing repeats across pages. Default order is newest bar first;
  * other `sort`/`order` values are applied in memory (see crossoverGroupSort.js).
  */
-export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25, group = null, sort = DEFAULT_GROUP_SORT, order = DEFAULT_GROUP_ORDER } = {}) {
+export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1, pageSize = 25, group = null, sort = DEFAULT_GROUP_SORT, order = DEFAULT_GROUP_ORDER, margins = null } = {}) {
   if (!DEFAULT_ENABLED_INTERVALS.includes(section)) return { items: [], total: 0, indexTotal: 0, capped: false }
   // group: 'index' | 'stock' = just that slice; anything else = both (indices first).
+  // group 'all' = both slices merged by bar time (newest first), indices before stocks within a bar.
+  const byBar = group === 'all'
   const flags = group === 'index' ? [true] : group === 'stock' ? [false] : [true, false]
   const queries = flags.map((isIndex) => groupQuery(section, isIndex, filters))
   if (queries.some((q) => !q)) return { items: [], total: 0, indexTotal: 0, capped: false }
@@ -429,6 +450,12 @@ export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1
   const indexTotal = flags[0] === true ? counts[0] : 0
   const start = (page - 1) * pageSize
   const end = start + pageSize
+
+  if (byBar) {
+    const snapshots = await Promise.all(queries.map((query) => query.limit(SORT_CAP).get()))
+    const sorted = sortGroups(snapshots.flatMap((snap) => snap.docs.map(serializeGroupDoc)), 'timeindex', order)
+    return { items: sorted.slice(start, end), total, indexTotal, capped: counts.some((n) => n > SORT_CAP) }
+  }
 
   if (isDefaultGroupOrder(sort, order)) {
     // Newest bar first, then list order - served by Firestore. The page is an
@@ -449,7 +476,12 @@ export async function queryCrossoverGroupsPage(section, filters = {}, { page = 1
   // Any other order: read the newest SORT_CAP groups of each slice, sort in
   // memory, then cut the page out of [sorted slice 1..., sorted slice 2...].
   const snapshots = await Promise.all(queries.map((query) => query.limit(SORT_CAP).get()))
-  const sorted = snapshots.flatMap((snap) => sortGroups(snap.docs.map(serializeGroupDoc), sort, order))
+  // NRML margin lives on the scanner symbols, so the caller passes a lookup for that sort.
+  const withMargin = (doc) => {
+    const item = serializeGroupDoc(doc)
+    return sort === 'nrml' && margins ? { ...item, nrmlMargin: margins.get(`${item.exchange}_${item.symbol}`) ?? null } : item
+  }
+  const sorted = snapshots.flatMap((snap) => sortGroups(snap.docs.map(withMargin), sort, order))
   return { items: sorted.slice(start, end), total, indexTotal, capped: counts.some((n) => n > SORT_CAP) }
 }
 
@@ -552,9 +584,9 @@ function sectionQuery(section, { type, unreadOnly, indicator, direction, symbol,
     if (from) query = query.where('createdAt', '>=', admin.firestore.Timestamp.fromDate(new Date(from)))
     if (to) query = query.where('createdAt', '<=', admin.firestore.Timestamp.fromDate(new Date(to)))
   } else {
-    // The user's range is on the DISPLAYED time (bar end); candleTimestamp is the
-    // bar start, so translate the range (see candleStartRangeForEndRange).
-    const { gte, lte } = candleStartRangeForEndRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
+    // The user's range is on the DISPLAYED time (see displayedTime); candleTimestamp is the
+    // bar start, so translate the range (see candleStartRangeForDisplayRange).
+    const { gte, lte } = candleStartRangeForDisplayRange(section, from ? Math.floor(Date.parse(from) / 1000) : null, to ? Math.floor(Date.parse(to) / 1000) : null)
     if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
     if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)
   }
@@ -689,7 +721,7 @@ function groupDeleteQueries(sections, from, to) {
   return sections
     .filter((section) => section !== SYSTEM_SECTION)
     .map((section) => {
-      const { gte, lte } = candleStartRangeForEndRange(section, Math.floor(Date.parse(from) / 1000), Math.floor(Date.parse(to) / 1000))
+      const { gte, lte } = candleStartRangeForDisplayRange(section, Math.floor(Date.parse(from) / 1000), Math.floor(Date.parse(to) / 1000))
       let query = db.collection(GROUPS_COLLECTION).where('interval', '==', section)
       if (gte !== undefined) query = query.where('candleTimestamp', '>=', gte)
       if (lte !== undefined) query = query.where('candleTimestamp', '<=', lte)

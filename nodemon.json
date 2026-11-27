@@ -1,5 +1,5 @@
 {
-  "watch": ["server.js", ".env"],
+  "watch": ["server.js", "functions", ".env"],
   "ext": "js,json",
   "ignore": ["src/*", "dist/*", "node_modules/*"],
   "delay": 500

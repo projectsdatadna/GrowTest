@@ -39,7 +39,11 @@ import { TIMEFRAME_ORDER, timeframeLabel, crossoverTimestamp, formatCrossoverTim
 import Spinner from './Spinner'
 import CrossoverGroupCard from './CrossoverGroupCard'
 import { useCardChartHover } from './CardChartHover'
+import { useOptionChainHover } from './OptionChainHover'
+import { useDayChangeQuotes, quoteKey } from './useDayChangeQuotes'
+import { sameItems } from './liveRefresh'
 import RunScanButton from './RunScanButton'
+import StopTargetControls, { useStopTargetAmounts, missingLotSizeText } from './StopTargetControls'
 
 // Crossover indicators, matching the labels the scanner stores in
 // `indicatorLabel` (functions/crossoverScanner.js CROSSOVER_SPECS).
@@ -58,6 +62,12 @@ const TYPE_FILTERS = [
 const SYSTEM_KEY = 'system'
 const SECTION_ORDER = [...TIMEFRAME_ORDER, SYSTEM_KEY]
 const PAGE_SIZE = 25
+// Live updates (a scan creates hundreds of crossovers within 1-3 minutes) are
+// coalesced into one counts + page-1 refresh: after the feed has been quiet for
+// DEBOUNCE, but never later than MAX_WAIT after the first change.
+// The feed polls every 5 s, so the debounce must be longer than that to coalesce.
+const LIVE_REFRESH_DEBOUNCE_MS = 8000
+const LIVE_REFRESH_MAX_WAIT_MS = 20000
 const SYMBOL_DEBOUNCE_MS = 300
 
 function sectionLabel(key) {
@@ -122,12 +132,14 @@ const GROUP_SLICES = [
   { group: 'index', label: 'Indices' },
   { group: 'stock', label: 'Stocks' },
 ]
-const viewKeysOf = (section, typeFilter) => (isGroupedSection(section, typeFilter) ? GROUP_SLICES.map((s) => `${section}:${s.group}`) : [section])
+const viewKeysOf = (section, typeFilter) =>
+  isGroupedSection(section, typeFilter) ? GROUP_SLICES.map((s) => `${section}:${s.group}`) : [section]
 
 const SORT_OPTIONS = [
   { key: 'time', label: 'Time' },
   { key: 'alpha', label: 'Alphabetic' },
   { key: 'price', label: 'Stock value' },
+  { key: 'nrml', label: 'NRML margin' },
 ]
 
 function downloadBlob(blob, filename) {
@@ -161,13 +173,13 @@ function IndicatorMultiSelect({ selected, onChange, className }) {
   const toggle = (label) => onChange(selected.includes(label) ? selected.filter((l) => l !== label) : [...selected, label])
   const text = selected.length === 0 ? 'All indicators' : selected.length === 1 ? selected[0] : `${selected.length} indicators`
   return (
-    <div className="relative" ref={ref}>
-      <button type="button" onClick={() => setOpen((o) => !o)} className={`${className} flex items-center gap-xs`} aria-haspopup="listbox" aria-expanded={open} aria-label="Crossover indicators">
-        {text}
-        <span className="material-symbols-outlined text-[16px]">expand_more</span>
+    <div className="relative w-full" ref={ref}>
+      <button type="button" onClick={() => setOpen((o) => !o)} className={`${className} flex items-center justify-between gap-xs text-left`} aria-haspopup="listbox" aria-expanded={open} aria-label="Crossover indicators">
+        <span className="truncate">{text}</span>
+        <span className="material-symbols-outlined text-[16px] shrink-0">expand_more</span>
       </button>
       {open && (
-        <div className="absolute z-50 mt-xs min-w-[220px] glass-panel bg-surface rounded-lg border border-outline-variant p-sm flex flex-col gap-xs shadow-lg">
+        <div className="absolute left-0 z-50 mt-xs min-w-full w-max max-w-[min(280px,90vw)] glass-panel bg-surface rounded-lg border border-outline-variant p-sm flex flex-col gap-xs shadow-lg">
           {INDICATOR_FILTERS.map((label) => (
             <label key={label} className="flex items-center gap-xs text-sm text-on-surface cursor-pointer">
               <input type="checkbox" checked={selected.includes(label)} onChange={() => toggle(label)} />
@@ -181,6 +193,29 @@ function IndicatorMultiSelect({ selected, onChange, className }) {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// A control with its label above it - every filter has one, so the panel reads as a form.
+function Field({ label, children, action = null, className = '' }) {
+  return (
+    <div className={`flex flex-col gap-[3px] min-w-0 ${className}`}>
+      <div className="flex items-center justify-between gap-xs min-h-[16px]">
+        <span className="text-[11px] uppercase tracking-wide text-on-surface-variant">{label}</span>
+        {action}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// One row of the filter panel: a small section name on the left (above the controls on narrow screens), the controls to its right.
+function FilterRow({ title, children, className = '' }) {
+  return (
+    <div className={`flex flex-col lg:flex-row lg:items-start gap-xs lg:gap-md ${className}`}>
+      <div className="lg:w-[88px] lg:shrink-0 lg:pt-[22px] text-[11px] font-semibold uppercase tracking-wide text-primary">{title}</div>
+      <div className="flex-1 min-w-0">{children}</div>
     </div>
   )
 }
@@ -317,18 +352,30 @@ function NotificationsTab({ onTabChange }) {
   const [adxStatus, setAdxStatus] = useState('any') // any | increase | decrease | flat
   const [fromDate, setFromDate] = useState('') // yyyy-mm-dd (local), '' = no bound
   const [toDate, setToDate] = useState('')
-  const [sortBy, setSortBy] = useState('time') // time | alpha | price
+  const [sortBy, setSortBy] = useState('time') // time | alpha | price | nrml
   const [sortOrder, setSortOrder] = useState('desc') // asc | desc
   const [showDelete, setShowDelete] = useState(false)
   const [notice, setNotice] = useState('')
   const [exporting, setExporting] = useState(false)
+  const stopTarget = useStopTargetAmounts()
+  // Lot sizes typed on a card this session, by symbol: every card of that symbol shows the new value at once.
+  const [lotSizeEdits, setLotSizeEdits] = useState({})
+  const handleLotSizeSaved = useCallback((symbol, result) => setLotSizeEdits((c) => ({ ...c, [symbol]: { lotSize: result.lotSize, lotSizeSource: result.lotSizeSource } })), [])
   const chartHover = useCardChartHover()
+  const optionChainHover = useOptionChainHover()
   // Sections start collapsed; only the ones the user opens are tracked.
   const [expanded, setExpanded] = useState(() => new Set())
+  const [sliceTab, setSliceTab] = useState({}) // section -> 'index' | 'stock' (default index)
   const [pages, setPages] = useState({}) // section -> current page (default 1)
   const [counts, setCounts] = useState(null) // section -> {total, unread}
   const [sectionData, setSectionData] = useState({}) // section -> {key, items, total, loading, error}
   const [error, setError] = useState('')
+  // Cards of the open sections: their symbols get a live Daily Change from the quote API.
+  const visibleGroups = useMemo(
+    () => Object.entries(sectionData).filter(([viewKey, data]) => data.grouped && expanded.has(viewKey.split(':')[0])).flatMap(([, data]) => data.items || []),
+    [sectionData, expanded]
+  )
+  const dayQuotes = useDayChangeQuotes(visibleGroups)
 
   useEffect(() => {
     const id = setTimeout(() => setSymbol(symbolInput.trim().toUpperCase()), SYMBOL_DEBOUNCE_MS)
@@ -379,26 +426,48 @@ function NotificationsTab({ onTabChange }) {
 
   // `viewKey` = a section ("system", or a timeframe when the type filter shows
   // plain notifications) or "<timeframe>:<index|stock>" for one slice of cards.
-  const loadSection = useCallback(async (viewKey, page) => {
+  // `silent` = a live refresh of a slice that already shows cards: no spinner or
+  // dimming, cards are swapped in place, and nothing re-renders if they are identical.
+  const inFlightRef = useRef(new Map()) // viewKey -> request key currently loading
+  const loadSection = useCallback(async (viewKey, page, { silent = false } = {}) => {
     const [section, group] = viewKey.split(':')
     const { sortBy: sort, sortOrder: order } = sortRef.current
     const key = `${JSON.stringify(filtersRef.current)}|${sort}:${order}|${page}`
-    setSectionData((current) => ({ ...current, [viewKey]: { ...current[viewKey], key, loading: true, error: '' } }))
+    if (silent && inFlightRef.current.get(viewKey) === key) return
+    inFlightRef.current.set(viewKey, key)
+    setSectionData((current) => {
+      const existing = current[viewKey]
+      if (silent && existing?.items?.length > 0 && existing.key === key) return current
+      return { ...current, [viewKey]: { ...existing, key, loading: true, error: '' } }
+    })
     try {
       const grouped = isGroupedSection(section, typeFilterRef.current)
       const data = grouped ? await getNotificationGroups(section, { ...filtersRef.current, group, sort, order }, page, PAGE_SIZE) : await getNotificationsPage(section, filtersRef.current, page, PAGE_SIZE)
       const items = grouped ? data.groups : data.notifications
-      setSectionData((current) => (current[viewKey]?.key === key ? { ...current, [viewKey]: { key, grouped, items, total: data.total, capped: Boolean(data.capped), loading: false, error: '' } } : current))
+      setSectionData((current) => {
+        const existing = current[viewKey]
+        if (existing?.key !== key) return current
+        const capped = Boolean(data.capped)
+        if (silent && !existing.loading && !existing.error && existing.total === data.total && existing.capped === capped && sameItems(existing.items, items)) return current
+        return { ...current, [viewKey]: { key, grouped, items, total: data.total, capped, loading: false, error: '' } }
+      })
     } catch (err) {
-      setSectionData((current) => (current[viewKey]?.key === key ? { ...current, [viewKey]: { ...current[viewKey], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } } : current))
+      setSectionData((current) => {
+        if (current[viewKey]?.key !== key) return current
+        // A failed background refresh keeps the cards on screen and stays quiet.
+        if (silent && current[viewKey]?.items?.length > 0) return current
+        return { ...current, [viewKey]: { ...current[viewKey], loading: false, error: err?.response?.data?.error || err?.message || 'Failed to load' } }
+      })
+    } finally {
+      if (inFlightRef.current.get(viewKey) === key) inFlightRef.current.delete(viewKey)
     }
   }, [])
 
-  // Counts: on mount, when filters change, and whenever the live feed or the
-  // unread badge moves (new crossover arrived / something marked read).
+  // Counts: on mount and whenever the filters change (immediate). Live changes
+  // (new crossover / unread badge) go through the coalesced refresh below.
   useEffect(() => {
     loadCounts()
-  }, [filtersKey, liveCursor, unreadBadge, loadCounts])
+  }, [filtersKey, loadCounts])
 
   // Open sections load their current page when opened / paged / re-filtered.
   useEffect(() => {
@@ -408,20 +477,38 @@ function NotificationsTab({ onTabChange }) {
         if (sectionData[viewKey]?.key !== `${filtersKey}|${sortKey}|${page}`) loadSection(viewKey, page)
       }
     }
-  }, [expanded, pages, filtersKey, sortKey, typeFilter, sectionData, loadSection])
+  }, [expanded, pages, filtersKey, sortKey, sortBy, typeFilter, sectionData, loadSection])
 
-  // Live: a new notification refreshes the open sections that show page 1 (later
-  // pages are left alone so the page does not shift under the reader).
-  const lastCursorRef = useRef(liveCursor)
+  // Live: new notifications move the feed cursor and the unread badge. Both feed
+  // ONE debounced refresh (counts + page 1 of the open sections, silently) instead
+  // of reloading the whole tab on every 5 s poll during a scan burst. Sections on
+  // page 2+ are left alone so the page does not shift under the reader.
+  const expandedRef = useRef(expanded)
+  expandedRef.current = expanded
+  const pagesRef = useRef(pages)
+  pagesRef.current = pages
+  const liveRefresh = useRef({ timer: null, firstAt: 0 })
+  const lastLiveSignal = useRef({ liveCursor, unreadBadge })
   useEffect(() => {
-    if (lastCursorRef.current === liveCursor) return
-    lastCursorRef.current = liveCursor
-    for (const section of expanded) {
-      for (const viewKey of viewKeysOf(section, typeFilterRef.current)) {
-        if ((pages[viewKey] || 1) === 1) loadSection(viewKey, 1)
+    const last = lastLiveSignal.current
+    if (last.liveCursor === liveCursor && last.unreadBadge === unreadBadge) return
+    lastLiveSignal.current = { liveCursor, unreadBadge }
+    const state = liveRefresh.current
+    const now = Date.now()
+    if (!state.firstAt) state.firstAt = now
+    clearTimeout(state.timer)
+    const wait = Math.max(0, Math.min(LIVE_REFRESH_DEBOUNCE_MS, state.firstAt + LIVE_REFRESH_MAX_WAIT_MS - now))
+    state.timer = setTimeout(() => {
+      liveRefresh.current = { timer: null, firstAt: 0 }
+      loadCounts()
+      for (const section of expandedRef.current) {
+        for (const viewKey of viewKeysOf(section, typeFilterRef.current)) {
+          if ((pagesRef.current[viewKey] || 1) === 1) loadSection(viewKey, 1, { silent: true })
+        }
       }
-    }
-  }, [liveCursor, expanded, pages, loadSection])
+    }, wait)
+  }, [liveCursor, unreadBadge, loadCounts, loadSection])
+  useEffect(() => () => clearTimeout(liveRefresh.current.timer), [])
 
   // ids = notification ids, groupIds = merged-card ids (a card's notifications
   // are marked read with it, so the bell count stays right).
@@ -451,6 +538,12 @@ function NotificationsTab({ onTabChange }) {
   const handleRunDone = ({ ok, message }) => {
     setNotice(ok ? `Scan finished: ${message}` : `Scan failed: ${message}`)
     if (ok) refreshAll()
+  }
+
+  const handleSheetImported = ({ updated, scannerWithoutLotSize }) => {
+    setNotice(`Lot size sheet imported: ${updated} symbol${updated === 1 ? '' : 's'} updated. ${missingLotSizeText(scannerWithoutLotSize)}`.trim())
+    setLotSizeEdits({}) // the server's values are current again
+    refreshAll()
   }
 
   const handleExport = async () => {
@@ -509,11 +602,12 @@ function NotificationsTab({ onTabChange }) {
   const grandTotal = counts ? Object.values(counts).reduce((sum, c) => sum + c.total, 0) : 0
   const visibleSections = SECTION_ORDER.filter((key) => (counts?.[key]?.total || 0) > 0)
 
-  const selectClass = 'bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md py-xs text-on-surface'
+  const fieldClass = 'w-full h-9 bg-surface-container-low border border-terminal-border rounded-lg text-sm px-md text-on-surface'
 
   return (
     <div className="flex flex-col gap-lg">
       {chartHover.popover}
+      {optionChainHover.popover}
       <div className="flex items-center justify-between gap-md flex-wrap">
         <div>
           <h2 className="text-lg font-semibold text-on-surface">Notifications</h2>
@@ -521,100 +615,127 @@ function NotificationsTab({ onTabChange }) {
             {counts ? `${unreadTotal} unread of ${grandTotal} matching` : 'Loading…'} · live · grouped by timeframe · {PAGE_SIZE} per page
           </p>
         </div>
-        <div className="flex items-center gap-md flex-wrap">
-          <RunScanButton onDone={handleRunDone} />
+        <div className="flex items-center justify-end gap-sm flex-wrap ml-auto">
+          <RunScanButton onDone={handleRunDone} className="h-9 !py-0" />
           <button
             type="button"
             onClick={handleExport}
             disabled={exporting}
             title={`Export each symbol's latest crossover per timeframe, one row per symbol (current filters${fromDate || toDate ? ', latest within the chosen date range' : ', all dates'})`}
-            className="px-md py-sm rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
+            className="h-9 px-md rounded-lg border border-outline-variant text-sm text-on-surface flex items-center gap-xs disabled:opacity-60"
           >
             {exporting ? <Spinner /> : <span className="material-symbols-outlined text-[18px]">download</span>}
             Export to Excel
           </button>
           {onTabChange && (
-            <button type="button" onClick={() => onTabChange('crossover-scanner')} className="text-sm text-primary hover:underline">
+            <button type="button" onClick={() => onTabChange('crossover-scanner')} className="h-9 px-sm text-sm text-primary hover:underline">
               Scanner settings →
             </button>
           )}
-          <button type="button" onClick={() => setShowDelete(true)} className="px-md py-sm rounded-lg border border-outline-variant text-sm text-bearish">
+          <button type="button" onClick={() => setShowDelete(true)} className="h-9 px-md rounded-lg border border-outline-variant text-sm text-bearish">
             Delete notifications…
           </button>
           <button
             type="button"
             onClick={markAllRead}
             disabled={unreadBadge === 0 && unreadTotal === 0}
-            className="px-md py-sm rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50"
+            className="h-9 px-md rounded-lg bg-primary-container text-on-primary-container text-sm font-medium disabled:opacity-50"
           >
             Mark all read
           </button>
         </div>
       </div>
 
-      <div className="flex items-center gap-sm flex-wrap">
-        {TYPE_FILTERS.map((f) => (
-          <button
-            key={f.key}
-            type="button"
-            onClick={() => setTypeFilter(f.key)}
-            className={`px-md py-xs rounded-full text-xs border ${
-              typeFilter === f.key ? 'bg-primary-container text-on-primary-container border-transparent' : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
-            }`}
-          >
-            {f.label}
-          </button>
-        ))}
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md">
-          <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
-          Unread only
-        </label>
-        <input type="text" value={symbolInput} onChange={(e) => setSymbolInput(e.target.value)} placeholder="Symbol (exact, e.g. ABB)…" className={selectClass} aria-label="Filter by symbol" />
-        <IndicatorMultiSelect selected={indicators} onChange={setIndicators} className={selectClass} />
-        <select value={direction} onChange={(e) => setDirection(e.target.value)} className={selectClass} aria-label="Crossover direction">
-          <option value="any">Any direction</option>
-          <option value="bullish">Bullish</option>
-          <option value="bearish">Bearish</option>
-        </select>
-        <select value={adxStatus} onChange={(e) => setAdxStatus(e.target.value)} className={selectClass} aria-label="ADX status" title="ADX(14) at the crossover bar vs the bar before">
-          <option value="any">Any ADX status</option>
-          <option value="increase">ADX increased</option>
-          <option value="decrease">ADX decreased</option>
-          <option value="flat">ADX flat</option>
-        </select>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
-          From
-          <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={selectClass} aria-label="From date" />
-        </label>
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant" title="Filters by crossover time">
-          To
-          <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={selectClass} aria-label="To date" />
-        </label>
-        {(fromDate || toDate) && (
-          <button type="button" onClick={() => { setFromDate(''); setToDate('') }} className="text-xs text-primary hover:underline">
-            Clear dates
-          </button>
-        )}
-        <label className="flex items-center gap-xs text-xs text-on-surface-variant ml-md" title="Order of the cards inside every timeframe (Indices and Stocks each)">
-          Sort by
-          <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={selectClass} aria-label="Sort cards by">
-            {SORT_OPTIONS.map((o) => (
-              <option key={o.key} value={o.key}>
-                {o.label}
-              </option>
+      <div className="rounded-xl border border-outline-variant bg-surface-container-low/40 p-md flex flex-col gap-md" role="search" aria-label="Notification filters">
+        <FilterRow title="Show">
+          <div className="flex items-center gap-sm flex-wrap">
+            {TYPE_FILTERS.map((f) => (
+              <button
+                key={f.key}
+                type="button"
+                onClick={() => setTypeFilter(f.key)}
+                className={`h-8 px-md rounded-full text-xs border ${
+                  typeFilter === f.key ? 'bg-primary-container text-on-primary-container border-transparent' : 'border-outline-variant text-on-surface-variant hover:text-on-surface'
+                }`}
+              >
+                {f.label}
+              </button>
             ))}
-          </select>
-        </label>
-        <button
-          type="button"
-          onClick={() => setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
-          className="px-md py-xs rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs"
-          title={sortOrder === 'asc' ? 'Ascending - click for descending' : 'Descending - click for ascending'}
-          aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
-        >
-          <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
-          {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : sortBy === 'price' ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : sortBy === 'price' ? 'High-Low' : 'Newest'}
-        </button>
+            <div className="ml-auto flex items-center gap-md">
+              {Object.values(sectionData).some((d) => d?.loading) && <Spinner className="text-primary" />}
+              <label className="flex items-center gap-xs text-xs text-on-surface-variant cursor-pointer">
+                <input type="checkbox" checked={unreadOnly} onChange={(e) => setUnreadOnly(e.target.checked)} />
+                Unread only
+              </label>
+            </div>
+          </div>
+        </FilterRow>
+
+        <FilterRow title="Filter" className="border-t border-outline-variant pt-md">
+          <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-sm">
+            <Field label="Symbol">
+              <input type="text" value={symbolInput} onChange={(e) => setSymbolInput(e.target.value)} placeholder="Exact, e.g. ABB" className={fieldClass} aria-label="Filter by symbol" />
+            </Field>
+            <Field label="Indicators">
+              <IndicatorMultiSelect selected={indicators} onChange={setIndicators} className={fieldClass} />
+            </Field>
+            <Field label="Direction">
+              <select value={direction} onChange={(e) => setDirection(e.target.value)} className={fieldClass} aria-label="Crossover direction">
+                <option value="any">Any direction</option>
+                <option value="bullish">Bullish</option>
+                <option value="bearish">Bearish</option>
+              </select>
+            </Field>
+            <Field label="ADX status">
+              <select value={adxStatus} onChange={(e) => setAdxStatus(e.target.value)} className={fieldClass} aria-label="ADX status" title="ADX(14) at the crossover bar vs the bar before">
+                <option value="any">Any ADX status</option>
+                <option value="increase">ADX increased</option>
+                <option value="decrease">ADX decreased</option>
+                <option value="flat">ADX flat</option>
+              </select>
+            </Field>
+            <Field
+              label="From"
+              action={(fromDate || toDate) && (
+                <button type="button" onClick={() => { setFromDate(''); setToDate('') }} className="text-[11px] text-primary hover:underline normal-case">
+                  Clear dates
+                </button>
+              )}
+            >
+              <input type="date" value={fromDate} max={toDate || undefined} onChange={(e) => setFromDate(e.target.value)} className={fieldClass} aria-label="From date" title="Filters by crossover time" />
+            </Field>
+            <Field label="To">
+              <input type="date" value={toDate} min={fromDate || undefined} onChange={(e) => setToDate(e.target.value)} className={fieldClass} aria-label="To date" title="Filters by crossover time" />
+            </Field>
+          </div>
+        </FilterRow>
+
+        <FilterRow title="SL / Target" className="border-t border-outline-variant pt-md">
+          <div className="flex flex-wrap items-start justify-between gap-x-xl gap-y-md">
+            <StopTargetControls amounts={stopTarget} inputClass={fieldClass} onImported={handleSheetImported} />
+            <Field label="Sort by" className="w-full sm:w-auto" >
+              <div className="flex items-center gap-sm" title="Order of the cards inside every timeframe (Indices and Stocks each)">
+                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)} className={`${fieldClass} !w-40`} aria-label="Sort cards by">
+                  {SORT_OPTIONS.map((o) => (
+                    <option key={o.key} value={o.key}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onClick={() => setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'))}
+                  className="h-9 px-md rounded-lg border border-outline-variant text-xs text-on-surface-variant hover:text-on-surface flex items-center gap-xs whitespace-nowrap"
+                  title={sortOrder === 'asc' ? 'Ascending - click for descending' : 'Descending - click for ascending'}
+                  aria-label={`Sort order: ${sortOrder === 'asc' ? 'ascending' : 'descending'}`}
+                >
+                  <span className="material-symbols-outlined text-[16px]">{sortOrder === 'asc' ? 'arrow_upward' : 'arrow_downward'}</span>
+                  {sortOrder === 'asc' ? (sortBy === 'alpha' ? 'A-Z' : (sortBy === 'price' || sortBy === 'nrml') ? 'Low-High' : 'Oldest') : sortBy === 'alpha' ? 'Z-A' : (sortBy === 'price' || sortBy === 'nrml') ? 'High-Low' : 'Newest'}
+                </button>
+              </div>
+            </Field>
+          </div>
+        </FilterRow>
       </div>
 
       {notice && <div className="text-sm text-on-surface-variant">{notice}</div>}
@@ -646,7 +767,7 @@ function NotificationsTab({ onTabChange }) {
               {key !== SYSTEM_KEY && (
                 <div className="flex items-center gap-sm ml-auto">
                   <BiasBar bullish={bullish} bearish={bearish} />
-                  {lastCrossover != null && <span className="text-[10px] text-on-surface-variant">Last crossover {timeAgo(new Date(lastCrossover * 1000).toISOString())}</span>}
+                  {lastCrossover != null && <span className="text-[10px] text-on-surface-variant">Last crossover {timeAgo(new Date(crossoverTimestamp({ candleTimestamp: lastCrossover, interval: key }) * 1000).toISOString())}</span>}
                   <CountCard label="Bullish" value={bullish} unread={unreadBullish} tone="bullish" />
                   <CountCard label="Bearish" value={bearish} unread={unreadBearish} tone="bearish" />
                 </div>
@@ -660,7 +781,25 @@ function NotificationsTab({ onTabChange }) {
 
             {!isCollapsed && sliced && (
               <div className="px-md pb-md flex flex-col gap-md">
-                {GROUP_SLICES.map(({ group, label }) => {
+                <div role="tablist" className="flex gap-xs border-b border-outline-variant">
+                  {GROUP_SLICES.map(({ group, label }) => {
+                    const active = (sliceTab[key] || 'index') === group
+                    const n = counts[key][group === 'index' ? 'indexTotal' : 'stockTotal']
+                    return (
+                      <button
+                        key={group}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setSliceTab((current) => ({ ...current, [key]: group }))}
+                        className={`px-md py-xs text-xs font-semibold uppercase tracking-wide border-b-2 -mb-px ${active ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'}`}
+                      >
+                        {label} <span className="font-normal">{n ?? ''}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {GROUP_SLICES.filter((s) => s.group === (sliceTab[key] || 'index')).map(({ group, label }) => {
                   const viewKey = `${key}:${group}`
                   const sliceData = sectionData[viewKey]
                   const sliceItems = sliceData?.items || []
@@ -674,6 +813,7 @@ function NotificationsTab({ onTabChange }) {
                         <span className="text-xs font-semibold uppercase tracking-wide text-on-surface">
                           {label} <span className="font-normal text-on-surface-variant">{sliceTotal ?? sliceData?.total ?? ''}</span>
                         </span>
+                        {sliceData?.loading && sliceItems.length > 0 && <Spinner className="text-primary" />}
                         {unreadGroups.length > 0 && (
                           <button type="button" onClick={() => markRead(unreadGroups.flatMap((g) => g.notificationIds || []), unreadGroups.map((g) => g.id))} className="text-xs text-primary hover:underline">
                             Mark this page read
@@ -683,6 +823,7 @@ function NotificationsTab({ onTabChange }) {
                       {sliceData?.loading && sliceItems.length === 0 && <Spinner />}
                       {sliceData?.error && <div className="text-sm text-bearish">{sliceData.error}</div>}
                       {!sliceData?.loading && !sliceData?.error && sliceData && sliceItems.length === 0 && <div className="text-sm text-on-surface-variant pt-xs">No {label.toLowerCase()} crossovers match.</div>}
+                      <div className={sliceData?.loading && sliceItems.length > 0 ? 'opacity-50 pointer-events-none transition-opacity' : ''}>
                       <ul className="flex flex-col gap-xs">
                         {sliceItems.map((g) => {
                           // Sorted by time: a sub-header per bar time. Other sorts list the cards straight.
@@ -692,11 +833,12 @@ function NotificationsTab({ onTabChange }) {
                           return (
                             <li key={g.id}>
                               {showHeader && <div className="text-[11px] uppercase tracking-wide text-on-surface-variant pt-sm pb-xs">{header}</div>}
-                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} />
+                              <CrossoverGroupCard group={g} isRead={groupIsRead(g)} onOpen={openGroup} chartHover={chartHover} optionChainHover={optionChainHover} quote={dayQuotes[quoteKey(g)]} slAmount={stopTarget.slAmount} targetAmount={stopTarget.targetAmount} lotSizeEdit={lotSizeEdits[g.symbol]} onLotSizeSaved={handleLotSizeSaved} />
                             </li>
                           )
                         })}
                       </ul>
+                      </div>
                       <Pagination page={slicePage} total={sliceData?.total ?? sliceTotal ?? 0} onChange={(next) => setSectionPage(viewKey, next)} />
                       {sliceData?.capped && <div className="text-[10px] text-on-surface-variant pt-xs">Sorted within the newest 2000 {label.toLowerCase()} cards of this timeframe.</div>}
                     </div>
@@ -710,7 +852,8 @@ function NotificationsTab({ onTabChange }) {
               <div className="px-md pb-md">
                 {data?.loading && items.length === 0 && <Spinner />}
                 {data?.error && <div className="text-sm text-bearish">{data.error}</div>}
-                <ul className="flex flex-col gap-xs">
+                {data?.loading && items.length > 0 && <Spinner className="text-primary" />}
+                <ul className={`flex flex-col gap-xs ${data?.loading && items.length > 0 ? 'opacity-50 pointer-events-none transition-opacity' : ''}`}>
                   {items.map((n) => {
                     const isRead = n.read || readIds.has(n.id)
                     const barKey = notificationType(n) === 'crossover' ? crossoverTimestamp(n) : null

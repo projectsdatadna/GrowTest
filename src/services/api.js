@@ -9,6 +9,12 @@ const apiClient = axios.create({
   },
 })
 
+// Documents / FII / chatbot live on the same server locally. In production they are served by a
+// dedicated long-running function (uploads and agent runs outlast the main API's limits), so
+// they have their own base URL, falling back to the main one.
+export const ASSISTANT_BASE_URL = import.meta.env.VITE_ASSISTANT_API_BASE_URL || API_BASE_URL
+const assistantClient = axios.create({ baseURL: ASSISTANT_BASE_URL, headers: { 'Content-Type': 'application/json' } })
+
 // Persist the Groww access token pasted in from the Greek Analysis tab -
 // every Groww-dependent route (including the unattended watchlistTick
 // scheduler) reads this same stored value server-side.
@@ -474,6 +480,34 @@ export const saveCrossoverSymbolMargin = async (id, nrmlMargin) => {
   }
 }
 
+// Symbol sheet (SYMBOL | Margin | Price | Lot Size, .xlsx) -> lot size, sheet price and
+// NRML margin on the scanner symbols. dryRun previews without saving. The file
+// goes as base64 in the JSON body (the sheet is a few KB).
+export const importSymbolSheet = async (file, { overwrite = true, dryRun = false } = {}) => {
+  try {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    const response = await apiClient.post('/crossover-scanner/symbols/import-sheet', { fileBase64: btoa(binary), overwrite, dryRun }, { timeout: 60000 })
+    return response.data
+  } catch (error) {
+    console.error('Error importing symbol sheet:', error)
+    throw error
+  }
+}
+
+// Lot size typed on a Notifications card (whole number > 0; null / '' resets it). Resolves
+// { symbol, lotSize, lotSizeSource } - the lot size now in effect and where it comes from.
+export const saveCrossoverSymbolLotSize = async (id, lotSize) => {
+  try {
+    const response = await apiClient.put(`/crossover-scanner/symbols/${encodeURIComponent(id)}/lot-size`, { lotSize })
+    return response.data
+  } catch (error) {
+    console.error('Error saving lot size:', error)
+    throw error
+  }
+}
+
 export const saveCrossoverSymbolOrder = async (symbols) => {
   try {
     const response = await apiClient.put('/crossover-scanner/symbols/order', { symbols })
@@ -522,6 +556,31 @@ export const exportNotificationsExcel = async (filters = {}) => {
     return { blob: response.data, filename, cards, symbols }
   } catch (error) {
     console.error('Error exporting notifications:', error)
+    throw error
+  }
+}
+
+// Live Daily Change / Daily Change % (Groww quote API) for up to 40 symbols:
+// items = [{exchange, symbol}] -> { "NSE:RELIANCE": {dayChange, dayChangePct, lastPrice, prevClose} | null }.
+export const getDayChangeQuotes = async (items) => {
+  try {
+    const symbols = items.map((i) => `${i.exchange}:${i.symbol}`).join(',')
+    const response = await apiClient.get('/notifications/quotes', { params: { symbols }, timeout: 60000 })
+    return response.data.quotes || {}
+  } catch (error) {
+    console.error('Error fetching day-change quotes:', error)
+    throw error
+  }
+}
+
+// Option-chain change behind one crossover card's hover: snapshot at the card's
+// bar vs one card-interval earlier (previous, current, difference, %).
+export const getCrossoverGroupOptionChain = async (groupId, { all = false } = {}) => {
+  try {
+    const response = await apiClient.get(`/notifications/groups/${encodeURIComponent(groupId)}/option-chain`, { params: all ? { all: 1 } : {} })
+    return response.data
+  } catch (error) {
+    console.error('Error fetching option chain change:', error)
     throw error
   }
 }
@@ -652,3 +711,47 @@ export const markNotificationsRead = async (ids, groupIds = []) => {
 }
 
 export default apiClient
+
+// ---------- files + chat (the chat widget) ----------
+
+/** The message to show for a failed request: the server's own error text if it sent one. */
+export const errorText = (error) => error?.response?.data?.error || error?.message || 'Something went wrong'
+
+export const MAX_UPLOAD_BYTES = 9 * 1024 * 1024
+// Same list as FILE_TYPES in functions/ingest/uploadRequest.js: PDF, every Excel format, CSV and JSON.
+export const SPREADSHEET_EXTENSIONS = ['xlsx', 'xlsm', 'xltx', 'xltm', 'xls', 'xlt', 'xlsb', 'ods', 'csv']
+export const UPLOAD_EXTENSIONS = ['pdf', ...SPREADSHEET_EXTENSIONS, 'json']
+export const UPLOAD_ACCEPT = UPLOAD_EXTENSIONS.map((e) => `.${e}`).join(',') // the file picker's accept=
+export const UPLOAD_KINDS_TEXT = 'PDF, Excel, CSV or JSON'
+
+/** Uploads one file as the raw request body (stored in Firestore). Resolves { duplicate, file }. reportName = the NSE report it is for. */
+export const uploadFile = (file, { reportDate, reportName, onProgress } = {}) =>
+  assistantClient
+    .post('/files', file, {
+      headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), ...(reportDate ? { 'X-Report-Date': reportDate } : {}), ...(reportName ? { 'X-Report-Name': encodeURIComponent(reportName) } : {}) },
+      onUploadProgress: (e) => e.total && onProgress?.(e.loaded / e.total),
+      timeout: 180000,
+      maxBodyLength: Infinity,
+    })
+    .then((r) => r.data)
+
+export const listFiles = () => assistantClient.get('/files').then((r) => r.data.files)
+export const updateFile = (id, fields) => assistantClient.patch(`/files/${id}`, fields).then((r) => r.data.file)
+export const deleteFile = (id) => assistantClient.delete(`/files/${id}`).then((r) => r.data)
+export const fileDownloadUrl = (id) => `${ASSISTANT_BASE_URL}/files/${id}/download`
+
+/** One question (+ the conversation and file ids) -> the full answer. Can take a while with big PDFs. */
+export const sendChat = ({ message, conversationId, fileIds, optionChain, wordLimit }) =>
+  assistantClient
+    .post('/chat', { message, conversationId: conversationId || undefined, fileIds: fileIds?.length ? fileIds : undefined, optionChain: optionChain || undefined, wordLimit: wordLimit || undefined }, { timeout: 300000 })
+    .then((r) => r.data)
+
+/** Saved 15-minute option chain snapshots: the symbols that have them and the first / last day -> { symbols, earliestDate, latestDate }. */
+export const getOptionChainSymbols = () => assistantClient.get('/option-chain-history/symbols').then((r) => r.data)
+/** The snapshot times one symbol has on one IST day -> [{ time: '10:15', expiry, underlyingLtp }]. */
+export const getOptionChainSlots = (symbol, date) => assistantClient.get('/option-chain-history/slots', { params: { symbol, date } }).then((r) => r.data.slots)
+
+/** The standard questions: [{ topic, reports: [{ report, questions: [{ id, no, text, movement, signal? }] }] }]. */
+export const getQuestionBank = () => assistantClient.get('/question-bank').then((r) => r.data.topics)
+
+export const getConversation = (id) => assistantClient.get(`/chat/conversations/${id}`).then((r) => r.data)

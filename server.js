@@ -51,6 +51,10 @@ import { processDueEntry, generateHistoricalWatchlistInsight } from './functions
 import { generateWatchlistAnalysis } from './functions/watchlistScheduler.js'
 import { syncInstrumentMaster, searchInstruments } from './functions/instrumentMasterSync.js'
 import { registerCrossoverScannerRoutes } from './functions/crossoverScannerRoutes.js'
+import { registerFileRoutes } from './functions/fileRoutes.js'
+import { registerChatRoutes } from './functions/chatRoutes.js'
+import { registerQuestionBankRoutes } from './functions/questionBankRoutes.js'
+import { registerOptionChainHistoryRoutes } from './functions/optionChainHistoryRoutes.js'
 
 dotenv.config()
 
@@ -1443,6 +1447,12 @@ app.post('/historical-watchlist/:id/trigger-fetch', async (req, res) => {
 // Crossover Scanner routes (shared with functions/index.js) - registered
 // before the 404 handler below.
 registerCrossoverScannerRoutes(app, { getGrowwAccessToken })
+
+// File library + chat with the stored files (shared with the production function, see functions/assistantApi.js).
+registerFileRoutes(app)
+registerChatRoutes(app)
+registerQuestionBankRoutes(app)
+registerOptionChainHistoryRoutes(app)
 
 /**
  * Error handlers
